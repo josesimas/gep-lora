@@ -5,8 +5,9 @@ generate_runs.py writes run/run_001.py ... run_NNN.py but does not run them.
 This does: it launches each one the way you would by hand, captures everything
 it prints, and writes a summary.
 
-    run/output_001.txt   everything run_001.py printed (replies included)
-    run/results.txt      one row per individual: state, exit code, seconds
+    run/output_001.txt          everything run_001.py printed
+    run/output_result_001.json  the exchanges, plus the chromosome and weight draw
+    run/results.txt             one row per individual: state, exit code, seconds
 
 Each script is a separate process, because each loads the base model at import
 and attaches its own adapters -- they cannot share an interpreter. That also
@@ -28,16 +29,20 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
 import sys
 import time
+from collections import namedtuple
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 INDEX_NAME = "index.txt"
 RESULTS_NAME = "results.txt"
+
+Outcome = namedtuple("Outcome", "code seconds output_path result_path exchanges")
 
 
 class Individual:
@@ -74,17 +79,72 @@ def read_index(run_dir):
     return individuals
 
 
-def output_name(script):
-    """run_007.py -> output_007.txt, so the pair is easy to line up."""
+def _number(script):
+    """run_007.py -> "007", so every file for one individual lines up."""
     match = re.search(r"(\d+)", script)
-    return "output_%s.txt" % match.group(1) if match else "output_%s.txt" % script
+    return match.group(1) if match else script
+
+
+def drawn_weights(stdout):
+    """The blend weights a run drew for itself, from the line it prints.
+
+    Every generated script redraws w1..w5 at startup, so two runs of the same
+    chromosome are scored under different blends. Recording the draw is what
+    makes a transcript traceable back to the weights that produced it.
+
+    Read off the "weights: w1=..., w2=..." line rather than recomputed, so this
+    is the draw that was actually used. All five are recorded, not just the ones
+    this tree happens to reference.
+    """
+    line = re.search(r"^weights:.*$", stdout, re.MULTILINE)
+    if not line:
+        return {}
+    return {name: float(value)
+            for name, value in re.findall(r"(w\d+)=([-+0-9.eE]+)", line.group(0))}
+
+
+def exchanges(stdout):
+    """The YOU/COACH pairs in a run's stdout, as {"question", "answer"} dicts.
+
+    A reply can wrap over several lines, so a question owns everything printed
+    after it until the next question. Only stdout is scanned -- the loading bars
+    and warnings arrive on stderr, so they cannot leak into a transcript.
+
+    A question whose reply never arrived (a run killed mid-generation) keeps an
+    empty answer, rather than being dropped as if it had never been asked.
+    """
+    blocks, current = [], None
+    for line in stdout.splitlines():
+        if line.startswith("YOU:"):
+            if current is not None:
+                blocks.append(current)
+            current = [line]
+        elif current is not None:
+            current.append(line)
+    if current is not None:
+        blocks.append(current)
+
+    transcript = []
+    for block in blocks:
+        question = block[0][len("YOU:"):].strip()
+        answer = []
+        for offset, line in enumerate(block[1:], start=1):
+            if line.startswith("COACH:"):
+                # The reply is the rest of that line plus every line after it.
+                answer = [line[len("COACH:"):].strip()] + block[offset + 1:]
+                break
+        while answer and not answer[-1].strip():   # trim the gap before the next question
+            answer.pop()
+        transcript.append({"question": question, "answer": "\n".join(answer)})
+    return transcript
 
 
 def execute(run_dir, individual, timeout):
-    """Run one generated script, capture its output, and write it alongside.
+    """Run one generated script and write both of its output files.
 
-    Returns (exit_code, seconds, output_path). An exit code of None means the
-    script was still going when the timeout expired.
+    An exit code of None means the script was still going when the timeout
+    expired. stdout is kept apart from stderr so the transcript can be taken
+    from it cleanly.
     """
     script_path = os.path.join(run_dir, individual.script)
     started = time.time()
@@ -95,21 +155,37 @@ def execute(run_dir, individual, timeout):
             cwd=run_dir, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=timeout,
         )
-        captured = completed.stdout + completed.stderr
-        code = completed.returncode
+        out, err, code = completed.stdout, completed.stderr, completed.returncode
     except subprocess.TimeoutExpired as expired:
-        captured = (expired.stdout or "") + (expired.stderr or "")
-        captured += "\n\n!! killed after %ss (--timeout)\n" % timeout
+        out, err = expired.stdout or "", expired.stderr or ""
+        err += "\n\n!! killed after %ss (--timeout)\n" % timeout
         code = None
 
     elapsed = time.time() - started
-    output_path = os.path.join(run_dir, output_name(individual.script))
+    number = _number(individual.script)
+
+    # The full capture, for working out why a run went wrong.
+    output_path = os.path.join(run_dir, "output_%s.txt" % number)
     with open(output_path, "w", encoding="utf-8") as handle:
         handle.write("# %s\n# %s\n# predicted rank %d, index says %s\n\n"
                      % (individual.script, individual.expression,
                         individual.rank, individual.state))
-        handle.write(captured)
-    return code, elapsed, output_path
+        handle.write(out + err)
+
+    # The conversation as JSON, with the two things needed to make sense of it
+    # later: which tree was built, and which weight draw it was built with. A
+    # score means little without both. A run that failed before answering leaves
+    # "exchanges": [], which still parses.
+    transcript = exchanges(out)
+    result_path = os.path.join(run_dir, "output_result_%s.json" % number)
+    with open(result_path, "w", encoding="utf-8") as handle:
+        json.dump({"chromosome": individual.expression,
+                   "weights": drawn_weights(out),
+                   "exchanges": transcript},
+                  handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+
+    return Outcome(code, elapsed, output_path, result_path, len(transcript))
 
 
 def main(argv=None):
@@ -125,6 +201,11 @@ def main(argv=None):
     parser.add_argument("--timeout", type=int, default=900,
                         help="seconds to allow each script (default 900)")
     args = parser.parse_args(argv)
+
+    # Absolute from here on: each script is launched with cwd set to this
+    # folder, so a relative --run-dir would be resolved against itself a second
+    # time and the script path would come out doubled.
+    args.run_dir = os.path.abspath(args.run_dir)
 
     individuals = read_index(args.run_dir)
     selected = [one for one in individuals
@@ -147,33 +228,36 @@ def main(argv=None):
     started = time.time()
     for number, one in enumerate(selected, 1):
         print("[%d/%d] %s  %s" % (number, len(selected), one.script, one.expression))
-        code, elapsed, output_path = execute(args.run_dir, one, args.timeout)
+        outcome = execute(args.run_dir, one, args.timeout)
 
-        if code == 0:
+        if outcome.code == 0:
             verdict = "ok"
-        elif code is None:
+        elif outcome.code is None:
             verdict = "timeout"
             failures += 1
         else:
-            verdict = "exit %d" % code
+            verdict = "exit %d" % outcome.code
             failures += 1
-        print("        %-9s %6.1fs  -> %s" % (verdict, elapsed, os.path.basename(output_path)))
+        print("        %-9s %6.1fs  %d exchange(s) -> %s"
+              % (verdict, outcome.seconds, outcome.exchanges,
+                 os.path.basename(outcome.result_path)))
 
-        if code not in (0, None):
+        if outcome.code not in (0, None):
             # Show why, so a systemic problem is obvious without opening files.
-            tail = [line for line in open(output_path, encoding="utf-8").read().splitlines()
+            tail = [line for line
+                    in open(outcome.output_path, encoding="utf-8").read().splitlines()
                     if line.strip()][-1:]
             if tail:
                 print("        %s" % tail[0][:100])
 
-        rows.append("%-14s %-5s %-8s %7.1f  %-22s %s"
-                    % (one.script, one.state, verdict, elapsed,
-                       os.path.basename(output_path), one.expression))
+        rows.append("%-14s %-5s %-8s %7.1f %5d  %-26s %s"
+                    % (one.script, one.state, verdict, outcome.seconds, outcome.exchanges,
+                       os.path.basename(outcome.result_path), one.expression))
 
     results_path = os.path.join(args.run_dir, RESULTS_NAME)
     with open(results_path, "w", encoding="utf-8") as handle:
-        handle.write("%-14s %-5s %-8s %7s  %-22s %s\n"
-                     % ("script", "state", "result", "secs", "output", "expression"))
+        handle.write("%-14s %-5s %-8s %7s %5s  %-26s %s\n"
+                     % ("script", "state", "result", "secs", "qa", "transcript", "expression"))
         handle.write("\n".join(rows) + "\n")
 
     print("\nran %d in %.1fs, %d failed" % (len(selected), time.time() - started, failures))

@@ -268,12 +268,51 @@ model at import and attaches its own adapters, so they cannot share an
 interpreter. That makes this the expensive step: one model load per individual.
 `--limit 3` is the way to smoke-test before committing to a full sweep.
 
-Output goes next to the scripts:
+Output goes next to the scripts, two files per individual:
 
 ```
-run/output_007.txt   everything run_007.py printed, replies included
-run/results.txt      script, state, result, seconds, expression
+run/output_007.txt           everything run_007.py printed, warnings and all
+run/output_result_007.json   the exchanges plus the weight draw that produced them
+run/results.txt              script, state, result, seconds, exchanges, expression
 ```
+
+The transcript is JSON: the conversation, plus the two things needed to make
+sense of it later — which tree was built, and which weight draw built it.
+
+```json
+{
+  "chromosome": "CAT.L1.L3.w2.w2",
+  "weights": { "w1": 0.3529, "w2": 0.2882, "w3": 0.8712, "w4": 0.8846, "w5": 0.5110 },
+  "exchanges": [
+    {
+      "question": "Help me organize my desktop.",
+      "answer": "Before we lay anything out, let's call the one thing..."
+    }
+  ]
+}
+```
+
+Each file is self-contained: a scorer never has to cross-reference `index.txt`
+to know what produced a given set of answers, and the files stay meaningful if
+they are moved or collected from several runs.
+
+The weights matter as much as the tree. Every script redraws `w1`–`w5` at
+startup, so the same chromosome run twice is judged under two different blends —
+and in practice that changes the answers markedly. Recording the draw is what
+lets a score be attributed to a specific blend rather than to the tree alone, and
+what lets repeated runs of one individual be averaged. All five are recorded, not
+just the ones the tree references. They are read off the `weights:` line the run
+printed, so they are the values actually used; if that line is ever missing,
+`weights` comes back `{}` rather than a guess.
+
+The exchanges are taken from stdout only, so the loading bars and warnings that
+arrive on stderr cannot leak in, and a reply wrapping over several lines is kept
+whole (the newlines survive as `
+` in the JSON string). A question whose reply
+never arrived — a run killed mid-generation — keeps an empty `answer` rather than
+vanishing, and a run that failed before answering at all leaves `"exchanges": []`,
+which still parses. The `qa` column in `results.txt` shows the count without
+opening anything.
 
 `BAD` individuals are skipped by default. They stop at their bad combine step,
 but only *after* paying for a full model load, so running them costs the same as
@@ -516,7 +555,7 @@ generate_population.py  -->   run/population.txt  (the chromosomes)
                               template_code.py    (the shape of those scripts)
 
                                   |
-                              process_run.py -> run/output_NNN.txt (the replies)
+                              process_run.py -> run/output_result_NNN.json (replies + weights)
                                                 run/results.txt
 
 test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)

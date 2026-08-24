@@ -50,7 +50,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # --- settings for a complete run ------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 5
+COUNT = 3
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time. Note this is separate from the LoRA blend
