@@ -66,7 +66,7 @@ the shape and the weights.
 
 ---
 
-## The rank rule (why 6 of 100 individuals can't run)
+## The rank rule (why 27 of 100 individuals can't run)
 
 PEFT constrains the rank of the adapter each call produces
 (`peft/tuners/lora/model.py`, `_check_add_weighted_adapter`):
@@ -77,15 +77,24 @@ PEFT constrains the rank of the adapter each call produces
 | `svd` | **max** of the two inputs' ranks (when no `svd_rank` is passed) |
 | `linear` | both inputs **must have the same rank**, else `ValueError` |
 
-Both adapters on disk are `r=16`, so a leaf is rank 16. `CAT` doubles rank as you
-nest it. Therefore **a `LIN` sitting above a `CAT` usually cannot run** — its two
-inputs have drifted to different ranks.
+The five LoRAs were trained at **different ranks** — `L1`=16, `L2`=16, `L3`=8,
+`L4`=4, `L5`=32 — so leaves do not start out matched, and `CAT` pushes them
+further apart as you nest it. Therefore **a `LIN` whose two inputs came from
+different adapters, or from a `CAT`, usually cannot run**.
+
+Nothing assumes a shared rank: each slot's is read from its own
+`adapter_config.json`, both when the scripts are generated and again when they
+run.
 
 This is a property of the search space, not a bug. Every node's rank is computed
 statically at generation time, so you find out before running anything rather
-than crashing mid-script. In the current population, **94 of 100 run and 6 are
+than crashing mid-script. In the current population, **73 of 100 run and 27 are
 blocked**. Blocked scripts are still written, with a `NOTE` naming the offending
-node and both ranks, and are marked `BAD` in `run/index.txt`.
+node and both ranks, and are marked `BAD` in `run/index.txt`; at runtime they
+stop themselves with the same message rather than letting a bare `ValueError`
+surface from inside PEFT.
+
+Final ranks across the population now span 8 to 92.
 
 If you want the blocked shapes to survive, the options are: map `LIN` to `svd`
 when ranks diverge, pass `svd_rank=` to the `CAT` feeding it, or treat those
@@ -172,8 +181,8 @@ the tree deepest-node-first with `add_weighted_adapter`, activates the final
 adapter, and answers the eval prompts.
 
 Each *occurrence* of an `L*` gets its own adapter name (`n1_L2`, `n4_L1`, …), so
-one slot can appear several times at different weights. PEFT keeps two loads of
-the same folder separate, so this is safe.
+one slot can appear several times at different weights. PEFT keeps repeated
+loads of one folder separate, so this is safe.
 
 #### The template
 
@@ -323,24 +332,36 @@ repointed at a different adapter without touching the others:
 
 ```python
 LORA_SLOTS = {
-    "L1": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
-    "L2": os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter"),
-    "L3": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
-    "L4": os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter"),
-    "L5": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
+    "L1": os.path.join(_PROJECT, "Lora001", "my_planning_coach-lora_adapter"),
+    "L2": os.path.join(_PROJECT, "Lora002", "my_planning_coach-lora_adapter"),
+    "L3": os.path.join(_PROJECT, "Lora003", "my_planning_coach-lora_adapter"),
+    "L4": os.path.join(_PROJECT, "Lora004", "my_planning_coach-lora_adapter"),
+    "L5": os.path.join(_PROJECT, "Lora005", "my_planning_coach-lora_adapter"),
 }
 ```
 
-Only two real adapter folders exist on disk today, so `L1`/`L3`/`L5` point at
-`test001` and `L2`/`L4` at `test002`. Loading one folder several times under
-different adapter names is fine — PEFT keeps them separate — the same trick
-`lora_simul_01.py` uses. Any entry may become an absolute path or a Hub repo id
-once there are five genuinely different adapters.
+Five genuinely distinct adapters, one per slot, all trained on the same base
+model (`unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit` — they must share a base
+for PEFT to combine them). Their ranks differ:
 
-⚠️ When you do repoint them, check `BASE_RANK` in `generate_runs.py`. It is
-hardcoded to 16 because both adapters on disk are `r=16`, and the whole rank
-analysis — including the ok/BAD verdicts — is computed from it. Adapters with a
-different `r` need that read from each slot's `adapter_config.json` instead.
+| Slot | Folder | `r` |
+|---|---|---|
+| `L1` | `Lora001` | 16 |
+| `L2` | `Lora002` | 16 |
+| `L3` | `Lora003` | 8 |
+| `L4` | `Lora004` | 4 |
+| `L5` | `Lora005` | 32 |
+
+`_PROJECT` is the folder holding this README, resolved from the generated
+script's own location, so `run/` and `test/` both find the adapters. Any entry
+may equally be an absolute path or a Hub repo id.
+
+Ranks are **not** assumed equal. Each slot's rank is read from its own
+`adapter_config.json` — at generation time for the docstring and `index.txt`
+verdicts, and again at runtime by the generated script, which tracks the rank of
+every intermediate adapter in `RANKS` and refuses a `linear` step whose two
+inputs disagree. Point a slot at an `r=8` LoRA and `CAT(r16, r8)` reports rank
+24, with more trees turning up `BAD` because their `LIN` nodes no longer match.
 
 **`EVAL_PROMPTS`** — the three questions each individual answers. There is no
 fitness *score* yet; the scripts print replies for you to judge. Scoring is the
@@ -357,11 +378,6 @@ model.generation_config.max_length = None
 
 `max_new_tokens` was taking precedence regardless, so this only silences the
 warning — the effective cap is unchanged.
-
-Note that `L1`, `L3`, `L5` currently point at the same folder, as do `L2` and
-`L4`. Two slots backed by the same adapter differ only by the weight the tree
-gives them, which limits how much real diversity the search can find until there
-are five genuinely distinct adapters.
 
 ---
 

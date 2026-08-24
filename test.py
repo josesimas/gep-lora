@@ -22,7 +22,7 @@ import sys
 
 from draw_trees import draw
 from generate_population import decode
-from generate_runs import build_order_block, plan, render
+from generate_runs import build_order_block, plan, render, slot_ranks
 
 # ---------------------------------------------------------------------------
 # The individual to try. Set this and run.
@@ -52,7 +52,9 @@ def main():
         print("note: %d trailing symbol(s) are not part of the tree: %s"
               % (len(tail), ".".join(tail)))
 
-    steps, final = plan(root)
+    # Ranks come from each slot's adapter_config.json; they may differ.
+    out_dir = os.path.join(_HERE, OUTPUT_DIR)
+    steps, final = plan(root, slot_ranks(out_dir))
     broken = [step for step in steps if step.broken]
 
     print("\ntree")
@@ -65,14 +67,13 @@ def main():
 
     if broken:
         print("\nverdict: BLOCKED -- %s is linear with mismatched input ranks "
-              "(%d vs %d); PEFT raises ValueError there."
+              "(%d vs %d); the run stops there."
               % (broken[0].name, broken[0].left[2], broken[0].right[2]))
     else:
         print("\nverdict: ok -- %d adapters, final rank %d"
               % (len(steps), steps[-1].rank))
 
     # --- write the two files ---
-    out_dir = os.path.join(_HERE, OUTPUT_DIR)
     os.makedirs(out_dir, exist_ok=True)
 
     tree_path = os.path.join(out_dir, "tree.txt")

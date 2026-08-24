@@ -4,3 +4,11 @@ population.txt
 trees.txt
 run
 test
+
+# Ignore everything inside Lora* folders by default
+Lora00*/
+
+# Re-include only the files you want to track
+!Lora00*/main.py
+!Lora00*/inference.py
+

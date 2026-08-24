@@ -41,6 +41,7 @@ Usage
     python @@SCRIPT_NAME@@ "Help me plan my week."   # your own question
 """
 
+import json
 import os
 import random
 import sys
@@ -57,29 +58,25 @@ import torch
 from peft import PeftModel
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(os.path.dirname(_HERE))   # run/ -> project/ -> loras/
+_PROJECT = os.path.dirname(_HERE)                  # run/ -> project/
 
 # The base model every adapter was trained on (from adapter_config.json).
 BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
 
 # Where each of the 5 LoRAs the trees refer to lives. One independent entry per
 # slot: repoint any single line at a different adapter and nothing else in this
-# file has to change.
+# file has to change. An entry may equally be an absolute path or a Hub repo id.
 #
-# Only two real adapter folders exist on disk today, so L1/L3/L5 currently point
-# at test001 and L2/L4 at test002. Loading one folder several times under
-# different adapter names is fine -- PEFT keeps them separate -- but two slots
-# backed by the same adapter differ only by the weight the tree hands them, so
-# the search sees less diversity than the 5 slots suggest.
-#
-# Any of these may become an absolute path, or a Hub repo id, once there are 5
-# genuinely different adapters.
+# These five were trained at different ranks (r=16, 16, 8, 4, 32), which the code
+# handles -- _rank() reads each one's adapter_config.json rather than assuming
+# they match. That matters because PEFT's cat sums input ranks, svd takes the
+# max, and linear refuses inputs whose ranks differ.
 LORA_SLOTS = {
-    "L1": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
-    "L2": os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter"),
-    "L3": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
-    "L4": os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter"),
-    "L5": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
+    "L1": os.path.join(_PROJECT, "Lora001", "my_planning_coach-lora_adapter"),
+    "L2": os.path.join(_PROJECT, "Lora002", "my_planning_coach-lora_adapter"),
+    "L3": os.path.join(_PROJECT, "Lora003", "my_planning_coach-lora_adapter"),
+    "L4": os.path.join(_PROJECT, "Lora004", "my_planning_coach-lora_adapter"),
+    "L5": os.path.join(_PROJECT, "Lora005", "my_planning_coach-lora_adapter"),
 }
 
 # What w1..w5 are worth: a fresh random draw every run, strictly between 0 and
@@ -100,6 +97,18 @@ def _weight():
 
 
 WEIGHTS = {name: _weight() for name in ("w1", "w2", "w3", "w4", "w5")}
+
+def _rank(adapter_dir):
+    """The rank PEFT will allocate for this adapter, from its adapter_config.json.
+
+    Mirrors PEFT's own bookkeeping (peft/tuners/lora/model.py): rank_pattern can
+    raise the rank above r for individual modules, and PEFT sizes the merged
+    adapter for the largest rank it might need.
+    """
+    with open(os.path.join(adapter_dir, "adapter_config.json"), encoding="utf-8") as handle:
+        config = json.load(handle)
+    return max([config["r"]] + list((config.get("rank_pattern") or {}).values()))
+
 
 MAX_SEQ = 2048
 
@@ -131,19 +140,70 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 # Attach the @@LEAF_COUNT@@ leaf adapter(s) the tree names, each under its own name so
 # the same slot can appear more than once at different weights.
 # ---------------------------------------------------------------------------
-#~ One PeftModel.from_pretrained for the first leaf, load_adapter for the rest.
+# Each adapter's rank is read from its own config, so slots pointing at LoRAs
+# trained with different r values are handled correctly.
+RANKS = {}
+
+
+def attach(name, slot):
+    """Load LORA_SLOTS[slot] under `name`, and record the rank it carries."""
+    global model
+    if isinstance(model, PeftModel):
+        model.load_adapter(LORA_SLOTS[slot], adapter_name=name)
+    else:
+        # The first adapter is what turns the base model into a PeftModel.
+        model = PeftModel.from_pretrained(model, LORA_SLOTS[slot], adapter_name=name)
+    RANKS[name] = _rank(LORA_SLOTS[slot])
+    return name
+
+
+#~ One attach() per leaf, in post-order.
 # @@ATTACH_LEAVES@@
 
 # ---------------------------------------------------------------------------
 # Fold the tree together, deepest node first. Each call leaves behind a new
 # adapter that later calls can use as an input.
 # ---------------------------------------------------------------------------
-#~ One add_weighted_adapter call per binary node, in post-order.
+def combine(name, combination_type, left, right):
+    """Fold two adapters into one under `name`, tracking the resulting rank.
+
+    PEFT's rules (peft/tuners/lora/model.py, _check_add_weighted_adapter):
+    cat sums the input ranks, svd takes the max, linear demands they match.
+    The linear case is checked here so the failure names the node, rather than
+    surfacing as a bare ValueError from inside PEFT.
+    """
+    (left_name, left_weight), (right_name, right_weight) = left, right
+    left_rank, right_rank = RANKS[left_name], RANKS[right_name]
+
+    if combination_type == "linear" and left_rank != right_rank:
+        raise SystemExit(
+            f"{name}: combination_type='linear' needs both inputs at the same rank, "
+            f"but {left_name} is rank {left_rank} and {right_name} is rank {right_rank}. "
+            f"cat sums its inputs' ranks, which is usually what pushes them apart."
+        )
+
+    model.add_weighted_adapter(
+        adapters=[left_name, right_name],
+        weights=[left_weight, right_weight],
+        adapter_name=name,
+        combination_type=combination_type,
+    )
+
+    if combination_type == "cat":
+        RANKS[name] = left_rank + right_rank
+    elif combination_type == "svd":
+        RANKS[name] = max(left_rank, right_rank)
+    else:
+        RANKS[name] = left_rank
+    return name
+
+
+#~ One combine() per binary node, in post-order.
 # @@COMBINE_NODES@@
 
 FINAL_ADAPTER = "@@FINAL_ADAPTER@@"
 model.set_adapter(FINAL_ADAPTER)
-print(f"Active adapter: {model.active_adapters} (rank @@FINAL_RANK@@)")
+print(f"Active adapter: {model.active_adapters} (rank {RANKS[FINAL_ADAPTER]})")
 
 # Same chat template used during training, so inputs are formatted identically.
 tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")

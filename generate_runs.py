@@ -46,19 +46,14 @@ Usage:
 """
 
 import argparse
+import ast
+import json
 import os
 
 from generate_population import UNARY_OPS, decode, levels
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Rank every leaf adapter is assumed to have. Both adapter_config.json files on
-# disk say r=16 today, and all 5 slots in template_code.py point at one of those
-# two. The rank arithmetic below -- and so the ok/BAD verdict in index.txt --
-# depends on that being true for every slot. Once the slots point at 5 genuinely
-# different LoRAs, read each one's adapter_config.json instead of this constant,
-# or the linear/cat rank checks will be computed against the wrong numbers.
-BASE_RANK = 16
 
 COMBINATION_TYPE = {"CAT": "cat", "SVD": "svd", "LIN": "linear"}
 
@@ -66,6 +61,50 @@ TEMPLATE = os.path.join(_HERE, "template_code.py")
 
 MARKER = "@@%s@@"
 TEMPLATE_COMMENT = "#~"
+
+
+def resolve_slots(template_path, output_dir):
+    """Evaluate LORA_SLOTS out of the template, as the generated script will see it.
+
+    The slot paths live in template_code.py so the generated scripts stay
+    self-contained, but the rank analysis here needs them too. Rather than keep
+    a second copy that could drift, execute that one assignment from the
+    template with the same _HERE/_PROJECT the generated script will compute.
+    """
+    with open(template_path, encoding="utf-8") as handle:
+        source = handle.read()
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and any(
+                getattr(target, "id", "") == "LORA_SLOTS" for target in node.targets):
+            here = os.path.abspath(output_dir)
+            namespace = {"os": os, "_HERE": here,
+                         "_PROJECT": os.path.dirname(here)}
+            exec(compile(ast.Module([node], []), template_path, "exec"), namespace)
+            return namespace["LORA_SLOTS"]
+    raise SystemExit("no LORA_SLOTS assignment found in %s" % template_path)
+
+
+def slot_ranks(output_dir, template_path=TEMPLATE):
+    """{slot: rank} read from each adapter's own adapter_config.json.
+
+    Ranks are not assumed equal: the five slots may point at LoRAs trained with
+    different r values, and cat/svd/linear each treat that differently.
+    """
+    ranks = {}
+    for slot, path in sorted(resolve_slots(template_path, output_dir).items()):
+        config_path = os.path.join(path, "adapter_config.json")
+        try:
+            with open(config_path, encoding="utf-8") as handle:
+                config = json.load(handle)
+        except OSError as error:
+            raise SystemExit(
+                "slot %s: cannot read %s (%s). Point LORA_SLOTS[%r] in %s at a "
+                "real adapter folder, or fix the path."
+                % (slot, config_path, error.strerror, slot, os.path.basename(template_path))
+            )
+        # Same rule PEFT uses: rank_pattern can raise the rank above r.
+        ranks[slot] = max([config["r"]] + list((config.get("rank_pattern") or {}).values()))
+    return ranks
 
 
 class Step:
@@ -84,9 +123,10 @@ class Step:
         self.broken = False       # combine only: LIN with mismatched child ranks
 
 
-def plan(root):
+def plan(root, ranks):
     """Post-order walk of the tree -> the ordered list of build steps.
 
+    `ranks` maps each slot (L1..L5) to the rank read from its adapter_config.json.
     Returns (steps, final_adapter_name). Nodes are numbered in the order they
     have to be built, so a step never references a name defined after it.
     """
@@ -102,10 +142,11 @@ def plan(root):
         if node.symbol in UNARY_OPS:
             # An L* node is a leaf adapter; its single child names the weight.
             variable = node.children[0].symbol
-            step = Step("leaf", next_name(node.symbol), node.symbol, BASE_RANK)
+            rank = ranks[node.symbol]
+            step = Step("leaf", next_name(node.symbol), node.symbol, rank)
             step.variable = variable
             steps.append(step)
-            return step.name, 'WEIGHTS["%s"]' % variable, BASE_RANK
+            return step.name, 'WEIGHTS["%s"]' % variable, rank
 
         left = visit(node.children[0])
         right = visit(node.children[1])
@@ -159,7 +200,7 @@ def note_block(steps):
                      % step.name)
         lines.append("    linear requires both inputs to have the same rank -- but %s has"
                      % step.left[0])
-        lines.append("    rank %d and %s has rank %d. PEFT raises ValueError at that call."
+        lines.append("    rank %d and %s has rank %d, so the run stops there."
                      % (step.left[2], step.right[0], step.right[2]))
     lines.append("    (cat sums its inputs' ranks, which is what pushes them apart.)")
     lines.append("    Fixes: swap that LIN for SVD, pass svd_rank= to the CAT feeding it,")
@@ -169,33 +210,23 @@ def note_block(steps):
 
 
 def attach_leaves_block(steps):
-    """One PeftModel.from_pretrained, then load_adapter for every other leaf."""
-    lines = []
-    for index, step in enumerate(step for step in steps if step.kind == "leaf"):
-        target = 'LORA_SLOTS["%s"]' % step.symbol
-        if index == 0:
-            lines.append("model = PeftModel.from_pretrained(")
-            lines.append('    model, %s, adapter_name="%s"' % (target, step.name))
-            lines.append(")")
-        else:
-            lines.append('model.load_adapter(%s, adapter_name="%s")' % (target, step.name))
-    return lines
+    """One attach() per leaf, in post-order."""
+    return ['attach("%s", "%s")' % (step.name, step.symbol)
+            for step in steps if step.kind == "leaf"]
 
 
 def combine_nodes_block(steps):
-    """One add_weighted_adapter call per binary node, in post-order."""
+    """One combine() per binary node, in post-order."""
     lines = []
     for step in (step for step in steps if step.kind == "combine"):
         if step.broken:
-            lines.append("# !! PEFT raises ValueError here: linear needs equal ranks, but")
-            lines.append("# !! %s is rank %d and %s is rank %d. See NOTE at the top."
-                         % (step.left[0], step.left[2], step.right[0], step.right[2]))
-        lines.append("model.add_weighted_adapter(")
-        lines.append('    adapters=["%s", "%s"],' % (step.left[0], step.right[0]))
-        lines.append("    weights=[%s, %s]," % (step.left[1], step.right[1]))
-        lines.append('    adapter_name="%s",' % step.name)
-        lines.append('    combination_type="%s",' % COMBINATION_TYPE[step.symbol])
-        lines.append(")   # rank %d" % step.rank)
+            lines.append("# !! Stops here: linear needs equal ranks, but %s is rank %d"
+                         % (step.left[0], step.left[2]))
+            lines.append("# !! and %s is rank %d. See NOTE at the top."
+                         % (step.right[0], step.right[2]))
+        lines.append('combine("%s", "%s", ("%s", %s), ("%s", %s))'
+                     % (step.name, COMBINATION_TYPE[step.symbol],
+                        step.left[0], step.left[1], step.right[0], step.right[1]))
     return lines
 
 
@@ -260,7 +291,6 @@ def render(expression, steps, final, script_name, provenance, label,
         "EXPRESSION": expression,
         "LEAF_COUNT": str(len(leaves)),
         "FINAL_ADAPTER": final,
-        "FINAL_RANK": str(steps[-1].rank),
     }
     return fill(template_lines, blocks, values)
 
@@ -288,12 +318,15 @@ def main():
     # Read the template once; every individual reuses the same lines.
     template_lines = load_template(args.template)
 
+    # Each slot's rank comes from its own adapter_config.json -- they may differ.
+    ranks = slot_ranks(args.output_dir, args.template)
+
     os.makedirs(args.output_dir, exist_ok=True)
 
     index_lines = []
     runnable = 0
     for number, expression in enumerate(expressions, 1):
-        steps, final = plan(decode(expression)[0])
+        steps, final = plan(decode(expression)[0], ranks)
         name = "run_%03d.py" % number
         text = render(
             expression, steps, final,
@@ -317,6 +350,7 @@ def main():
 
     print("wrote %d scripts to %s (from %s)"
           % (len(expressions), args.output_dir, os.path.basename(args.template)))
+    print("slot ranks: %s" % ", ".join("%s=%d" % pair for pair in sorted(ranks.items())))
     print("%d runnable, %d blocked by PEFT's equal-rank rule for linear"
           % (runnable, len(expressions) - runnable))
     print("index: %s" % index_path)
