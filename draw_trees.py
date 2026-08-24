@@ -46,9 +46,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Draw each row of population.txt as a tree."
     )
-    parser.add_argument("--input", default=os.path.join(_HERE, "population.txt"),
+    parser.add_argument("--input", default=os.path.join(_HERE, "tmp/population.txt"),
                         help="file of K-expressions, one per line (default population.txt)")
-    parser.add_argument("--output", default=os.path.join(_HERE, "trees.txt"),
+    parser.add_argument("--output", default=os.path.join(_HERE, "tmp/trees.txt"),
                         help="where to write the drawings (default trees.txt)")
     args = parser.parse_args()
 

@@ -193,7 +193,7 @@ def main():
     )
     parser.add_argument("--count", type=int, default=100,
                         help="how many strings to generate (default 100)")
-    parser.add_argument("--output", default=os.path.join(_HERE, "population.txt"),
+    parser.add_argument("--output", default=os.path.join(_HERE, "tmp/population.txt"),
                         help="output file (default population.txt next to this script)")
     parser.add_argument("--seed", type=int, default=None,
                         help="RNG seed, for a reproducible population")
