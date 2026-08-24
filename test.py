@@ -22,7 +22,7 @@ import sys
 
 from draw_trees import draw
 from generate_population import decode
-from generate_runs import build_notes, plan, render
+from generate_runs import build_order_block, plan, render
 
 # ---------------------------------------------------------------------------
 # The individual to try. Set this and run.
@@ -60,7 +60,7 @@ def main():
         print("    %s" % line)
 
     print("\nbuild order (deepest first)")
-    for line in build_notes(steps):
+    for line in build_order_block(steps):
         print(line)
 
     if broken:

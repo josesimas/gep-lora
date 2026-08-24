@@ -142,9 +142,10 @@ stays unambiguous. Trailing symbols that the tree does not consume are reported
 as `(unused tail: ...)` rather than dropped silently — `plan.txt`'s first example
 has two such symbols.
 
-### 3. `generate_runs.py` → `run/`
+### 3. `generate_runs.py` + `template_code.py` → `run/`
 
-Turns every individual into a self-contained runnable script.
+Turns every individual into a self-contained runnable script by filling in
+`template_code.py`.
 
 ```bash
 python generate_runs.py
@@ -154,6 +155,7 @@ python generate_runs.py
 |---|---|---|
 | `--input` | `population.txt` | file of K-expressions, one per line |
 | `--output-dir` | `run` | folder to write the scripts into |
+| `--template` | `template_code.py` | the template to fill |
 
 Produces `run/run_001.py` … `run/run_100.py` plus `run/index.txt`:
 
@@ -172,6 +174,28 @@ adapter, and answers the eval prompts.
 Each *occurrence* of an `L*` gets its own adapter name (`n1_L2`, `n4_L1`, …), so
 one slot can appear several times at different weights. PEFT keeps two loads of
 the same folder separate, so this is safe.
+
+#### The template
+
+`template_code.py` is the generated script with the varying parts marked. It is
+deliberately kept as valid Python, so your editor, linter and
+`python -m compileall` all still work on it — what you see there is what gets
+written, minus the markers.
+
+| Marker form | Meaning |
+|---|---|
+| `@@NAME@@` | replaced inside the line it sits on |
+| a line that is only `@@NAME@@` or `# @@NAME@@` | replaced by a whole block of lines |
+| a line starting with `#~` | template-only note, never reaches the output |
+
+Blocks are `TREE`, `BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`;
+inline values are `SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`,
+`LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`. Any marker left unfilled raises
+rather than being written into a generated file.
+
+To change what every generated script looks like, edit `template_code.py` and
+re-run `generate_runs.py`. Only add code to the generator itself when the new
+part varies per individual.
 
 ### 4. `test.py` → `test/`
 
@@ -333,7 +357,8 @@ are five genuinely distinct adapters.
 | `population.txt` | 100 K-expressions, one per line |
 | `draw_trees.py` | draws every individual → `trees.txt` |
 | `trees.txt` | 100 tree drawings in level-row layout |
-| `generate_runs.py` | emits one runnable script per individual → `run/` |
+| `generate_runs.py` | fills `template_code.py`, one runnable script per individual → `run/` |
+| `template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
 | `run/run_001.py` … `run_100.py` | the generated combination scripts |
 | `run/index.txt` | script → state, final rank, expression |
 | `test.py` | try a single chromosome → `test/` |
@@ -350,7 +375,8 @@ generate_population.py  -->   population.txt      (the chromosomes)
    |                          draw_trees.py  -->  trees.txt        (readable trees)
    |                              |
    +--------------------->    generate_runs.py -> run/run_NNN.py   (runnable blends)
-                                                  run/index.txt
+                                  +               run/index.txt
+                              template_code.py    (the shape of those scripts)
 
 test.py  -->  test/tree.txt + test/run.py         (one chromosome, same builders)
 ```

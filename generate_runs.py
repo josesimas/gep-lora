@@ -6,6 +6,18 @@ of combination.py: load the base model once, attach the LoRAs the tree names,
 fold them together with PEFT's add_weighted_adapter, then chat through the
 resulting adapter.
 
+The script itself comes from template_code.py, which is the generated file with
+the varying parts marked. Keeping the shape in a template rather than in string
+literals means you can open it, syntax-check it, and see what a generated script
+looks like directly -- only what genuinely varies per individual is a marker.
+
+Markers, all of the form @@NAME@@:
+
+    inline          replaced within the line, e.g. EXPRESSION = "@@EXPRESSION@@"
+    whole line      a line that is only @@NAME@@ (or "# @@NAME@@") is replaced
+                    by a block of lines
+    #~ prefix       template-only note, dropped from the output
+
 The tree maps onto PEFT directly:
 
     L<i>.w<j>   attach LoRA slot i, to be blended at weight w<j>
@@ -36,7 +48,7 @@ Usage:
 import argparse
 import os
 
-from generate_population import BINARY_OPS, UNARY_OPS, decode, levels
+from generate_population import UNARY_OPS, decode, levels
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -44,6 +56,11 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 BASE_RANK = 16
 
 COMBINATION_TYPE = {"CAT": "cat", "SVD": "svd", "LIN": "linear"}
+
+TEMPLATE = os.path.join(_HERE, "template_code.py")
+
+MARKER = "@@%s@@"
+TEMPLATE_COMMENT = "#~"
 
 
 class Step:
@@ -107,11 +124,11 @@ def plan(root):
     return steps, steps[-1].name
 
 
-# --- code emission --------------------------------------------------------
+# --- the blocks that fill the template ------------------------------------
 
 
-def build_notes(steps):
-    """The human-readable 'this is what gets built' lines for the docstring."""
+def build_order_block(steps):
+    """The 'this is what gets built' lines for the docstring."""
     notes = []
     for step in steps:
         if step.kind == "leaf":
@@ -126,216 +143,121 @@ def build_notes(steps):
     return notes
 
 
-def render(expression, steps, final, script_name, provenance, label):
-    """The complete text of one runnable script.
-
-    `script_name` is what the file will be called on disk, `provenance` the
-    sentence saying where the chromosome came from, and `label` the prefix the
-    script prints at startup. They are parameters so that both generate_runs.py
-    (a whole population) and test.py (one hand-set chromosome) emit the same
-    code with an honest header.
-    """
-    root, _ = decode(expression)
+def note_block(steps):
+    """The warning for trees PEFT will refuse, or nothing at all."""
     broken = [step for step in steps if step.broken]
-    out = []
+    if not broken:
+        return []
+    lines = ["NOTE - this tree cannot run as written."]
+    for step in broken:
+        lines.append('    %s is LIN, which PEFT maps to combination_type="linear", and'
+                     % step.name)
+        lines.append("    linear requires both inputs to have the same rank -- but %s has"
+                     % step.left[0])
+        lines.append("    rank %d and %s has rank %d. PEFT raises ValueError at that call."
+                     % (step.left[2], step.right[0], step.right[2]))
+    lines.append("    (cat sums its inputs' ranks, which is what pushes them apart.)")
+    lines.append("    Fixes: swap that LIN for SVD, pass svd_rank= to the CAT feeding it,")
+    lines.append("    or treat the individual as unfit and drop it from the population.")
+    lines.append("")
+    return lines
 
-    # --- docstring ---
-    out.append('"""')
-    out.append("%s - Combine LoRAs the way one GEP tree says to, then chat." % script_name)
-    out.append("")
-    out.append(provenance)
-    out.append("Written in the style of combination.py, which stacks two adapters with a")
-    out.append("fixed combination_type; here the tree decides both the shape and the weights.")
-    out.append("")
-    out.append("Expression")
-    out.append("    %s" % expression)
-    out.append("")
-    out.append("Tree")
-    for row in levels(root):
-        out.append("    %s" % ".".join(row))
-    out.append("")
-    out.append("How to read it")
-    out.append("    L<i>.w<j>   attach LoRA slot i, blended at weight w<j>")
-    out.append('    CAT(a, b)   add_weighted_adapter(..., combination_type="cat")')
-    out.append('    SVD(a, b)   add_weighted_adapter(..., combination_type="svd")')
-    out.append('    LIN(a, b)   add_weighted_adapter(..., combination_type="linear")')
-    out.append("")
-    out.append("A combined node is itself an adapter, so it feeds its parent like a leaf.")
-    out.append("Its children's weights are already folded in, so it enters its parent at")
-    out.append("weight 1.0.")
-    out.append("")
-    out.append("Build order (deepest first)")
-    out.extend(build_notes(steps))
 
-    if broken:
-        out.append("")
-        out.append("NOTE - this tree cannot run as written.")
-        for step in broken:
-            out.append("    %s is LIN, which PEFT maps to combination_type=\"linear\", and"
-                       % step.name)
-            out.append("    linear requires both inputs to have the same rank -- but %s has"
-                       % step.left[0])
-            out.append("    rank %d and %s has rank %d. PEFT raises ValueError at that call."
-                       % (step.left[2], step.right[0], step.right[2]))
-        out.append("    (cat sums its inputs' ranks, which is what pushes them apart.)")
-        out.append("    Fixes: swap that LIN for SVD, pass svd_rank= to the CAT feeding it,")
-        out.append("    or treat the individual as unfit and drop it from the population.")
-
-    out.append("")
-    out.append("Usage")
-    out.append("    python %s                          # demo prompts" % script_name)
-    out.append('    python %s "Help me plan my week."   # your own question' % script_name)
-    out.append('"""')
-    out.append("")
-
-    # --- imports and constants ---
-    out.append("import os")
-    out.append("import sys")
-    out.append("")
-    out.append("# Match the training/inference environment: disable Xet download acceleration.")
-    out.append('os.environ["HF_HUB_DISABLE_XET"] = "1"')
-    out.append("")
-    out.append("# Unsloth patches transformers and peft as it loads, so it has to be")
-    out.append("# imported before them or the optimizations are silently skipped.")
-    out.append("from unsloth import FastLanguageModel")
-    out.append("from unsloth.chat_templates import get_chat_template")
-    out.append("")
-    out.append("import torch")
-    out.append("from peft import PeftModel")
-    out.append("")
-    out.append("_HERE = os.path.dirname(os.path.abspath(__file__))")
-    out.append('_ROOT = os.path.dirname(os.path.dirname(_HERE))   # run/ -> project/ -> loras/')
-    out.append("")
-    out.append("# The base model every adapter was trained on (from adapter_config.json).")
-    out.append('BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"')
-    out.append("")
-    out.append('ADAPTER1_DIR = os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter")')
-    out.append('ADAPTER2_DIR = os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter")')
-    out.append("")
-    out.append("# The 5 LoRAs the trees refer to. Only two real adapter folders exist on disk,")
-    out.append("# so the slots reuse them under different names -- same trick lora_simul_01.py")
-    out.append("# uses. PEFT keeps two loads of one folder separate, so this is safe.")
-    out.append("LORA_SLOTS = {")
-    out.append('    "L1": ADAPTER1_DIR,')
-    out.append('    "L2": ADAPTER2_DIR,')
-    out.append('    "L3": ADAPTER1_DIR,')
-    out.append('    "L4": ADAPTER2_DIR,')
-    out.append('    "L5": ADAPTER1_DIR,')
-    out.append("}")
-    out.append("")
-    out.append("# What w1..w5 are worth. Placeholder spread -- retune for your search.")
-    out.append("WEIGHTS = {")
-    out.append('    "w1": 0.1,')
-    out.append('    "w2": 0.3,')
-    out.append('    "w3": 0.5,')
-    out.append('    "w4": 0.7,')
-    out.append('    "w5": 0.9,')
-    out.append("}")
-    out.append("")
-    out.append("MAX_SEQ = 2048")
-    out.append("")
-    out.append("# The prompts this individual is judged on.")
-    out.append("EVAL_PROMPTS = [")
-    out.append('    "Help me organize my desktop.",')
-    out.append('    "I have three assignments due this week. Just tell me what to do.",')
-    out.append('    "Make me a full study schedule for my exams.",')
-    out.append("]")
-    out.append("")
-    out.append('EXPRESSION = "%s"' % expression)
-    out.append("")
-    out.append('print(f"GPU available: {torch.cuda.is_available()}")')
-    out.append('print(f"%s: {EXPRESSION}")' % label)
-    out.append("")
-
-    # --- load base ---
-    out.append("# ---------------------------------------------------------------------------")
-    out.append("# Load the base model once, with no adapter attached yet.")
-    out.append("# ---------------------------------------------------------------------------")
-    out.append("model, tokenizer = FastLanguageModel.from_pretrained(")
-    out.append("    model_name=BASE_MODEL,")
-    out.append("    max_seq_length=MAX_SEQ,")
-    out.append("    dtype=None,")
-    out.append("    load_in_4bit=True,")
-    out.append(")")
-    out.append("")
-
-    # --- attach leaves ---
-    leaves = [step for step in steps if step.kind == "leaf"]
-    out.append("# ---------------------------------------------------------------------------")
-    out.append("# Attach the %d leaf adapter(s) the tree names, each under its own name so" % len(leaves))
-    out.append("# the same slot can appear more than once at different weights.")
-    out.append("# ---------------------------------------------------------------------------")
-    for index, step in enumerate(leaves):
+def attach_leaves_block(steps):
+    """One PeftModel.from_pretrained, then load_adapter for every other leaf."""
+    lines = []
+    for index, step in enumerate(step for step in steps if step.kind == "leaf"):
         target = 'LORA_SLOTS["%s"]' % step.symbol
         if index == 0:
-            out.append("model = PeftModel.from_pretrained(")
-            out.append("    model, %s, adapter_name=\"%s\"" % (target, step.name))
-            out.append(")")
+            lines.append("model = PeftModel.from_pretrained(")
+            lines.append('    model, %s, adapter_name="%s"' % (target, step.name))
+            lines.append(")")
         else:
-            out.append('model.load_adapter(%s, adapter_name="%s")' % (target, step.name))
-    out.append("")
+            lines.append('model.load_adapter(%s, adapter_name="%s")' % (target, step.name))
+    return lines
 
-    # --- combine ---
-    combines = [step for step in steps if step.kind == "combine"]
-    out.append("# ---------------------------------------------------------------------------")
-    out.append("# Fold the tree together, deepest node first. Each call leaves behind a new")
-    out.append("# adapter that later calls can use as an input.")
-    out.append("# ---------------------------------------------------------------------------")
-    for step in combines:
+
+def combine_nodes_block(steps):
+    """One add_weighted_adapter call per binary node, in post-order."""
+    lines = []
+    for step in (step for step in steps if step.kind == "combine"):
         if step.broken:
-            out.append("# !! PEFT raises ValueError here: linear needs equal ranks, but")
-            out.append("# !! %s is rank %d and %s is rank %d. See NOTE at the top."
-                       % (step.left[0], step.left[2], step.right[0], step.right[2]))
-        out.append("model.add_weighted_adapter(")
-        out.append('    adapters=["%s", "%s"],' % (step.left[0], step.right[0]))
-        out.append("    weights=[%s, %s]," % (step.left[1], step.right[1]))
-        out.append('    adapter_name="%s",' % step.name)
-        out.append('    combination_type="%s",' % COMBINATION_TYPE[step.symbol])
-        out.append(")   # rank %d" % step.rank)
-    out.append("")
-    out.append('FINAL_ADAPTER = "%s"' % final)
-    out.append("model.set_adapter(FINAL_ADAPTER)")
-    out.append('print(f"Active adapter: {model.active_adapters} (rank %d)")' % steps[-1].rank)
-    out.append("")
+            lines.append("# !! PEFT raises ValueError here: linear needs equal ranks, but")
+            lines.append("# !! %s is rank %d and %s is rank %d. See NOTE at the top."
+                         % (step.left[0], step.left[2], step.right[0], step.right[2]))
+        lines.append("model.add_weighted_adapter(")
+        lines.append('    adapters=["%s", "%s"],' % (step.left[0], step.right[0]))
+        lines.append("    weights=[%s, %s]," % (step.left[1], step.right[1]))
+        lines.append('    adapter_name="%s",' % step.name)
+        lines.append('    combination_type="%s",' % COMBINATION_TYPE[step.symbol])
+        lines.append(")   # rank %d" % step.rank)
+    return lines
 
-    # --- inference ---
-    out.append("# Same chat template used during training, so inputs are formatted identically.")
-    out.append('tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")')
-    out.append("")
-    out.append("# Switch to Unsloth's fast inference path (~2x faster generation).")
-    out.append("FastLanguageModel.for_inference(model)")
-    out.append("")
-    out.append("# Qwen ships max_length=32768 in its generation_config.json, and transformers")
-    out.append("# warns whenever that and max_new_tokens are both set. Clear it so the cap in")
-    out.append("# ask() is the only one in play -- max_new_tokens was winning anyway.")
-    out.append("model.generation_config.max_length = None")
-    out.append("")
-    out.append("")
-    out.append("def ask(question, max_new_tokens=250):")
-    out.append('    """Send one user turn through this tree\'s combined adapter."""')
-    out.append('    msgs = [{"role": "user", "content": question}]')
-    out.append("    inputs = tokenizer.apply_chat_template(")
-    out.append('        msgs, add_generation_prompt=True, return_tensors="pt", return_dict=True')
-    out.append("    ).to(model.device)")
-    out.append("    out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)")
-    out.append("    # Slice off the prompt tokens so we only decode the newly generated reply.")
-    out.append('    return tokenizer.decode(out[0][inputs["input_ids"].shape[-1]:],')
-    out.append("                            skip_special_tokens=True).strip()")
-    out.append("")
-    out.append("")
-    out.append('if __name__ == "__main__":')
-    out.append("    if len(sys.argv) > 1:")
-    out.append("        # Everything after the script name is treated as one question.")
-    out.append('        question = " ".join(sys.argv[1:])')
-    out.append('        print(f"\\nYOU: {question}")')
-    out.append('        print(f"COACH: {ask(question)}")')
-    out.append("    else:")
-    out.append("        # Score this individual by eyeballing its answers to the eval prompts.")
-    out.append("        for q in EVAL_PROMPTS:")
-    out.append('            print(f"\\nYOU: {q}")')
-    out.append('            print(f"COACH: {ask(q)}")')
 
+# --- filling the template -------------------------------------------------
+
+
+def load_template(path=TEMPLATE):
+    """Read the template, dropping its #~ notes."""
+    with open(path, encoding="utf-8") as handle:
+        return [line.rstrip("\n") for line in handle
+                if not line.lstrip().startswith(TEMPLATE_COMMENT)]
+
+
+def fill(template_lines, blocks, values):
+    """Substitute every marker.
+
+    A line whose only content is one marker (bare, or commented out so the
+    template stays valid Python) is replaced by that marker's block of lines.
+    Every other marker is replaced inside the line it sits on.
+    """
+    block_markers = {MARKER % name: lines for name, lines in blocks.items()}
+    out = []
+    for line in template_lines:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            stripped = stripped.lstrip("#").strip()
+        if stripped in block_markers:
+            out.extend(block_markers[stripped])
+            continue
+        for name, value in values.items():
+            line = line.replace(MARKER % name, value)
+        out.append(line)
+
+    leftover = [line for line in out if "@@" in line]
+    if leftover:
+        raise ValueError("template marker was never filled: %s" % leftover[0].strip())
     return "\n".join(out) + "\n"
+
+
+def render(expression, steps, final, script_name, provenance, label,
+           template_lines=None):
+    """The complete text of one runnable script, built from the template.
+
+    Callers pass the planning results from plan(); the template supplies
+    everything that does not vary between individuals.
+    """
+    template_lines = load_template() if template_lines is None else template_lines
+    root, _ = decode(expression)
+    leaves = [step for step in steps if step.kind == "leaf"]
+
+    blocks = {
+        "TREE": ["    %s" % ".".join(row) for row in levels(root)],
+        "BUILD_ORDER": build_order_block(steps),
+        "NOTE": note_block(steps),
+        "ATTACH_LEAVES": attach_leaves_block(steps),
+        "COMBINE_NODES": combine_nodes_block(steps),
+    }
+    values = {
+        "SCRIPT_NAME": script_name,
+        "PROVENANCE": provenance,
+        "LABEL": label,
+        "EXPRESSION": expression,
+        "LEAF_COUNT": str(len(leaves)),
+        "FINAL_ADAPTER": final,
+        "FINAL_RANK": str(steps[-1].rank),
+    }
+    return fill(template_lines, blocks, values)
 
 
 # --- driver ---------------------------------------------------------------
@@ -343,18 +265,23 @@ def render(expression, steps, final, script_name, provenance, label):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate one runnable script per tree in population.txt."
+        description="Generate one runnable script per tree, from template_code.py."
     )
     parser.add_argument("--input", default=os.path.join(_HERE, "population.txt"),
                         help="file of K-expressions, one per line (default population.txt)")
     parser.add_argument("--output-dir", default=os.path.join(_HERE, "run"),
                         help="folder to write the scripts into (default run)")
+    parser.add_argument("--template", default=TEMPLATE,
+                        help="the template to fill (default template_code.py)")
     args = parser.parse_args()
 
     with open(args.input, encoding="utf-8") as handle:
         expressions = [line.strip() for line in handle if line.strip()]
     if not expressions:
         raise SystemExit("%s has no expressions in it" % args.input)
+
+    # Read the template once; every individual reuses the same lines.
+    template_lines = load_template(args.template)
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -368,6 +295,7 @@ def main():
             script_name=name,
             provenance="Generated by generate_runs.py from line %d of population.txt." % number,
             label="Individual %d" % number,
+            template_lines=template_lines,
         )
         with open(os.path.join(args.output_dir, name), "w", encoding="utf-8") as handle:
             handle.write(text)
@@ -382,7 +310,8 @@ def main():
         handle.write("script      state rank  expression\n")
         handle.write("\n".join(index_lines) + "\n")
 
-    print("wrote %d scripts to %s" % (len(expressions), args.output_dir))
+    print("wrote %d scripts to %s (from %s)"
+          % (len(expressions), args.output_dir, os.path.basename(args.template)))
     print("%d runnable, %d blocked by PEFT's equal-rank rule for linear"
           % (runnable, len(expressions) - runnable))
     print("index: %s" % index_path)
