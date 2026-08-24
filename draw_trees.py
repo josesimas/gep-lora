@@ -42,7 +42,7 @@ def draw(expression):
     return lines
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Draw each row of population.txt as a tree."
     )
@@ -50,7 +50,7 @@ def main():
                         help="file of K-expressions, one per line (default population.txt)")
     parser.add_argument("--output", default=os.path.join(_HERE, "run/trees.txt"),
                         help="where to write the drawings (default trees.txt)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     with open(args.input, encoding="utf-8") as handle:
         expressions = [line.strip() for line in handle if line.strip()]

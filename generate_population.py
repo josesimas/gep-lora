@@ -187,7 +187,7 @@ def build_population(count, rng, max_depth, branch_prob, unique):
     return population
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Generate a population of GEP-style expression strings."
     )
@@ -205,7 +205,7 @@ def main():
                         help="reject duplicate expressions")
     parser.add_argument("--preview", type=int, default=0,
                         help="print the first N individuals as level rows")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.count < 1:
         parser.error("--count must be at least 1")

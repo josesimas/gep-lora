@@ -106,6 +106,45 @@ individuals as unfit and let selection drop them.
 
 Run everything from `project/`.
 
+### 0. `main.py` — the whole pipeline
+
+```bash
+python main.py
+```
+
+Runs every step in order — population, trees, runs — stopping at the first
+failure, since each step builds on the one before it.
+
+```bash
+python main.py runs
+```
+
+Runs a subset. Handy after editing `template_code.py`, when the population is
+still good. Steps always execute in pipeline order regardless of how you type
+them, and `python main.py --list` shows them without running anything.
+
+Population settings for a complete run live at the top of the file:
+
+```python
+COUNT = 100
+SEED = 42      # an int repeats the same population; None grows a fresh one
+UNIQUE = True
+```
+
+`SEED` controls the *chromosomes* only. Each generated script still draws its own
+LoRA blend weights at runtime — see `WEIGHT_SEED` for those.
+
+**Adding a step.** Append a `Step` to `STEPS`. It names a callable and the
+arguments to pass it, and the callable is just another script's `main(argv)`, so
+a step behaves exactly as if you ran that script yourself:
+
+```python
+Step("score", score_runs.main, ["--input", "run/index.txt"],
+     "score every runnable individual -> run/scores.txt"),
+```
+
+Any plain function taking a list of arguments works too.
+
 ### 1. `generate_population.py` → `run/population.txt`
 
 Grows random valid trees and writes one K-expression per line.
@@ -402,6 +441,7 @@ warning — the effective cap is unchanged.
 | Path | What it is |
 |---|---|
 | `plan.txt` | the original spec |
+| `main.py` | runs the whole pipeline; add future steps to its `STEPS` list |
 | `generate_population.py` | grows random trees → `run/population.txt` |
 | `run/population.txt` | 100 K-expressions, one per line |
 | `draw_trees.py` | draws every individual → `run/trees.txt` |
@@ -418,6 +458,8 @@ warning — the effective cap is unchanged.
 ### Pipeline
 
 ```
+main.py                       runs all of this in order
+   |
 plan.txt                      the rules
    |
 generate_population.py  -->   run/population.txt  (the chromosomes)
@@ -432,6 +474,12 @@ test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builder
 ```
 
 Regenerating from scratch:
+
+```bash
+python main.py
+```
+
+Or one stage at a time, which is what `main.py` does for you:
 
 ```bash
 python generate_population.py --count 100 --seed 42 --unique

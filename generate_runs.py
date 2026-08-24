@@ -329,7 +329,7 @@ def render(expression, steps, final, script_name, provenance, label,
 # --- driver ---------------------------------------------------------------
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Generate one runnable script per tree, from template_code.py."
     )
@@ -339,7 +339,7 @@ def main():
                         help="folder to write the scripts into (default run)")
     parser.add_argument("--template", default=TEMPLATE,
                         help="the template to fill (default template_code.py)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     with open(args.input, encoding="utf-8") as handle:
         expressions = [line.strip() for line in handle if line.strip()]
