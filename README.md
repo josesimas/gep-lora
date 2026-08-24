@@ -353,11 +353,20 @@ python evaluate_run.py
 | `--limit` | 0 (all) | score only the first N transcripts |
 | `--force` | off | re-score answers that already have a quality |
 
-The score lands in the exchange it grades:
+The score and the judge's reason land in the exchange they grade:
 
 ```json
-{ "question": "...", "answer": "...", "quality": 0.4 }
+{
+  "question": "...",
+  "answer": "...",
+  "quality": 0.4,
+  "reason": "generic advice, no concrete schedule"
+}
 ```
+
+`quality` is what selection reads; `reason` is what tells you whether the judge
+is grading the way you intended — worth reading when a whole individual scores
+0.0, or when scores cluster and you suspect the rubric rather than the answers.
 
 `0.0` is worst, `1.0` is best — that is the number a fitness function selects
 on. Every judge setting lives in one block at the top of the file, including

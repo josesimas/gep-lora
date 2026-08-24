@@ -9,7 +9,8 @@ system prompt, and writes the score back into that exchange:
     {
       "question": "Help me organize my desktop.",
       "answer":   "Before we lay anything out, ...",
-      "quality":  0.65
+      "quality":  0.65,
+      "reason":   "asks a useful clarifying question but gives no concrete step"
     }
 
 Quality runs 0.0 to 1.0, where 1.0 is the best answer and 0.0 the worst. That is
@@ -72,7 +73,7 @@ MAX_TOKENS = 2000
 
 # Seconds to wait for one grading call, and how many times to retry a call that
 # fails for a transient reason (connection dropped, 5xx, rate limit).
-TIMEOUT = 120
+TIMEOUT = 300
 RETRIES = 2
 RETRY_WAIT = 3
 
@@ -150,33 +151,42 @@ def discover_model(base_url, api_key, timeout):
     return chat_models[0]
 
 
-def parse_score(text):
-    """Pull the quality out of the judge's reply.
+def parse_reply(text):
+    """Pull the quality and the judge's reason out of its reply.
 
     Prefers well-formed JSON, and falls back to the first number in 0..1 that
     the text contains, so a model that wraps its JSON in prose or code fences
-    still scores rather than failing the whole run.
+    still scores rather than failing the whole run. The reason is best-effort:
+    the score is what the search needs, so a missing reason is never fatal, and
+    a reply truncated after the score still yields one.
     """
     cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
 
+    reason = ""
     try:
-        value = json.loads(cleaned).get("quality")
+        parsed = json.loads(cleaned)
+        value = parsed.get("quality")
+        reason = (parsed.get("reason") or "").strip()
     except (ValueError, AttributeError):
         match = re.search(r'"quality"\s*:\s*([0-9]*\.?[0-9]+)', cleaned)
         if not match:
             match = re.search(r"\b(0?\.[0-9]+|0|1(?:\.0+)?)\b", cleaned)
         value = match.group(1) if match else None
+        # The JSON did not parse -- usually truncated -- so recover the reason
+        # textually if enough of it made it through.
+        said = re.search(r'"reason"\s*:\s*"([^"]*)', cleaned)
+        reason = said.group(1).strip() if said else ""
 
     if value is None:
         raise ValueError("no quality score in judge reply: %r" % text[:200])
     score = float(value)
     if not 0.0 <= score <= 1.0:
         raise ValueError("quality %r is outside 0..1" % score)
-    return score
+    return score, reason
 
 
 def judge(question, answer, settings):
-    """Score one question/answer pair. Returns a float in 0..1."""
+    """Score one question/answer pair. Returns (quality, reason)."""
     payload = {
         "model": settings["model"],
         "temperature": TEMPERATURE,
@@ -203,7 +213,7 @@ def judge(question, answer, settings):
                 text = message.get("reasoning_content") or message.get("reasoning") or ""
             # A blank or unparseable reply is usually a truncation, so it is
             # worth another attempt rather than losing the answer's score.
-            return parse_score(text)
+            return parse_reply(text)
         except ValueError as error:
             last_error = error
         except urllib.error.HTTPError as error:
@@ -244,14 +254,17 @@ def score_file(path, settings, force):
             # Nothing to grade: an unanswered question is worth nothing, and
             # asking the judge about an empty string just wastes a call.
             exchange["quality"] = 0.0
+            exchange["reason"] = "no answer given"
             scored += 1
             print("    [%d] 0.00  (no answer)" % number)
             continue
 
         try:
-            exchange["quality"] = round(judge(exchange["question"], answer, settings), 3)
+            quality, reason = judge(exchange["question"], answer, settings)
+            exchange["quality"] = round(quality, 3)
+            exchange["reason"] = reason
             scored += 1
-            print("    [%d] %.2f" % (number, exchange["quality"]))
+            print("    [%d] %.2f  %s" % (number, exchange["quality"], reason))
         except RuntimeError as error:
             failed += 1
             print("    [%d] FAILED  %s" % (number, error))
