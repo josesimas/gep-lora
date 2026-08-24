@@ -52,7 +52,12 @@ from generate_population import UNARY_OPS, decode, levels
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Rank of the adapters on disk (r=16 in both adapter_config.json files).
+# Rank every leaf adapter is assumed to have. Both adapter_config.json files on
+# disk say r=16 today, and all 5 slots in template_code.py point at one of those
+# two. The rank arithmetic below -- and so the ok/BAD verdict in index.txt --
+# depends on that being true for every slot. Once the slots point at 5 genuinely
+# different LoRAs, read each one's adapter_config.json instead of this constant,
+# or the linear/cat rank checks will be computed against the wrong numbers.
 BASE_RANK = 16
 
 COMBINATION_TYPE = {"CAT": "cat", "SVD": "svd", "LIN": "linear"}

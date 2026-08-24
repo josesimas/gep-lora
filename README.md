@@ -318,19 +318,29 @@ Because the default `WEIGHT_SEED = None` redraws every execution, **the same tre
 scores differently each time it runs**. Set `WEIGHT_SEED` to an int in
 `template_code.py` (or per script) when you need a comparison you can repeat.
 
-**`LORA_SLOTS`** — the trees name five LoRAs, but only two real adapter folders
-exist on disk, so the slots reuse them under different names, the same trick
-`lora_simul_01.py` uses:
+**`LORA_SLOTS`** — one independent entry per slot, so any single line can be
+repointed at a different adapter without touching the others:
 
 ```python
 LORA_SLOTS = {
-    "L1": ADAPTER1_DIR,   # test001
-    "L2": ADAPTER2_DIR,   # test002
-    "L3": ADAPTER1_DIR,
-    "L4": ADAPTER2_DIR,
-    "L5": ADAPTER1_DIR,
+    "L1": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
+    "L2": os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter"),
+    "L3": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
+    "L4": os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter"),
+    "L5": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
 }
 ```
+
+Only two real adapter folders exist on disk today, so `L1`/`L3`/`L5` point at
+`test001` and `L2`/`L4` at `test002`. Loading one folder several times under
+different adapter names is fine — PEFT keeps them separate — the same trick
+`lora_simul_01.py` uses. Any entry may become an absolute path or a Hub repo id
+once there are five genuinely different adapters.
+
+⚠️ When you do repoint them, check `BASE_RANK` in `generate_runs.py`. It is
+hardcoded to 16 because both adapters on disk are `r=16`, and the whole rank
+analysis — including the ok/BAD verdicts — is computed from it. Adapters with a
+different `r` need that read from each slot's `adapter_config.json` instead.
 
 **`EVAL_PROMPTS`** — the three questions each individual answers. There is no
 fitness *score* yet; the scripts print replies for you to judge. Scoring is the

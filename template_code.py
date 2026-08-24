@@ -62,18 +62,24 @@ _ROOT = os.path.dirname(os.path.dirname(_HERE))   # run/ -> project/ -> loras/
 # The base model every adapter was trained on (from adapter_config.json).
 BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
 
-ADAPTER1_DIR = os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter")
-ADAPTER2_DIR = os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter")
-
-# The 5 LoRAs the trees refer to. Only two real adapter folders exist on disk,
-# so the slots reuse them under different names -- same trick lora_simul_01.py
-# uses. PEFT keeps two loads of one folder separate, so this is safe.
+# Where each of the 5 LoRAs the trees refer to lives. One independent entry per
+# slot: repoint any single line at a different adapter and nothing else in this
+# file has to change.
+#
+# Only two real adapter folders exist on disk today, so L1/L3/L5 currently point
+# at test001 and L2/L4 at test002. Loading one folder several times under
+# different adapter names is fine -- PEFT keeps them separate -- but two slots
+# backed by the same adapter differ only by the weight the tree hands them, so
+# the search sees less diversity than the 5 slots suggest.
+#
+# Any of these may become an absolute path, or a Hub repo id, once there are 5
+# genuinely different adapters.
 LORA_SLOTS = {
-    "L1": ADAPTER1_DIR,
-    "L2": ADAPTER2_DIR,
-    "L3": ADAPTER1_DIR,
-    "L4": ADAPTER2_DIR,
-    "L5": ADAPTER1_DIR,
+    "L1": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
+    "L2": os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter"),
+    "L3": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
+    "L4": os.path.join(_ROOT, "test002", "my_planning_coach-lora_adapter"),
+    "L5": os.path.join(_ROOT, "test001", "my_planning_coach-lora_adapter"),
 }
 
 # What w1..w5 are worth: a fresh random draw every run, strictly between 0 and
