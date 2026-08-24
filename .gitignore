@@ -4,6 +4,7 @@ population.txt
 trees.txt
 run
 test
+tmp
 
 # Ignore everything inside Lora* folders by default
 Lora00*/
