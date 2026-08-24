@@ -1,7 +1,7 @@
 """
 main.py - Run the whole pipeline end to end.
 
-    population -> trees -> runs
+    population -> trees -> runs -> process
 
 Each stage is one entry in STEPS below. A step names a callable and the
 arguments to hand it; the callable is just the `main(argv)` of one of the
@@ -23,6 +23,10 @@ or any plain function that accepts a list of arguments:
 Steps run in the order listed and stop at the first failure, so a later step can
 rely on the output of an earlier one.
 
+Note that the `process` step actually runs the generated scripts, loading the
+base model once per individual. `python main.py` is therefore a long operation;
+`python main.py population trees runs` stops short of it.
+
 Usage:
     python main.py                  # every step, in order
     python main.py runs             # just that step
@@ -39,13 +43,14 @@ from collections import namedtuple
 import draw_trees
 import generate_population
 import generate_runs
+import process_run
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 # --- settings for a complete run ------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 100
+COUNT = 5
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time. Note this is separate from the LoRA blend
@@ -78,6 +83,10 @@ STEPS = [
          "draw each chromosome as a tree -> run/trees.txt"),
     Step("runs", generate_runs.main, [],
          "fill template_code.py, one runnable script per chromosome -> run/"),
+    # The expensive one: a base-model load per individual. Keep COUNT small
+    # while iterating, or run the earlier steps on their own.
+    Step("process", process_run.main, [],
+         "execute each generated script -> run/output_NNN.txt, run/results.txt"),
 ]
 
 

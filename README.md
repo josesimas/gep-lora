@@ -112,8 +112,11 @@ Run everything from `project/`.
 python main.py
 ```
 
-Runs every step in order — population, trees, runs — stopping at the first
-failure, since each step builds on the one before it.
+Runs every step in order — population, trees, runs, process — stopping at the
+first failure, since each step builds on the one before it.
+
+The `process` step executes the generated scripts, one model load per
+individual, so a full `python main.py` is a long operation. `python main.py population trees runs` stops short of it.
 
 ```bash
 python main.py runs
@@ -245,7 +248,48 @@ To change what every generated script looks like, edit `template_code.py` and
 re-run `generate_runs.py`. Only add code to the generator itself when the new
 part varies per individual.
 
-### 4. `test.py` → `run/test_*`
+### 4. `process_run.py` → `run/output_NNN.txt`, `run/results.txt`
+
+`generate_runs.py` writes the scripts; this one runs them.
+
+```bash
+python process_run.py
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--run-dir` | `run` | folder holding the generated scripts |
+| `--limit` | 0 (all) | run only the first N individuals |
+| `--include-blocked` | off | also run the ones `index.txt` marks `BAD` |
+| `--timeout` | 900 | seconds to allow each script |
+
+Each individual runs as a **separate process** — every script loads the base
+model at import and attaches its own adapters, so they cannot share an
+interpreter. That makes this the expensive step: one model load per individual.
+`--limit 3` is the way to smoke-test before committing to a full sweep.
+
+Output goes next to the scripts:
+
+```
+run/output_007.txt   everything run_007.py printed, replies included
+run/results.txt      script, state, result, seconds, expression
+```
+
+`BAD` individuals are skipped by default. They stop at their bad combine step,
+but only *after* paying for a full model load, so running them costs the same as
+a real evaluation and tells you what `index.txt` already said.
+`--include-blocked` runs them anyway and captures the error.
+
+**Individual failures are results, not pipeline failures.** A chromosome that
+crashes is recorded in `results.txt` and the sweep carries on; the last line of
+its output is echoed so a systemic problem is obvious. Only a sweep where
+*nothing* ran returns a failing exit code.
+
+Children are launched with `sys.executable`, so they inherit whichever
+interpreter you started this with — run it with the venv's python (see the PATH
+gotcha below) or every child will fail on `import unsloth`.
+
+### 5. `test.py` → `run/test_*`
 
 Try one chromosome by hand without touching `population.txt`. Set the variable
 at the top of the file and run it:
@@ -451,6 +495,7 @@ warning — the effective cap is unchanged.
 | `run/run_001.py` … `run_100.py` | the generated combination scripts |
 | `run/index.txt` | script → state, final rank, expression |
 | `training_set.txt` | the eval prompts, one per line, read by every generated script |
+| `process_run.py` | runs every generated script → `run/output_NNN.txt`, `run/results.txt` |
 | `test.py` | try a single chromosome → `run/test_*` |
 | `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `test.py` |
 | `combination.py` | the original two-adapter script the generated code is modelled on |
@@ -469,6 +514,10 @@ generate_population.py  -->   run/population.txt  (the chromosomes)
    +--------------------->    generate_runs.py -> run/run_NNN.py   (runnable blends)
                                   +               run/index.txt
                               template_code.py    (the shape of those scripts)
+
+                                  |
+                              process_run.py -> run/output_NNN.txt (the replies)
+                                                run/results.txt
 
 test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
 ```
