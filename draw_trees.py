@@ -46,9 +46,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Draw each row of population.txt as a tree."
     )
-    parser.add_argument("--input", default=os.path.join(_HERE, "tmp/population.txt"),
+    parser.add_argument("--input", default=os.path.join(_HERE, "run/population.txt"),
                         help="file of K-expressions, one per line (default population.txt)")
-    parser.add_argument("--output", default=os.path.join(_HERE, "tmp/trees.txt"),
+    parser.add_argument("--output", default=os.path.join(_HERE, "run/trees.txt"),
                         help="where to write the drawings (default trees.txt)")
     args = parser.parse_args()
 
@@ -67,6 +67,8 @@ def main():
             bad += 1
         blocks.append("\n".join(["#%d" % number] + body))
 
+    # run/ may not exist yet on a clean checkout.
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as handle:
         handle.write("\n\n\n".join(blocks) + "\n")
 

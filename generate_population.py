@@ -193,7 +193,7 @@ def main():
     )
     parser.add_argument("--count", type=int, default=100,
                         help="how many strings to generate (default 100)")
-    parser.add_argument("--output", default=os.path.join(_HERE, "tmp/population.txt"),
+    parser.add_argument("--output", default=os.path.join(_HERE, "run/population.txt"),
                         help="output file (default population.txt next to this script)")
     parser.add_argument("--seed", type=int, default=None,
                         help="RNG seed, for a reproducible population")
@@ -218,6 +218,8 @@ def main():
     population = build_population(args.count, rng, args.max_depth,
                                   args.branch_prob, args.unique)
 
+    # run/ may not exist yet on a clean checkout.
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as handle:
         for expression in population:
             handle.write(expression + "\n")

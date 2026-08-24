@@ -106,7 +106,7 @@ individuals as unfit and let selection drop them.
 
 Run everything from `project/`.
 
-### 1. `generate_population.py` → `tmp/population.txt`
+### 1. `generate_population.py` → `run/population.txt`
 
 Grows random valid trees and writes one K-expression per line.
 
@@ -117,7 +117,7 @@ python generate_population.py --count 100 --seed 42 --unique
 | Flag | Default | Meaning |
 |---|---|---|
 | `--count` | 100 | how many individuals |
-| `--output` | `tmp/population.txt` | output file |
+| `--output` | `run/population.txt` | output file |
 | `--seed` | none | RNG seed, for a reproducible population |
 | `--max-depth` | 4 | deepest level an *operator* may sit at (root is level 0) |
 | `--branch-prob` | 0.6 | chance an operator is arity 2 and keeps the branch growing |
@@ -132,7 +132,7 @@ before being written, so nothing lands in the file that cannot be read back.
 The committed file was generated with `--seed 42 --unique`: 100 individuals,
 5–32 symbols each (mean 9.5), tree depths 2–5.
 
-### 2. `draw_trees.py` → `tmp/trees.txt`
+### 2. `draw_trees.py` → `run/trees.txt`
 
 Draws every row of `population.txt` in the layout `plan.txt` uses — index,
 expression, blank line, then one row per tree level.
@@ -143,8 +143,8 @@ python draw_trees.py
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--input` | `tmp/population.txt` | file of K-expressions, one per line |
-| `--output` | `tmp/trees.txt` | where to write the drawings |
+| `--input` | `run/population.txt` | file of K-expressions, one per line |
+| `--output` | `run/trees.txt` | where to write the drawings |
 
 Blocks are separated by two blank lines, so the blank line inside each block
 stays unambiguous. Trailing symbols that the tree does not consume are reported
@@ -162,7 +162,7 @@ python generate_runs.py
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--input` | `tmp/population.txt` | file of K-expressions, one per line |
+| `--input` | `run/population.txt` | file of K-expressions, one per line |
 | `--output-dir` | `run` | folder to write the scripts into |
 | `--template` | `template_code.py` | the template to fill |
 
@@ -206,7 +206,7 @@ To change what every generated script looks like, edit `template_code.py` and
 re-run `generate_runs.py`. Only add code to the generator itself when the new
 part varies per individual.
 
-### 4. `test.py` → `test/`
+### 4. `test.py` → `run/test_*`
 
 Try one chromosome by hand without touching `population.txt`. Set the variable
 at the top of the file and run it:
@@ -225,8 +225,10 @@ Or pass one straight in:
 python test.py CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
 ```
 
-It prints the tree, the build plan and a verdict, then writes `test/tree.txt`
-(same format as `trees.txt`) and `test/run.py` (same script as those in `run/`):
+It prints the tree, the build plan and a verdict, then writes
+`run/test_tree.txt` (same format as `trees.txt`) and `run/test_run.py` (same
+script as those in `run/`). The `test_` prefix keeps them apart from the
+population's `run_NNN.py` and `trees.txt`:
 
 ```
 chromosome: CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
@@ -400,17 +402,17 @@ warning — the effective cap is unchanged.
 | Path | What it is |
 |---|---|
 | `plan.txt` | the original spec |
-| `generate_population.py` | grows random trees → `tmp/population.txt` |
-| `tmp/population.txt` | 100 K-expressions, one per line |
-| `draw_trees.py` | draws every individual → `tmp/trees.txt` |
-| `tmp/trees.txt` | 100 tree drawings in level-row layout |
+| `generate_population.py` | grows random trees → `run/population.txt` |
+| `run/population.txt` | 100 K-expressions, one per line |
+| `draw_trees.py` | draws every individual → `run/trees.txt` |
+| `run/trees.txt` | 100 tree drawings in level-row layout |
 | `generate_runs.py` | fills `template_code.py`, one runnable script per individual → `run/` |
 | `template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
 | `run/run_001.py` … `run_100.py` | the generated combination scripts |
 | `run/index.txt` | script → state, final rank, expression |
 | `training_set.txt` | the eval prompts, one per line, read by every generated script |
-| `test.py` | try a single chromosome → `test/` |
-| `test/tree.txt`, `test/run.py` | output for the chromosome currently set in `test.py` |
+| `test.py` | try a single chromosome → `run/test_*` |
+| `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `test.py` |
 | `combination.py` | the original two-adapter script the generated code is modelled on |
 
 ### Pipeline
@@ -418,15 +420,15 @@ warning — the effective cap is unchanged.
 ```
 plan.txt                      the rules
    |
-generate_population.py  -->   tmp/population.txt  (the chromosomes)
+generate_population.py  -->   run/population.txt  (the chromosomes)
    |                              |
-   |                          draw_trees.py  -->  tmp/trees.txt    (readable trees)
+   |                          draw_trees.py  -->  run/trees.txt    (readable trees)
    |                              |
    +--------------------->    generate_runs.py -> run/run_NNN.py   (runnable blends)
                                   +               run/index.txt
                               template_code.py    (the shape of those scripts)
 
-test.py  -->  test/tree.txt + test/run.py         (one chromosome, same builders)
+test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
 ```
 
 Regenerating from scratch:

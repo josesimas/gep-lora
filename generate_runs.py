@@ -333,7 +333,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate one runnable script per tree, from template_code.py."
     )
-    parser.add_argument("--input", default=os.path.join(_HERE, "tmp", "population.txt"),
+    parser.add_argument("--input", default=os.path.join(_HERE, "run", "population.txt"),
                         help="file of K-expressions, one per line (default population.txt)")
     parser.add_argument("--output-dir", default=os.path.join(_HERE, "run"),
                         help="folder to write the scripts into (default run)")
