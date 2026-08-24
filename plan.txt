@@ -1,0 +1,31 @@
+Create a python script that generates a list of strings and saves them to a file named population.txt. Each string is composed of a random number operators and variables separated by dots (.).The first item must always be the CAT operator. 
+
+Operators with arity 2: CAT, SVD, LIN
+Operators with arity 1: L1, L2, L3, L4, L5
+Variables: w1, w2, w3, w4, w5
+
+The strings will be expressed as trees (as in Gene Expression Programming) The operators CAT, SVD and LIN can only accept other operators whereas the operators L1, L2, L3, L4 and L5 can only accept variables.
+
+Example 1
+CAT.L1.L2.w5.w2.w2.w1
+
+CAT
+L1.L2
+w5.w2
+
+Example 2
+CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+
+CAT
+SVD.LIN
+L1.L2.L3.L1
+w3.w3.w2.w1
+
+CAT.L1.LIN.w1.SVD.L3.L5.L1.w2.w2.w1
+  
+CAT
+L1.LIN
+w1.SVD.L3
+  L5.L1.w2
+  w2.w1
+
