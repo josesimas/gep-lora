@@ -1,7 +1,7 @@
 """
 main.py - Run the whole pipeline end to end.
 
-    population -> trees -> runs -> process
+    population -> trees -> runs -> process -> evaluate
 
 Each stage is one entry in STEPS below. A step names a callable and the
 arguments to hand it; the callable is just the `main(argv)` of one of the
@@ -23,9 +23,11 @@ or any plain function that accepts a list of arguments:
 Steps run in the order listed and stop at the first failure, so a later step can
 rely on the output of an earlier one.
 
-Note that the `process` step actually runs the generated scripts, loading the
-base model once per individual. `python main.py` is therefore a long operation;
-`python main.py population trees runs` stops short of it.
+The last two steps are the slow ones. `process` runs the generated scripts,
+loading the base model once per individual; `evaluate` then makes one grading
+call per answer against the judge model configured in evaluate_run.py, which
+must be reachable. `python main.py` is therefore a long operation, and
+`python main.py population trees runs` stops short of both.
 
 Usage:
     python main.py                  # every step, in order
@@ -41,6 +43,7 @@ import time
 from collections import namedtuple
 
 import draw_trees
+import evaluate_run
 import generate_population
 import generate_runs
 import process_run
@@ -87,6 +90,9 @@ STEPS = [
     # while iterating, or run the earlier steps on their own.
     Step("process", process_run.main, [],
          "execute each generated script -> run/output_NNN.txt, run/results.txt"),
+    # Also slow, and needs the judge endpoint up: one grading call per answer.
+    Step("evaluate", evaluate_run.main, [],
+         "score every answer with the judge -> quality in run/output_result_NNN.json"),
 ]
 
 

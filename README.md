@@ -112,11 +112,17 @@ Run everything from `project/`.
 python main.py
 ```
 
-Runs every step in order — population, trees, runs, process — stopping at the
-first failure, since each step builds on the one before it.
+Runs every step in order — population, trees, runs, process, evaluate —
+stopping at the first failure, since each step builds on the one before it.
 
-The `process` step executes the generated scripts, one model load per
-individual, so a full `python main.py` is a long operation. `python main.py population trees runs` stops short of it.
+The last two steps are the slow ones: `process` executes the generated scripts,
+one base-model load per individual, and `evaluate` then makes one grading call
+per answer. A full `python main.py` is therefore a long operation, and
+`python main.py population trees runs` stops short of both.
+
+Run it with the **venv's python** — `process` launches each generated script
+with `sys.executable`, so the wrong interpreter fails every individual. It now
+checks this up front rather than discovering it once per individual.
 
 ```bash
 python main.py runs
@@ -328,7 +334,60 @@ Children are launched with `sys.executable`, so they inherit whichever
 interpreter you started this with — run it with the venv's python (see the PATH
 gotcha below) or every child will fail on `import unsloth`.
 
-### 5. `test.py` → `run/test_*`
+### 5. `evaluate_run.py` → `quality` in each transcript
+
+Scores every answer with a judge model — a *different* model from the blended
+one that produced them.
+
+```bash
+python evaluate_run.py
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--run-dir` | `run` | folder holding the transcripts |
+| `--base-url` | `http://172.22.208.1:1234/v1` | OpenAI-compatible endpoint |
+| `--api-key` | `$JUDGE_API_KEY` | bearer token; LMStudio ignores it |
+| `--model` | endpoint's first chat model | judge model id |
+| `--timeout` | 120 | seconds per grading call |
+| `--limit` | 0 (all) | score only the first N transcripts |
+| `--force` | off | re-score answers that already have a quality |
+
+The score lands in the exchange it grades:
+
+```json
+{ "question": "...", "answer": "...", "quality": 0.4 }
+```
+
+`0.0` is worst, `1.0` is best — that is the number a fitness function selects
+on. Every judge setting lives in one block at the top of the file, including
+`SYSTEM_PROMPT`, which **is** the fitness criterion: it grades relevance,
+usefulness, specificity, coherence and appropriateness, with anchors at 1.0 /
+0.7 / 0.5 / 0.3 / 0.0. Tune it deliberately — the whole search optimises toward
+whatever it rewards.
+
+**Local by default, cloud by swap.** The judge speaks the OpenAI-compatible
+`/v1/chat/completions` API, so a hosted model is a URL change:
+
+```bash
+python evaluate_run.py --model gpt-4o-mini --base-url https://api.openai.com/v1
+```
+
+Claude is *not* OpenAI-compatible — using a Claude model as the judge needs a
+separate backend via the `anthropic` SDK.
+
+**Resumable.** An exchange that already has a `quality` is skipped unless
+`--force`, and each file is saved as it completes, so an interrupted sweep keeps
+its work. An empty answer scores `0.0` without spending a call.
+
+Reply parsing is deliberately tolerant — bare JSON, code-fenced JSON, JSON
+wrapped in prose, and a bare number all work. Two traps worth knowing about,
+both hit on the first real run: the score is requested **before** the reason so
+a long reason cannot truncate it away, and `MAX_TOKENS` is generous because a
+reasoning judge spends its budget thinking and returns an empty message if it
+runs out mid-thought.
+
+### 6. `test.py` → `run/test_*`
 
 Try one chromosome by hand without touching `population.txt`. Set the variable
 at the top of the file and run it:
@@ -535,6 +594,7 @@ warning — the effective cap is unchanged.
 | `run/index.txt` | script → state, final rank, expression |
 | `training_set.txt` | the eval prompts, one per line, read by every generated script |
 | `process_run.py` | runs every generated script → `run/output_NNN.txt`, `run/results.txt` |
+| `evaluate_run.py` | scores every answer with a judge model → `quality` in the transcripts |
 | `test.py` | try a single chromosome → `run/test_*` |
 | `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `test.py` |
 | `combination.py` | the original two-adapter script the generated code is modelled on |
@@ -556,6 +616,7 @@ generate_population.py  -->   run/population.txt  (the chromosomes)
 
                                   |
                               process_run.py -> run/output_result_NNN.json (replies + weights)
+                                  evaluate_run.py -> + quality per answer
                                                 run/results.txt
 
 test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)

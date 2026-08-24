@@ -188,6 +188,26 @@ def execute(run_dir, individual, timeout):
     return Outcome(code, elapsed, output_path, result_path, len(transcript))
 
 
+def check_interpreter():
+    """Fail fast if this interpreter cannot import what the scripts need.
+
+    Each generated script is launched with sys.executable, so running this with
+    the wrong python means every individual dies on `import unsloth` -- after
+    paying for a process launch each time, and leaving a population's worth of
+    empty transcripts behind. find_spec only looks the module up, so the check
+    costs nothing next to actually importing it.
+    """
+    probe = ("import importlib.util, sys; "
+             "sys.exit(0 if importlib.util.find_spec('unsloth') else 1)")
+    if subprocess.run([sys.executable, "-c", probe]).returncode:
+        raise SystemExit(
+            "%s cannot import unsloth, and the generated scripts run under this "
+            "same interpreter -- every one of them would fail. Re-run with the "
+            "project venv's python (see the PATH gotcha in README.md)."
+            % sys.executable
+        )
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Run every generated script and collect its output."
@@ -206,6 +226,8 @@ def main(argv=None):
     # folder, so a relative --run-dir would be resolved against itself a second
     # time and the script path would come out doubled.
     args.run_dir = os.path.abspath(args.run_dir)
+
+    check_interpreter()
 
     individuals = read_index(args.run_dir)
     selected = [one for one in individuals
