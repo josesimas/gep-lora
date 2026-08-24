@@ -1,0 +1,370 @@
+# GEP LoRA combination search
+
+Tooling that turns Gene Expression Programming trees into runnable LoRA-blending
+scripts. A chromosome describes *how to fold several LoRA adapters into one*, and
+each chromosome becomes a standalone Python file that builds that blend and chats
+through it.
+
+The spec these tools implement is [plan.txt](plan.txt).
+
+---
+
+## The chromosome
+
+An individual is a **K-expression** (Karva notation): the tree written out in
+level-order — breadth first, left to right — one symbol per position, joined with
+dots.
+
+```
+CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+```
+
+Reading it back is the same walk in reverse: take the symbols in order and hand
+each one out as the next child that is still missing. That gives the tree:
+
+```
+CAT
+SVD.LIN
+L1.L2.L3.L1
+w3.w3.w2.w1
+```
+
+No brackets are needed, because every symbol's arity is fixed.
+
+### Alphabet
+
+| Symbol | Arity | Children must be | Meaning |
+|---|---|---|---|
+| `CAT` `SVD` `LIN` | 2 | operators | combine two blends |
+| `L1`–`L5` | 1 | a variable | one LoRA adapter |
+| `w1`–`w5` | 0 | — | a blend weight |
+
+The first symbol is always `CAT`.
+
+Because `L*` only accepts variables and `CAT`/`SVD`/`LIN` only accept operators,
+every leaf `w` sits under an `L`, and every `L` sits under a binary operator.
+
+### How it maps onto PEFT
+
+The three binary operators are exactly PEFT's `add_weighted_adapter`
+combination types, which is what makes the whole scheme run:
+
+| Tree | PEFT call |
+|---|---|
+| `CAT(a, b)` | `add_weighted_adapter(..., combination_type="cat")` |
+| `SVD(a, b)` | `add_weighted_adapter(..., combination_type="svd")` |
+| `LIN(a, b)` | `add_weighted_adapter(..., combination_type="linear")` |
+| `L<i>.w<j>` | attach LoRA slot *i*, to be blended at weight `w<j>` |
+
+A combined node is itself a named adapter, so it feeds its parent exactly like a
+leaf does. Its children's weights are already folded into it, so **it enters its
+own parent at weight 1.0**.
+
+This is the same idea as [combination.py](combination.py), which stacks two
+adapters with a hardcoded `combination_type="cat"`. Here the tree decides both
+the shape and the weights.
+
+---
+
+## The rank rule (why 6 of 100 individuals can't run)
+
+PEFT constrains the rank of the adapter each call produces
+(`peft/tuners/lora/model.py`, `_check_add_weighted_adapter`):
+
+| Operator | Resulting rank |
+|---|---|
+| `cat` | **sum** of the two inputs' ranks |
+| `svd` | **max** of the two inputs' ranks (when no `svd_rank` is passed) |
+| `linear` | both inputs **must have the same rank**, else `ValueError` |
+
+Both adapters on disk are `r=16`, so a leaf is rank 16. `CAT` doubles rank as you
+nest it. Therefore **a `LIN` sitting above a `CAT` usually cannot run** — its two
+inputs have drifted to different ranks.
+
+This is a property of the search space, not a bug. Every node's rank is computed
+statically at generation time, so you find out before running anything rather
+than crashing mid-script. In the current population, **94 of 100 run and 6 are
+blocked**. Blocked scripts are still written, with a `NOTE` naming the offending
+node and both ranks, and are marked `BAD` in `run/index.txt`.
+
+If you want the blocked shapes to survive, the options are: map `LIN` to `svd`
+when ranks diverge, pass `svd_rank=` to the `CAT` feeding it, or treat those
+individuals as unfit and let selection drop them.
+
+---
+
+## Scripts
+
+Run everything from `project/`.
+
+### 1. `generate_population.py` → `population.txt`
+
+Grows random valid trees and writes one K-expression per line.
+
+```bash
+python generate_population.py --count 100 --seed 42 --unique
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--count` | 100 | how many individuals |
+| `--output` | `population.txt` | output file |
+| `--seed` | none | RNG seed, for a reproducible population |
+| `--max-depth` | 4 | deepest level an *operator* may sit at (root is level 0) |
+| `--branch-prob` | 0.6 | chance an operator is arity 2 and keeps the branch growing |
+| `--unique` | off | reject duplicate expressions |
+| `--preview` | 0 | also print the first N as level rows |
+
+Size varies per individual: a max operator depth is drawn from `1..--max-depth`,
+then `--branch-prob` decides whether each operator keeps growing (arity 2) or
+closes the branch off with an `L*`. Every expression is decoded and re-encoded
+before being written, so nothing lands in the file that cannot be read back.
+
+The committed file was generated with `--seed 42 --unique`: 100 individuals,
+5–32 symbols each (mean 9.5), tree depths 2–5.
+
+### 2. `draw_trees.py` → `trees.txt`
+
+Draws every row of `population.txt` in the layout `plan.txt` uses — index,
+expression, blank line, then one row per tree level.
+
+```bash
+python draw_trees.py
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--input` | `population.txt` | file of K-expressions, one per line |
+| `--output` | `trees.txt` | where to write the drawings |
+
+Blocks are separated by two blank lines, so the blank line inside each block
+stays unambiguous. Trailing symbols that the tree does not consume are reported
+as `(unused tail: ...)` rather than dropped silently — `plan.txt`'s first example
+has two such symbols.
+
+### 3. `generate_runs.py` → `run/`
+
+Turns every individual into a self-contained runnable script.
+
+```bash
+python generate_runs.py
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--input` | `population.txt` | file of K-expressions, one per line |
+| `--output-dir` | `run` | folder to write the scripts into |
+
+Produces `run/run_001.py` … `run/run_100.py` plus `run/index.txt`:
+
+```
+script      state rank  expression
+run_001.py  ok   rank 32   CAT.L1.L3.w2.w2
+...
+run_073.py  BAD  rank 48   CAT.L1.LIN.w5.CAT.L3.L5.L1.w2.w4.w5
+```
+
+Each generated script carries its tree and build plan in its docstring, then:
+loads the base model once, attaches each leaf adapter under its own name, folds
+the tree deepest-node-first with `add_weighted_adapter`, activates the final
+adapter, and answers the eval prompts.
+
+Each *occurrence* of an `L*` gets its own adapter name (`n1_L2`, `n4_L1`, …), so
+one slot can appear several times at different weights. PEFT keeps two loads of
+the same folder separate, so this is safe.
+
+### 4. `test.py` → `test/`
+
+Try one chromosome by hand without touching `population.txt`. Set the variable
+at the top of the file and run it:
+
+```python
+CHROMOSOME = "CAT.L1.L2.w5.w2.w2.w1"
+```
+
+```bash
+python test.py
+```
+
+Or pass one straight in:
+
+```bash
+python test.py CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+```
+
+It prints the tree, the build plan and a verdict, then writes `test/tree.txt`
+(same format as `trees.txt`) and `test/run.py` (same script as those in `run/`):
+
+```
+chromosome: CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+
+tree
+    CAT
+    SVD.LIN
+    L1.L2.L3.L1
+    w3.w3.w2.w1
+
+build order (deepest first)
+    n1_L1      = L1 @ w3                       rank 16
+    n2_L2      = L2 @ w3                       rank 16
+    n3_SVD     = SVD(n1_L1, n2_L2)             rank 16
+    n4_L3      = L3 @ w2                       rank 16
+    n5_L1      = L1 @ w1                       rank 16
+    n6_LIN     = LIN(n4_L3, n5_L1)             rank 16
+    n7_CAT     = CAT(n3_SVD, n6_LIN)           rank 32   <-- generation runs through this one
+
+verdict: ok -- 7 adapters, final rank 32
+```
+
+`test.py` calls the same builders the batch tools use (`draw_trees.draw`,
+`generate_runs.plan/render`), so a chromosome tested here produces byte-identical
+output to what it would get as a line in `population.txt`.
+
+Bad input is reported rather than half-processed:
+
+| Input | Result |
+|---|---|
+| `CAT.w1.L2.w5` | `not a valid chromosome: w1 is not a legal child of CAT` |
+| `SVD.L1.L2.w1.w2` | `not a valid chromosome: expression must start with CAT` |
+| a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
+| `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
+
+---
+
+## Running a generated script
+
+The generated scripts need the project venv, which lives one level up at
+`D:\sage-is\loras\.venv` (Python 3.11.9, torch 2.11.0+cu128, unsloth, peft 0.20.0).
+
+```bash
+D:\sage-is\loras\.venv\Scripts\python.exe run\run_004.py
+```
+
+Then either the eval prompts, or your own question:
+
+```bash
+D:\sage-is\loras\.venv\Scripts\python.exe run\run_004.py "Help me plan my week."
+```
+
+### PATH gotcha
+
+This machine has Python 3.13 first on PATH, and that one has no torch. A
+`(.venv)` prompt only proves `PROMPT` was set at some point — it does not prove
+`.venv\Scripts` is on *this* window's PATH, and the two drift apart across a new
+`cmd`, a `cd /d`, or a window opened from elsewhere. Symptom:
+
+```
+ModuleNotFoundError: No module named 'unsloth'
+```
+
+Check what is actually resolving, and fix it:
+
+```bash
+where python
+```
+
+```bash
+call D:\sage-is\loras\.venv\Scripts\activate.bat
+```
+
+Using the venv's full interpreter path always works regardless of PATH.
+
+Note that the repo-root `activate.bat` ends with `cmd /k`, which spawns a
+*nested* shell — if you run that one, use the new prompt it gives you rather than
+the original window.
+
+---
+
+## Things to tune
+
+Both live as tables at the top of every generated script, so they are easy to
+change per individual or globally in `generate_runs.py`.
+
+**`WEIGHTS`** — nothing in the repo defines what `w1`–`w5` are worth, so a
+placeholder spread is used:
+
+```python
+WEIGHTS = {"w1": 0.1, "w2": 0.3, "w3": 0.5, "w4": 0.7, "w5": 0.9}
+```
+
+**`LORA_SLOTS`** — the trees name five LoRAs, but only two real adapter folders
+exist on disk, so the slots reuse them under different names, the same trick
+`lora_simul_01.py` uses:
+
+```python
+LORA_SLOTS = {
+    "L1": ADAPTER1_DIR,   # test001
+    "L2": ADAPTER2_DIR,   # test002
+    "L3": ADAPTER1_DIR,
+    "L4": ADAPTER2_DIR,
+    "L5": ADAPTER1_DIR,
+}
+```
+
+**`EVAL_PROMPTS`** — the three questions each individual answers. There is no
+fitness *score* yet; the scripts print replies for you to judge. Scoring is the
+natural next piece, and it plugs in where `EVAL_PROMPTS` is consumed.
+
+**Reply length** — `ask(question, max_new_tokens=250)` caps each reply. Qwen ships
+`max_length=32768` in its `generation_config.json`, and transformers warns when
+both that and `max_new_tokens` are set, so the generated scripts clear it right
+after `for_inference`:
+
+```python
+model.generation_config.max_length = None
+```
+
+`max_new_tokens` was taking precedence regardless, so this only silences the
+warning — the effective cap is unchanged.
+
+Note that `L1`, `L3`, `L5` currently point at the same folder, as do `L2` and
+`L4`. Two slots backed by the same adapter differ only by the weight the tree
+gives them, which limits how much real diversity the search can find until there
+are five genuinely distinct adapters.
+
+---
+
+## Files
+
+| Path | What it is |
+|---|---|
+| `plan.txt` | the original spec |
+| `generate_population.py` | grows random trees → `population.txt` |
+| `population.txt` | 100 K-expressions, one per line |
+| `draw_trees.py` | draws every individual → `trees.txt` |
+| `trees.txt` | 100 tree drawings in level-row layout |
+| `generate_runs.py` | emits one runnable script per individual → `run/` |
+| `run/run_001.py` … `run_100.py` | the generated combination scripts |
+| `run/index.txt` | script → state, final rank, expression |
+| `test.py` | try a single chromosome → `test/` |
+| `test/tree.txt`, `test/run.py` | output for the chromosome currently set in `test.py` |
+| `combination.py` | the original two-adapter script the generated code is modelled on |
+
+### Pipeline
+
+```
+plan.txt                      the rules
+   |
+generate_population.py  -->   population.txt      (the chromosomes)
+   |                              |
+   |                          draw_trees.py  -->  trees.txt        (readable trees)
+   |                              |
+   +--------------------->    generate_runs.py -> run/run_NNN.py   (runnable blends)
+                                                  run/index.txt
+
+test.py  -->  test/tree.txt + test/run.py         (one chromosome, same builders)
+```
+
+Regenerating from scratch:
+
+```bash
+python generate_population.py --count 100 --seed 42 --unique
+```
+
+```bash
+python draw_trees.py
+```
+
+```bash
+python generate_runs.py
+```
