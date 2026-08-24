@@ -304,12 +304,19 @@ the original window.
 Both live as tables at the top of every generated script, so they are easy to
 change per individual or globally in `generate_runs.py`.
 
-**`WEIGHTS`** — nothing in the repo defines what `w1`–`w5` are worth, so a
-placeholder spread is used:
+**`WEIGHTS`** — nothing in the repo defines what `w1`–`w5` are worth, so each
+run draws them fresh, strictly between 0 and 1:
 
 ```python
-WEIGHTS = {"w1": 0.1, "w2": 0.3, "w3": 0.5, "w4": 0.7, "w5": 0.9}
+WEIGHTS = {name: _weight() for name in ("w1", "w2", "w3", "w4", "w5")}
 ```
+
+`_weight()` calls `random.random()`, which yields `[0.0, 1.0)`, and rejects an
+exact `0.0` — leaving the open interval `(0, 1)`. The draw is printed at startup.
+
+Because the default `WEIGHT_SEED = None` redraws every execution, **the same tree
+scores differently each time it runs**. Set `WEIGHT_SEED` to an int in
+`template_code.py` (or per script) when you need a comparison you can repeat.
 
 **`LORA_SLOTS`** — the trees name five LoRAs, but only two real adapter folders
 exist on disk, so the slots reuse them under different names, the same trick

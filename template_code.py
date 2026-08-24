@@ -1,5 +1,5 @@
-#~ TEMPLATE, not a script to run. generate_runs_template.py reads this file and
-#~ fills in the @@MARKERS@@ to produce one run_NNN.py per individual.
+#~ TEMPLATE, not a script to run. generate_runs.py reads this file and fills in
+#~ the @@MARKERS@@ to produce one run_NNN.py per individual.
 #~
 #~ Two kinds of marker:
 #~   @@NAME@@            inline, replaced inside the line it sits on
@@ -42,6 +42,7 @@ Usage
 """
 
 import os
+import random
 import sys
 
 # Match the training/inference environment: disable Xet download acceleration.
@@ -75,14 +76,24 @@ LORA_SLOTS = {
     "L5": ADAPTER1_DIR,
 }
 
-# What w1..w5 are worth. Placeholder spread -- retune for your search.
-WEIGHTS = {
-    "w1": 0.1,
-    "w2": 0.3,
-    "w3": 0.5,
-    "w4": 0.7,
-    "w5": 0.9,
-}
+# What w1..w5 are worth: a fresh random draw every run, strictly between 0 and
+# 1. Set WEIGHT_SEED to an int to repeat one particular draw -- without it the
+# same tree scores differently each time it runs.
+WEIGHT_SEED = None
+
+_rng = random.Random(WEIGHT_SEED)
+
+
+def _weight():
+    """A blend weight in (0, 1), both ends excluded."""
+    # random() yields [0.0, 1.0), so rejecting an exact 0.0 leaves (0.0, 1.0).
+    value = 0.0
+    while value == 0.0:
+        value = _rng.random()
+    return value
+
+
+WEIGHTS = {name: _weight() for name in ("w1", "w2", "w3", "w4", "w5")}
 
 MAX_SEQ = 2048
 
@@ -97,6 +108,8 @@ EXPRESSION = "@@EXPRESSION@@"
 
 print(f"GPU available: {torch.cuda.is_available()}")
 print(f"@@LABEL@@: {EXPRESSION}")
+# Print the draw, so a run can be traced back to the weights that produced it.
+print("weights: " + ", ".join(f"{k}={v:.4f}" for k, v in WEIGHTS.items()))
 
 # ---------------------------------------------------------------------------
 # Load the base model once, with no adapter attached yet.
