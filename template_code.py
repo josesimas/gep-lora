@@ -112,12 +112,34 @@ def _rank(adapter_dir):
 
 MAX_SEQ = 2048
 
-# The prompts this individual is judged on.
-EVAL_PROMPTS = [
-    "Help me organize my desktop.",
-    "I have three assignments due this week. Just tell me what to do.",
-    "Make me a full study schedule for my exams.",
-]
+# The prompts this individual is judged on, read from training_set.txt rather
+# than baked in, so the eval set can change without regenerating any of these
+# scripts.
+TRAINING_SET = os.path.join(_PROJECT, "training_set.txt")
+
+
+def _prompts(path):
+    """One prompt per line. Surrounding quotes are optional, blanks are skipped."""
+    prompts = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError as error:
+        raise SystemExit(f"cannot read the eval prompts from {path}: {error.strerror}")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Tolerate the quoted form the file currently uses, and a bare one.
+        if len(line) > 1 and line[0] == line[-1] and line[0] in "\"'":
+            line = line[1:-1]
+        prompts.append(line)
+    if not prompts:
+        raise SystemExit(f"{path} has no prompts in it")
+    return prompts
+
+
+EVAL_PROMPTS = _prompts(TRAINING_SET)
 
 EXPRESSION = "@@EXPRESSION@@"
 

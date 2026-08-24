@@ -63,25 +63,55 @@ MARKER = "@@%s@@"
 TEMPLATE_COMMENT = "#~"
 
 
-def resolve_slots(template_path, output_dir):
-    """Evaluate LORA_SLOTS out of the template, as the generated script will see it.
+def resolve_from_template(names, template_path, output_dir):
+    """Evaluate module-level settings out of the template.
 
-    The slot paths live in template_code.py so the generated scripts stay
-    self-contained, but the rank analysis here needs them too. Rather than keep
-    a second copy that could drift, execute that one assignment from the
-    template with the same _HERE/_PROJECT the generated script will compute.
+    Paths like LORA_SLOTS and TRAINING_SET live in template_code.py so the
+    generated scripts stay self-contained, but this generator needs them too --
+    for the rank analysis, and to check the eval set is readable. Rather than
+    keep a second copy that could drift, execute those assignments straight from
+    the template, with the same _HERE/_PROJECT the generated script will compute.
     """
+    wanted = set(names)
     with open(template_path, encoding="utf-8") as handle:
         source = handle.read()
+
+    here = os.path.abspath(output_dir)
+    namespace = {"os": os, "_HERE": here, "_PROJECT": os.path.dirname(here)}
+    found = {}
     for node in ast.parse(source).body:
-        if isinstance(node, ast.Assign) and any(
-                getattr(target, "id", "") == "LORA_SLOTS" for target in node.targets):
-            here = os.path.abspath(output_dir)
-            namespace = {"os": os, "_HERE": here,
-                         "_PROJECT": os.path.dirname(here)}
+        if not isinstance(node, ast.Assign):
+            continue
+        # Plain `NAME = ...` only; this skips things like os.environ[...] = ...
+        hit = wanted.intersection(getattr(target, "id", "") for target in node.targets)
+        if hit:
             exec(compile(ast.Module([node], []), template_path, "exec"), namespace)
-            return namespace["LORA_SLOTS"]
-    raise SystemExit("no LORA_SLOTS assignment found in %s" % template_path)
+            found.update({name: namespace[name] for name in hit})
+
+    missing = wanted - set(found)
+    if missing:
+        raise SystemExit("no %s assignment found in %s"
+                         % (", ".join(sorted(missing)), template_path))
+    return found
+
+
+def eval_prompt_count(output_dir, template_path=TEMPLATE):
+    """How many prompts the generated scripts will find, or a clear failure.
+
+    Counts non-blank lines rather than re-parsing: the template owns the quote
+    handling, and every generated script would fail at startup on a missing or
+    empty file, so it is worth catching here instead.
+    """
+    path = resolve_from_template(["TRAINING_SET"], template_path, output_dir)["TRAINING_SET"]
+    try:
+        with open(path, encoding="utf-8") as handle:
+            count = sum(1 for line in handle if line.strip())
+    except OSError as error:
+        raise SystemExit("cannot read the eval prompts from %s (%s). Every generated "
+                         "script reads that file at startup." % (path, error.strerror))
+    if not count:
+        raise SystemExit("%s has no prompts in it" % path)
+    return path, count
 
 
 def slot_ranks(output_dir, template_path=TEMPLATE):
@@ -91,7 +121,8 @@ def slot_ranks(output_dir, template_path=TEMPLATE):
     different r values, and cat/svd/linear each treat that differently.
     """
     ranks = {}
-    for slot, path in sorted(resolve_slots(template_path, output_dir).items()):
+    slots = resolve_from_template(["LORA_SLOTS"], template_path, output_dir)["LORA_SLOTS"]
+    for slot, path in sorted(slots.items()):
         config_path = os.path.join(path, "adapter_config.json")
         try:
             with open(config_path, encoding="utf-8") as handle:
@@ -302,7 +333,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate one runnable script per tree, from template_code.py."
     )
-    parser.add_argument("--input", default=os.path.join(_HERE, "population.txt"),
+    parser.add_argument("--input", default=os.path.join(_HERE, "tmp", "population.txt"),
                         help="file of K-expressions, one per line (default population.txt)")
     parser.add_argument("--output-dir", default=os.path.join(_HERE, "run"),
                         help="folder to write the scripts into (default run)")
@@ -320,6 +351,9 @@ def main():
 
     # Each slot's rank comes from its own adapter_config.json -- they may differ.
     ranks = slot_ranks(args.output_dir, args.template)
+
+    # The generated scripts read their prompts at startup; fail here if they cannot.
+    prompts_path, prompt_count = eval_prompt_count(args.output_dir, args.template)
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -351,6 +385,7 @@ def main():
     print("wrote %d scripts to %s (from %s)"
           % (len(expressions), args.output_dir, os.path.basename(args.template)))
     print("slot ranks: %s" % ", ".join("%s=%d" % pair for pair in sorted(ranks.items())))
+    print("eval prompts: %d from %s" % (prompt_count, os.path.basename(prompts_path)))
     print("%d runnable, %d blocked by PEFT's equal-rank rule for linear"
           % (runnable, len(expressions) - runnable))
     print("index: %s" % index_path)
