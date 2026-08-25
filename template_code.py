@@ -82,7 +82,14 @@ LORA_SLOTS = {
 # What w1..w5 are worth: a fresh random draw every run, strictly between 0 and
 # 1. Set WEIGHT_SEED to an int to repeat one particular draw -- without it the
 # same tree scores differently each time it runs.
-WEIGHT_SEED = None
+#~ The next line is a whole-line marker: generate_runs.py replaces it with the
+#~ WEIGHT_SEED assignment itself, so a generated script carries a plain literal.
+#~ The text mode fills in None, which is the behaviour described above; the
+#~ sqlite mode fills in the integer it recorded for this individual, so a stored
+#~ sweep can be replayed weight for weight. Since the marker stands in for the
+#~ assignment, WEIGHT_SEED is the one name in this template a linter will call
+#~ undefined -- it is defined in every file generated from it.
+# @@WEIGHT_SEED@@
 
 _rng = random.Random(WEIGHT_SEED)
 

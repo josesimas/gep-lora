@@ -106,7 +106,7 @@ individuals as unfit and let selection drop them.
 
 Run everything from `project/`.
 
-### 0. `main.py` — the whole pipeline
+### 0. `main.py` — the whole pipeline, in one of two modes
 
 ```bash
 python main.py
@@ -132,27 +132,73 @@ Runs a subset. Handy after editing `template_code.py`, when the population is
 still good. Steps always execute in pipeline order regardless of how you type
 them, and `python main.py --list` shows them without running anything.
 
-Population settings for a complete run live at the top of the file:
+#### The two modes
+
+`main.py` itself is a dispatcher. The five steps are the same either way; what
+differs is where a sweep is kept.
+
+| Mode | Driver | A sweep lives in |
+|---|---|---|
+| `txt` (default) | `main_txt.py` | text files in `run/` |
+| `sqlite` | `main_sqlite.py` | one database, `run_db/gep.sqlite3` |
+
+```bash
+python main.py --mode sqlite
+```
+
+```bash
+python main.py --modes
+```
+
+Everything other than `--mode` is handed straight to the chosen mode, so its
+step names and its own options work exactly as they would if you ran that file
+directly — `python main.py --mode sqlite --limit 3`, or `--mode sqlite --help`
+for the rest of them. `MODE` at the top of `main.py` sets the default.
+
+**Text mode** is the one the rest of this README describes: a file per thing,
+easy to open, diff and grep, which is what you want while changing tree code or
+a template. The next sweep overwrites the last one.
+
+**Sqlite mode** puts the population, every setting, every seed, every transcript
+and every score into one database, with the sweep itself as a row — so sweeps
+accumulate instead of replacing each other, and can be queried across. It is
+also the mode that can *repeat* a sweep, because it stores the seeds rather than
+only the values they produced. See [store.py](#7-storepy--the-sweep-database)
+below.
+
+The two write their generated scripts to different folders (`run/` and
+`run_db/`) so a sweep in one mode cannot quietly replace the scripts the other
+mode's `index.txt` still names.
+
+#### Settings
+
+Settings for a complete run live in `settings.py`, which **both** modes read, so
+the two cannot drift apart:
 
 ```python
-COUNT = 100
+COUNT = 30
 SEED = 42      # an int repeats the same population; None grows a fresh one
 UNIQUE = True
+TEMPLATE = "template_code_mocked.py"
 ```
 
 `SEED` controls the *chromosomes* only. Each generated script still draws its own
 LoRA blend weights at runtime — see `WEIGHT_SEED` for those.
 
-**Adding a step.** Append a `Step` to `STEPS`. It names a callable and the
-arguments to pass it, and the callable is just another script's `main(argv)`, so
-a step behaves exactly as if you ran that script yourself:
+**Adding a step.** In text mode, append a `Step` to `main_txt.py`'s `STEPS`. It
+names a callable and the arguments to pass it, and the callable is just another
+script's `main(argv)`, so a step behaves exactly as if you ran that script
+yourself:
 
 ```python
 Step("score", score_runs.main, ["--input", "run/index.txt"],
      "score every runnable individual -> run/scores.txt"),
 ```
 
-Any plain function taking a list of arguments works too.
+Any plain function taking a list of arguments works too. In sqlite mode a step
+is a function taking the `Context` — the connection, the run id, the settings
+that sweep was created with, and the parsed options — and `STEPS` in
+`main_sqlite.py` holds those.
 
 ### 1. `generate_population.py` → `run/population.txt`
 
@@ -495,6 +541,92 @@ Bad input is reported rather than half-processed:
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
+### 7. `store.py` → the sweep database
+
+The sqlite mode's half of the pipeline. Everything above writes and reads text
+files in `run/`; `main_sqlite.py` calls the very same functions — `build_population`,
+`draw`, `plan`/`render`, `launch`, `judge` — and puts the results here instead.
+
+```
+runs          one sweep: when, which template, which interpreter, which commit
+  settings    every knob it ran under, including the seeds
+  individuals the population: chromosome, tree, rank, verdict, and the
+              generated script in full
+    executions  one per time that individual was run: exit code, seconds, the
+                weight seed and the weights it drew, stdout, stderr
+      exchanges the questions and answers, and the judge's score for each
+```
+
+`executions` is a table rather than a column because the same chromosome run
+again under a different weight draw is a second result, not a correction of the
+first. `evaluate` scores the most recent execution of each individual; older
+ones keep the scores they were given.
+
+```bash
+python store.py --list
+```
+
+```bash
+python store.py --show 0
+```
+
+`--show` takes a run id, or `0` for the most recent, and prints the settings the
+sweep ran under alongside every individual and its mean quality. There is also a
+view for the query you actually want:
+
+```sql
+SELECT number, chromosome, quality, weights
+  FROM individual_quality
+ WHERE run_id = 1 AND state = 'ok'
+ ORDER BY quality DESC
+ LIMIT 5;
+```
+
+```bash
+python store.py --export 0 --into export
+```
+
+Writes a stored sweep back out in the text mode's layout — `population.txt`,
+`trees.txt`, `index.txt`, the scripts, `output_NNN.txt`,
+`output_result_NNN.json`, `results.txt` — for the times you want to diff two
+populations or hand someone a folder.
+
+#### Repeating a sweep
+
+This is what the database is for, and the one place the two modes deliberately
+behave differently.
+
+In text mode `WEIGHT_SEED` stays `None`, so every execution redraws its blend
+weights from the OS: the weights are recorded in the transcript, but the draw
+cannot be repeated. In sqlite mode each individual gets its own weight seed,
+derived from the sweep's `WEIGHT_MASTER_SEED` and the individual's number,
+stamped into its generated script and stored beside it. Re-running `process`
+produces the identical draw.
+
+Seeds left as `None` in `settings.py` are drawn when the sweep is created and
+stored as the number that was drawn, so a sweep is repeatable even when it was
+never asked to be — whatever it used is written down.
+
+Every step but `population` can be re-run against a sweep already in the
+database, and reads the settings **that sweep** was created with rather than
+whatever `settings.py` says now. That is what makes a resumed sweep still be the
+same sweep.
+
+```bash
+python main.py --mode sqlite process evaluate
+```
+
+Resumes the most recent sweep; `--run 3` names one instead.
+
+#### What still touches the disk
+
+The generated `run_NNN.py` scripts, and only those — `process` launches them as
+subprocesses, so they have to be real files. They are a cache of
+`individuals.script_source`, rewritten whenever they are missing or stale, and
+they land in `run_db/` because a generated script finds the LoRA folders and
+`training_set.txt` by going up **one** level from itself. A sibling of `run/`
+works; a folder inside it would not.
+
 ---
 
 ## Running a generated script
@@ -557,8 +689,18 @@ WEIGHTS = {name: _weight() for name in ("w1", "w2", "w3", "w4", "w5")}
 exact `0.0` — leaving the open interval `(0, 1)`. The draw is printed at startup.
 
 Because the default `WEIGHT_SEED = None` redraws every execution, **the same tree
-scores differently each time it runs**. Set `WEIGHT_SEED` to an int in
-`template_code.py` (or per script) when you need a comparison you can repeat.
+scores differently each time it runs**. There are three ways to pin it when you
+need a comparison you can repeat:
+
+- edit the `WEIGHT_SEED` line of a generated script directly, for one script;
+- set `WEIGHT_SEED` in `settings.py`, or pass
+  `python generate_runs.py --weight-seed 12345`, to pin every script in a text
+  mode sweep to the same draw;
+- run in sqlite mode, which gives each individual its *own* seed and stores it,
+  so a whole sweep repeats without every individual sharing one blend.
+
+`WEIGHT_SEED` is a template marker, so it is the one setting a generated script
+carries as a literal rather than inheriting from the template.
 
 **`LORA_SLOTS`** — one independent entry per slot, so any single line can be
 repointed at a different adapter without touching the others:
@@ -633,7 +775,12 @@ warning — the effective cap is unchanged.
 | Path | What it is |
 |---|---|
 | `plan.txt` | the original spec |
-| `main.py` | runs the whole pipeline; add future steps to its `STEPS` list |
+| `main.py` | the entry point; picks a mode and hands it the rest of the command line |
+| `main_txt.py` | the text mode: the pipeline over `run/`; add future steps to its `STEPS` list |
+| `main_sqlite.py` | the sqlite mode: the same pipeline into `run_db/gep.sqlite3` |
+| `settings.py` | COUNT, SEED, TEMPLATE and the rest — read by both modes |
+| `store.py` | the database behind the sqlite mode: schema, helpers, `--list/--show/--export` |
+| `run_db/gep.sqlite3` | every sweep the sqlite mode has run, with its settings, seeds and scores |
 | `generate_population.py` | grows random trees → `run/population.txt` |
 | `run/population.txt` | 100 K-expressions, one per line |
 | `draw_trees.py` | draws every individual → `run/trees.txt` |
@@ -653,7 +800,7 @@ warning — the effective cap is unchanged.
 ### Pipeline
 
 ```
-main.py                       runs all of this in order
+main.py --mode txt            runs all of this in order
    |
 plan.txt                      the rules
    |
@@ -673,10 +820,32 @@ generate_population.py  -->   run/population.txt  (the chromosomes)
 test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
 ```
 
+The sqlite mode runs the same graph through the same functions, but the arrows
+end in tables rather than files:
+
+```
+main.py --mode sqlite
+   |
+generate_population.build_population  -->  individuals (chromosome)
+draw_trees.draw                       -->  individuals.tree
+generate_runs.plan/render             -->  individuals.script_source
+                                           + run_db/run_NNN.py  (must be files)
+process_run.launch/exchanges          -->  executions, exchanges
+evaluate_run.judge                    -->  exchanges.quality
+
+store.py --show / --export            reads any of it back out
+```
+
 Regenerating from scratch:
 
 ```bash
 python main.py
+```
+
+Or into the database instead:
+
+```bash
+python main.py --mode sqlite
 ```
 
 Or one stage at a time, which is what `main.py` does for you:

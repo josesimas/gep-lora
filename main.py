@@ -1,180 +1,104 @@
 """
-main.py - Run the whole pipeline end to end.
+main.py - The entry point. Runs the pipeline in one of two modes.
 
     population -> trees -> runs -> process -> evaluate
 
-Each stage is one entry in STEPS below. A step names a callable and the
-arguments to hand it; the callable is just the `main(argv)` of one of the
-scripts in this folder, so a step behaves exactly as if you had run that script
-from the command line, and nothing is duplicated here.
+The five steps are the same either way; what differs is where a sweep is kept.
 
-Adding a step later
--------------------
-Append a Step to the list. It can be another script's main:
+    txt      main_txt.py     everything lands in run/ as text files:
+                             population.txt, trees.txt, index.txt, run_NNN.py,
+                             output_NNN.txt, output_result_NNN.json, results.txt.
+                             Easy to open and diff, which is what you want while
+                             changing the tree code or a template. The next
+                             sweep overwrites the last one.
 
-    Step("score", score_runs.main, ["--input", "run/index.txt"],
-         "score every runnable individual -> run/scores.txt"),
+    sqlite   main_sqlite.py  everything lands in one database (see store.py):
+                             the population, every setting, every seed, every
+                             transcript and every score, with the sweep itself
+                             as a row so sweeps accumulate instead of replacing
+                             each other, and can be queried across. Because the
+                             seeds are stored -- the population's, and one per
+                             individual for its blend weights -- a stored sweep
+                             can be repeated. That is what you want when the
+                             numbers are meant to be kept.
 
-or any plain function that accepts a list of arguments:
+Pick with --mode, or set MODE below and just run `python main.py`. Everything
+else on the command line is passed through to the mode, so the step names and
+its own options work exactly as they would if you ran that file directly:
 
-    Step("archive", archive_run, [],
-         "copy run/ aside so the next run does not overwrite it"),
+    python main.py                              # every step, in the default mode
+    python main.py --list                       # the steps of that mode
+    python main.py population trees runs        # the fast half, before a model load
+    python main.py --mode sqlite                # a new sweep, into the database
+    python main.py --mode sqlite process evaluate   # resume the latest sweep
+    python main.py --mode sqlite --limit 3      # sqlite-only option, passed through
+    python main.py --mode txt --help            # the mode's own help
 
-Steps run in the order listed and stop at the first failure, so a later step can
-rely on the output of an earlier one.
+Both modes read their settings from settings.py -- COUNT, SEED, TEMPLATE and the
+rest -- so the two cannot drift apart.
 
-The last two steps are the slow ones. `process` runs the generated scripts,
-loading the base model once per individual; `evaluate` then makes one grading
-call per answer against the judge model configured in evaluate_run.py, which
-must be reachable. `python main.py` is therefore a long operation, and
-`python main.py population trees runs` stops short of both.
-
-Both of those costs disappear if you set TEMPLATE below to
-"template_code_mocked.py": the runs step then generates scripts that load
-nothing and answer at random, so a full `python main.py` takes seconds and needs
-neither a GPU nor the judge. That checks the plumbing, not the blends.
-
-Usage:
-    python main.py                  # every step, in order
-    python main.py runs             # just that step
-    python main.py trees runs       # a subset, in the listed order
-    python main.py --list           # show the steps without running them
+Run it with the **venv's python**: `process` launches each generated script with
+sys.executable, so the wrong interpreter fails every individual. That does not
+apply to a sweep generated from template_code_mocked.py, which loads nothing.
 """
 
 import argparse
-import os
 import sys
-import time
-from collections import namedtuple
 
-import draw_trees
-import evaluate_run
-import generate_population
-import generate_runs
-import process_run
+import main_sqlite
+import main_txt
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# --- which mode ------------------------------------------------------------
 
-# --- settings for a complete run ------------------------------------------
+# The mode used when --mode is not given. "txt" for the file-per-thing layout
+# while you are iterating; "sqlite" for a sweep whose results are meant to be
+# kept, compared and repeated.
+MODE = "txt"
 
-# How many individuals the population holds.
-COUNT = 30
-
-# Seed for the population draw. An int repeats the same population every run;
-# None grows a fresh one each time. Note this is separate from the LoRA blend
-# weights, which each generated script draws for itself at runtime.
-SEED = 42
-
-# Reject duplicate chromosomes when building the population.
-UNIQUE = True
-
-# Which template generate_runs.py fills. None means its own default,
-# template_code.py -- the real thing. Set it to "template_code_mocked.py" for a
-# dry run: same trees, same ranks, same BAD verdicts, but no model load, random
-# answers, and scores that arrive with the transcript, so the whole pipeline
-# finishes in seconds on a machine with no GPU and no judge running. Mocked
-# scores are noise; never read one as a result.
-TEMPLATE = "template_code_mocked.py"
-
-
-# --- the pipeline ----------------------------------------------------------
-
-Step = namedtuple("Step", "name run args description")
-
-
-def _population_args():
-    """CLI arguments for the population step, from the settings above."""
-    args = ["--count", str(COUNT)]
-    if SEED is not None:
-        args += ["--seed", str(SEED)]
-    if UNIQUE:
-        args.append("--unique")
-    return args
-
-
-def _runs_args():
-    """CLI arguments for the runs step: which template to fill, if not the default."""
-    return ["--template", TEMPLATE] if TEMPLATE else []
-
-
-STEPS = [
-    Step("population", generate_population.main, _population_args(),
-         "grow %d random chromosomes -> run/population.txt" % COUNT),
-    Step("trees", draw_trees.main, [],
-         "draw each chromosome as a tree -> run/trees.txt"),
-    Step("runs", generate_runs.main, _runs_args(),
-         "fill %s, one runnable script per chromosome -> run/"
-         % (TEMPLATE or "template_code.py")),
-    # The expensive one: a base-model load per individual. Keep COUNT small
-    # while iterating, or run the earlier steps on their own.
-    Step("process", process_run.main, [],
-         "execute each generated script -> run/output_NNN.txt, run/results.txt"),
-    # Also slow, and needs the judge endpoint up: one grading call per answer.
-    Step("evaluate", evaluate_run.main, [],
-         "score every answer with the judge -> quality in run/output_result_NNN.json"),
-]
-
-
-# --- driver ----------------------------------------------------------------
-
-
-def run(steps):
-    """Run `steps` in order. Returns the exit code for the process."""
-    started = time.time()
-    for number, step in enumerate(steps, 1):
-        print("=" * 70)
-        print("[%d/%d] %s -- %s" % (number, len(steps), step.name, step.description))
-        print("=" * 70)
-        step_started = time.time()
-        try:
-            step.run(step.args)
-        except SystemExit as error:
-            # The scripts raise SystemExit with a message when they cannot go on.
-            if error.code not in (0, None):
-                print("\nSTOPPED in step '%s': %s" % (step.name, error))
-                print("Later steps were skipped, since they build on this one.")
-                return 1
-        except Exception as error:                      # noqa: BLE001 - report and stop
-            print("\nSTOPPED in step '%s': %s: %s"
-                  % (step.name, type(error).__name__, error))
-            return 1
-        print("  (%s took %.1fs)\n" % (step.name, time.time() - step_started))
-
-    print("=" * 70)
-    print("done: %s in %.1fs" % (", ".join(step.name for step in steps),
-                                 time.time() - started))
-    print("=" * 70)
-    return 0
+MODES = {
+    "txt": (main_txt.main,
+            "text files in run/ -- easy to read, overwritten by the next sweep"),
+    "sqlite": (main_sqlite.main,
+               "one sqlite database -- queryable, keeps every sweep and its seeds"),
+}
 
 
 def main(argv=None):
+    raw = list(sys.argv[1:] if argv is None else argv)
+
+    # Only --mode is claimed here; everything else belongs to the mode, which
+    # has its own parser, its own steps and its own options. parse_known_args
+    # keeps this file from having to know any of them.
     parser = argparse.ArgumentParser(
-        description="Run the pipeline: %s." % " -> ".join(step.name for step in STEPS)
+        description=__doc__.strip().splitlines()[0],
+        epilog="every other argument is passed straight to the chosen mode; "
+               "try `python main.py --mode sqlite --help`",
+        add_help=False,
     )
-    parser.add_argument("steps", nargs="*", metavar="STEP",
-                        help="steps to run (default: all of them, in order)")
-    parser.add_argument("--list", action="store_true",
-                        help="list the steps and exit")
-    args = parser.parse_args(argv)
+    parser.add_argument("--mode", choices=sorted(MODES), default=MODE,
+                        help="where the sweep is kept (default %s)" % MODE)
+    parser.add_argument("--modes", action="store_true",
+                        help="describe the modes and exit")
+    parser.add_argument("-h", "--help", action="store_true",
+                        help="show this message, or the mode's own help with --mode")
+    args, rest = parser.parse_known_args(raw)
 
-    known = {step.name: step for step in STEPS}
-
-    if args.list:
-        for step in STEPS:
-            print("%-12s %s" % (step.name, step.description))
+    if args.modes:
+        for name, (_, description) in sorted(MODES.items()):
+            print("%-8s %s%s" % (name, description,
+                                 "   (default)" if name == MODE else ""))
         return 0
 
-    if args.steps:
-        unknown = [name for name in args.steps if name not in known]
-        if unknown:
-            parser.error("unknown step(s): %s. Known steps: %s"
-                         % (", ".join(unknown), ", ".join(known)))
-        # Keep the order the pipeline defines, not the order they were typed.
-        selected = [step for step in STEPS if step.name in set(args.steps)]
-    else:
-        selected = list(STEPS)
+    # `--help` on its own explains the dispatcher. Asked together with a mode,
+    # or with anything else, it is that mode's help that is wanted.
+    if args.help:
+        named_mode = any(one == "--mode" or one.startswith("--mode=") for one in raw)
+        if not named_mode and not rest:
+            parser.print_help()
+            return 0
+        rest.append("--help")
 
-    return run(selected)
+    return MODES[args.mode][0](rest)
 
 
 if __name__ == "__main__":

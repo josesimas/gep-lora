@@ -180,14 +180,18 @@ def exchanges(stdout):
     return transcript
 
 
-def execute(run_dir, individual, timeout):
-    """Run one generated script and write both of its output files.
+def launch(run_dir, script, timeout):
+    """Run one generated script. -> (exit code, seconds, stdout, stderr).
 
     An exit code of None means the script was still going when the timeout
     expired. stdout is kept apart from stderr so the transcript can be taken
     from it cleanly.
+
+    Kept apart from execute() below because a script has to be launched the same
+    way whatever collects the result: execute() files the output under run/,
+    while main_sqlite.py puts the very same four values into the database.
     """
-    script_path = os.path.join(run_dir, individual.script)
+    script_path = os.path.join(run_dir, script)
     started = time.time()
     try:
         # cwd is run/ so the caches unsloth drops stay in the output folder.
@@ -201,8 +205,21 @@ def execute(run_dir, individual, timeout):
         out, err = expired.stdout or "", expired.stderr or ""
         err += "\n\n!! killed after %ss (--timeout)\n" % timeout
         code = None
+    return code, time.time() - started, out, err
 
-    elapsed = time.time() - started
+
+def verdict_of(code):
+    """The one word results.txt uses for an exit code."""
+    if code == 0:
+        return "ok"
+    if code is None:
+        return "timeout"
+    return "exit %d" % code
+
+
+def execute(run_dir, individual, timeout):
+    """Run one generated script and write both of its output files."""
+    code, elapsed, out, err = launch(run_dir, individual.script, timeout)
     number = _number(individual.script)
 
     # The full capture, for working out why a run went wrong.
@@ -229,6 +246,15 @@ def execute(run_dir, individual, timeout):
     return Outcome(code, elapsed, output_path, result_path, len(transcript))
 
 
+def imports_unsloth(source):
+    """Does this generated script load the real thing? The mocked ones do not.
+
+    A test on the source itself, so it can be asked of a script held in the
+    sqlite database as easily as of one sitting in run/.
+    """
+    return "import unsloth" in source or "from unsloth" in source
+
+
 def needs_unsloth(run_dir, individuals):
     """Do the generated scripts import unsloth? The mocked ones do not.
 
@@ -244,7 +270,7 @@ def needs_unsloth(run_dir, individuals):
                 source = handle.read()
         except OSError:
             return True                         # cannot tell: keep the guard
-        return "import unsloth" in source or "from unsloth" in source
+        return imports_unsloth(source)
     return True
 
 
@@ -315,13 +341,8 @@ def main(argv=None):
         print("[%d/%d] %s  %s" % (number, len(selected), one.script, one.expression))
         outcome = execute(args.run_dir, one, args.timeout)
 
-        if outcome.code == 0:
-            verdict = "ok"
-        elif outcome.code is None:
-            verdict = "timeout"
-            failures += 1
-        else:
-            verdict = "exit %d" % outcome.code
+        verdict = verdict_of(outcome.code)
+        if outcome.code != 0:
             failures += 1
         print("        %-9s %6.1fs  %d exchange(s) -> %s"
               % (verdict, outcome.seconds, outcome.exchanges,

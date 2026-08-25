@@ -82,7 +82,10 @@ LORA_SLOTS = {
 # What w1..w5 are worth: a fresh random draw every run, strictly between 0 and
 # 1, exactly as in the real template. Set WEIGHT_SEED to an int to repeat one
 # particular draw.
-WEIGHT_SEED = None
+#~ Filled by the same whole-line marker as in template_code.py -- see the note
+#~ there. The weight draw is one of the parts this mock does NOT fake, so the
+#~ seed has to arrive here in exactly the same way.
+# @@WEIGHT_SEED@@
 
 _rng = random.Random(WEIGHT_SEED)
 

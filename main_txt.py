@@ -1,5 +1,5 @@
 """
-main_txt.py - Run the whole pipeline end to end using text files as input and output.
+main_txt.py - Run the whole pipeline end to end over text files.
 
     population -> trees -> runs -> process -> evaluate
 
@@ -26,19 +26,30 @@ rely on the output of an earlier one.
 The last two steps are the slow ones. `process` runs the generated scripts,
 loading the base model once per individual; `evaluate` then makes one grading
 call per answer against the judge model configured in evaluate_run.py, which
-must be reachable. `python main.py` is therefore a long operation, and
+must be reachable. A full run is therefore a long operation, and
 `python main.py population trees runs` stops short of both.
 
-Both of those costs disappear if you set TEMPLATE below to
+Both of those costs disappear if you set TEMPLATE in settings.py to
 "template_code_mocked.py": the runs step then generates scripts that load
-nothing and answer at random, so a full `python main.py` takes seconds and needs
+nothing and answer at random, so a whole pipeline takes seconds and needs
 neither a GPU nor the judge. That checks the plumbing, not the blends.
+
+Where the settings are
+----------------------
+COUNT, SEED, UNIQUE and TEMPLATE live in settings.py, which the sqlite mode
+reads as well -- one copy, so the two modes cannot drift apart, and so a sweep
+recorded in the database is recorded under the same names you set here.
+
+This is one of the pipeline's two entry points. `main.py --mode txt` runs it;
+main_sqlite.py is the other, putting everything in a database instead of in
+run/. Running this file directly does the same thing as going through main.py.
 
 Usage:
     python main.py                  # every step, in order
     python main.py runs             # just that step
     python main.py trees runs       # a subset, in the listed order
     python main.py --list           # show the steps without running them
+    python main_txt.py              # the same, without the dispatcher
 """
 
 import argparse
@@ -52,29 +63,19 @@ import evaluate_run
 import generate_population
 import generate_runs
 import process_run
+import settings
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# --- settings for a complete run ------------------------------------------
-
-# How many individuals the population holds.
-COUNT = 30
-
-# Seed for the population draw. An int repeats the same population every run;
-# None grows a fresh one each time. Note this is separate from the LoRA blend
-# weights, which each generated script draws for itself at runtime.
-SEED = 42
-
-# Reject duplicate chromosomes when building the population.
-UNIQUE = True
-
-# Which template generate_runs.py fills. None means its own default,
-# template_code.py -- the real thing. Set it to "template_code_mocked.py" for a
-# dry run: same trees, same ranks, same BAD verdicts, but no model load, random
-# answers, and scores that arrive with the transcript, so the whole pipeline
-# finishes in seconds on a machine with no GPU and no judge running. Mocked
-# scores are noise; never read one as a result.
-TEMPLATE = "template_code_mocked.py"
+# The knobs are in settings.py, shared with the sqlite mode. Named here so the
+# lines below read as they always did.
+COUNT = settings.COUNT
+SEED = settings.SEED
+UNIQUE = settings.UNIQUE
+TEMPLATE = settings.TEMPLATE
+MAX_DEPTH = settings.MAX_DEPTH
+BRANCH_PROB = settings.BRANCH_PROB
+WEIGHT_SEED = settings.WEIGHT_SEED
 
 
 # --- the pipeline ----------------------------------------------------------
@@ -83,8 +84,15 @@ Step = namedtuple("Step", "name run args description")
 
 
 def _population_args():
-    """CLI arguments for the population step, from the settings above."""
-    args = ["--count", str(COUNT)]
+    """CLI arguments for the population step, from the settings above.
+
+    Every knob is passed explicitly, including the two that match
+    generate_population.py's own defaults, so that changing one in settings.py
+    changes what this mode does and not only what the sqlite mode does.
+    """
+    args = ["--count", str(COUNT),
+            "--max-depth", str(MAX_DEPTH),
+            "--branch-prob", str(BRANCH_PROB)]
     if SEED is not None:
         args += ["--seed", str(SEED)]
     if UNIQUE:
@@ -93,8 +101,12 @@ def _population_args():
 
 
 def _runs_args():
-    """CLI arguments for the runs step: which template to fill, if not the default."""
-    return ["--template", TEMPLATE] if TEMPLATE else []
+    """CLI arguments for the runs step: which template to fill, and whether the
+    generated scripts pin their weight draw."""
+    args = ["--template", TEMPLATE] if TEMPLATE else []
+    if WEIGHT_SEED is not None:
+        args += ["--weight-seed", str(WEIGHT_SEED)]
+    return args
 
 
 STEPS = [

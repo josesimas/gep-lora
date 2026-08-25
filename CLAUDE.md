@@ -39,6 +39,25 @@ Whole pipeline: `population -> trees -> runs -> process -> evaluate`, stopping a
 failure. `python main.py --list` shows the steps; naming steps runs a subset, always in
 pipeline order regardless of typing order.
 
+`main.py` is a dispatcher over two modes, and everything except `--mode` is passed straight
+through to the mode's own parser:
+
+```bash
+python main.py --mode sqlite
+```
+
+`txt` (the default, `main_txt.py`) writes text files into `run/`. `sqlite`
+(`main_sqlite.py`) writes one database, `run_db/gep.sqlite3`, holding the population, the
+settings, the seeds, the transcripts and the scores — see `store.py`. The two use separate
+script folders on purpose, so neither overwrites the other's `run_NNN.py`.
+
+```bash
+python store.py --show 0
+```
+
+Reads a stored sweep back: `--list` the sweeps, `--show` one (`0` = latest), `--export`
+one into the text mode's layout.
+
 ```bash
 python main.py population trees runs
 ```
@@ -75,10 +94,18 @@ that chromosome would get as a population line. There is no pytest suite.
 `http://172.22.208.1:1234/v1`). It is resumable — already-scored exchanges are skipped
 unless `--force`.
 
-Population size for a full run is `COUNT` at the top of `main.py` (currently 3, kept small
-for iteration; the README's worked numbers assume 100).
+Population size for a full run is `COUNT` in `settings.py` (currently 30, kept small for
+iteration; the README's worked numbers assume 100). `settings.py` holds every knob both
+modes read — add one there rather than at the top of a mode, or the two drift apart and
+the sqlite mode records a value it did not use.
 
 ## Architecture
+
+`main.py` claims only `--mode` and hands the rest of the command line to `main_txt.main` or
+`main_sqlite.main`, both of which are also runnable directly. `settings.py` is the one copy
+of the knobs; `store.py` owns the sqlite schema (`runs -> settings, individuals ->
+executions -> exchanges`), its helpers, and `--list/--show/--export`. Nothing else imports
+sqlite3.
 
 `generate_population.py` is the root module — it owns the alphabet (`BINARY_OPS`,
 `UNARY_OPS`, `VARIABLES`, `ARITY`), the `Node` type, and `decode`/`encode`/`levels`.
@@ -102,8 +129,13 @@ there: root is `CAT`; `CAT`/`SVD`/`LIN` take two *operators*; `L1`–`L5` take o
 as **valid Python** so editors, linters and `python -m compileall` still work on it. Markers:
 `@@NAME@@` inline; a line that is only `@@NAME@@` or `# @@NAME@@` becomes a block; a line
 starting with `#~` is a template-only note that never reaches the output. Blocks: `TREE`,
-`BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`. Inline: `SCRIPT_NAME`,
-`PROVENANCE`, `LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`.
+`BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`, `WEIGHT_SEED`. Inline:
+`SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`,
+`FINAL_RANK`.
+
+`WEIGHT_SEED` is a one-line block rather than an inline marker because it stands in for the
+assignment itself, so a generated script gets `WEIGHT_SEED = 12345` (or `= None`) as a plain
+literal. It is why `WEIGHT_SEED` is the one name a linter calls undefined in both templates.
 
 **Change what every generated script does by editing `template_code.py`, then re-running
 `generate_runs.py`.** Only touch the generator when the new part varies per individual.
@@ -147,17 +179,31 @@ unless `--include-blocked`.
   scorer never cross-references `index.txt`. Exchanges are parsed from stdout only, so
   stderr progress bars cannot leak in; a missing reply keeps an empty `answer` rather than
   vanishing.
-- **Weights are redrawn per execution** (`WEIGHT_SEED = None`), so the same chromosome scores
-  differently each run. `main.py`'s `SEED` seeds the *chromosomes* only. Set `WEIGHT_SEED` to
-  an int when a comparison must repeat.
+- **Weights are redrawn per execution** in text mode (`WEIGHT_SEED = None`), so the same
+  chromosome scores differently each run. `settings.py`'s `SEED` seeds the *chromosomes*
+  only. Set `WEIGHT_SEED` (or pass `generate_runs.py --weight-seed`) when a comparison must
+  repeat. The sqlite mode instead derives one seed per individual from `WEIGHT_MASTER_SEED`,
+  stamps it into that individual's script and stores it, so a whole sweep repeats without
+  every individual sharing one draw. This is the only intended behavioural difference
+  between the modes — keep it that way.
+- **A sqlite step reads the settings its sweep was created with**, not `settings.py` as it
+  stands now; that is what makes resuming a sweep still be the same sweep. A seed left
+  `None` is drawn once at sweep creation and stored as the number drawn.
 - `evaluate_run.py`'s `SYSTEM_PROMPT` **is** the fitness criterion — the whole search
   optimises toward whatever it rewards. Two parsing traps already fixed there: the score is
   requested *before* the reason (a long reason must not truncate it away), and `MAX_TOKENS`
   is generous because a reasoning judge returns an empty message if it runs out mid-thought.
-- Steps are added to `main.py`'s `STEPS` list as a `Step(name, callable, args, description)`;
-  the callable is another script's `main(argv)`, so a step behaves exactly like running that
-  script by hand.
-- `run/` is gitignored, as is everything under `Lora00*/` except each folder's `main.py` and
-  `inference.py`. Adapter weights are not tracked.
+- Steps are added to `main_txt.py`'s `STEPS` list as a `Step(name, callable, args,
+  description)`; the callable is another script's `main(argv)`, so a step behaves exactly
+  like running that script by hand. The sqlite mode's `STEPS` hold `Step(name, callable,
+  description)` where the callable takes the `Context` instead.
+- **The sqlite mode calls the other scripts as libraries, never their `main()`.** That is
+  what keeps it from writing text files: `build_population`, `draw`, `plan`/`render`,
+  `launch`, `exchanges`, `judge` are all pure enough to use directly. If a new step needs
+  something out of one of them, extract a function there rather than teaching the script
+  about the database.
+- `run/`, `run_db/` and `run_real/` are gitignored, as is everything under `Lora00*/` except
+  each folder's `main.py` and `inference.py`. Adapter weights and the sweep database are not
+  tracked.
 - `combination.py` is the original hardcoded two-adapter script the generated code is
   modelled on. Reference, not part of the pipeline.
