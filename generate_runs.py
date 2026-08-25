@@ -6,10 +6,16 @@ of combination.py: load the base model once, attach the LoRAs the tree names,
 fold them together with PEFT's add_weighted_adapter, then chat through the
 resulting adapter.
 
-The script itself comes from template_code.py, which is the generated file with
-the varying parts marked. Keeping the shape in a template rather than in string
-literals means you can open it, syntax-check it, and see what a generated script
-looks like directly -- only what genuinely varies per individual is a marker.
+The script itself comes from a template -- template_code.py by default -- which
+is the generated file with the varying parts marked. Keeping the shape in a
+template rather than in string literals means you can open it, syntax-check it,
+and see what a generated script looks like directly; only what genuinely varies
+per individual is a marker.
+
+Which template to fill is an argument, so the same generator produces different
+kinds of script from the same population. template_code_mocked.py is the other
+one in the repo: same markers and same rank arithmetic, but no model load and
+random answers, for exercising the pipeline without a GPU.
 
 Markers, all of the form @@NAME@@:
 
@@ -43,6 +49,7 @@ front and stamps a warning into the files it affects.
 Usage:
     python generate_runs.py                    # population.txt -> run/
     python generate_runs.py --output-dir run2
+    python generate_runs.py --template template_code_mocked.py   # dry-run scripts
 """
 
 import argparse
@@ -298,13 +305,18 @@ def fill(template_lines, blocks, values):
 
 
 def render(expression, steps, final, script_name, provenance, label,
-           template_lines=None):
+           template_lines=None, template_path=TEMPLATE):
     """The complete text of one runnable script, built from the template.
 
     Callers pass the planning results from plan(); the template supplies
     everything that does not vary between individuals.
+
+    Which template that is comes from `template_path`, or from `template_lines`
+    if the caller has already read one -- a batch job reads it once and reuses
+    the lines, a one-off caller just names the file.
     """
-    template_lines = load_template() if template_lines is None else template_lines
+    template_lines = (load_template(template_path) if template_lines is None
+                      else template_lines)
     root, _ = decode(expression)
     leaves = [step for step in steps if step.kind == "leaf"]
 
@@ -338,8 +350,14 @@ def main(argv=None):
     parser.add_argument("--output-dir", default=os.path.join(_HERE, "run"),
                         help="folder to write the scripts into (default run)")
     parser.add_argument("--template", default=TEMPLATE,
-                        help="the template to fill (default template_code.py)")
+                        help="the template to fill (default template_code.py; "
+                             "template_code_mocked.py generates dry-run scripts)")
     args = parser.parse_args(argv)
+
+    # A bare filename is looked for next to this script too, so
+    # `--template template_code_mocked.py` works from any working directory.
+    if not os.path.isabs(args.template) and not os.path.exists(args.template):
+        args.template = os.path.join(_HERE, args.template)
 
     with open(args.input, encoding="utf-8") as handle:
         expressions = [line.strip() for line in handle if line.strip()]

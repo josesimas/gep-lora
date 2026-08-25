@@ -235,6 +235,22 @@ def judge(question, answer, settings):
     raise RuntimeError("judge unreachable after %d attempts: %s" % (RETRIES + 1, last_error))
 
 
+def has_unscored(path):
+    """Does this transcript still hold an answer without a quality?
+
+    Asked before the judge is contacted at all: a sweep generated from
+    template_code_mocked.py arrives already scored, and having to start a judge
+    just to be told there is nothing to grade would undo the point of it.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return True                             # unreadable: let score_file report it
+    exchanges = data["exchanges"] if isinstance(data, dict) else data
+    return any("quality" not in exchange for exchange in exchanges)
+
+
 def score_file(path, settings, force):
     """Score every exchange in one transcript and save it. Returns counts."""
     with open(path, encoding="utf-8") as handle:
@@ -307,14 +323,22 @@ def main(argv=None):
     if args.limit:
         paths = paths[:args.limit]
 
+    # Only reach for the judge if there is grading left to do, so a transcript
+    # set that is already complete costs nothing and needs no endpoint up.
+    wanted = args.force or any(has_unscored(path) for path in paths)
+
     settings = {
         "base_url": args.base_url,
         "api_key": args.api_key,
         "timeout": args.timeout,
-        "model": args.model or discover_model(args.base_url, args.api_key, args.timeout),
+        "model": args.model or (discover_model(args.base_url, args.api_key, args.timeout)
+                                if wanted else None),
     }
 
-    print("judge: %s at %s" % (settings["model"], settings["base_url"]))
+    if wanted:
+        print("judge: %s at %s" % (settings["model"], settings["base_url"]))
+    else:
+        print("judge: not contacted -- every answer already has a quality")
     print("scoring %d transcript(s)%s\n"
           % (len(paths), " (--force: re-scoring)" if args.force else ""))
 

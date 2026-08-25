@@ -29,6 +29,11 @@ call per answer against the judge model configured in evaluate_run.py, which
 must be reachable. `python main.py` is therefore a long operation, and
 `python main.py population trees runs` stops short of both.
 
+Both of those costs disappear if you set TEMPLATE below to
+"template_code_mocked.py": the runs step then generates scripts that load
+nothing and answer at random, so a full `python main.py` takes seconds and needs
+neither a GPU nor the judge. That checks the plumbing, not the blends.
+
 Usage:
     python main.py                  # every step, in order
     python main.py runs             # just that step
@@ -53,7 +58,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # --- settings for a complete run ------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 3
+COUNT = 30
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time. Note this is separate from the LoRA blend
@@ -62,6 +67,14 @@ SEED = 42
 
 # Reject duplicate chromosomes when building the population.
 UNIQUE = True
+
+# Which template generate_runs.py fills. None means its own default,
+# template_code.py -- the real thing. Set it to "template_code_mocked.py" for a
+# dry run: same trees, same ranks, same BAD verdicts, but no model load, random
+# answers, and scores that arrive with the transcript, so the whole pipeline
+# finishes in seconds on a machine with no GPU and no judge running. Mocked
+# scores are noise; never read one as a result.
+TEMPLATE = "template_code_mocked.py"
 
 
 # --- the pipeline ----------------------------------------------------------
@@ -79,13 +92,19 @@ def _population_args():
     return args
 
 
+def _runs_args():
+    """CLI arguments for the runs step: which template to fill, if not the default."""
+    return ["--template", TEMPLATE] if TEMPLATE else []
+
+
 STEPS = [
     Step("population", generate_population.main, _population_args(),
          "grow %d random chromosomes -> run/population.txt" % COUNT),
     Step("trees", draw_trees.main, [],
          "draw each chromosome as a tree -> run/trees.txt"),
-    Step("runs", generate_runs.main, [],
-         "fill template_code.py, one runnable script per chromosome -> run/"),
+    Step("runs", generate_runs.main, _runs_args(),
+         "fill %s, one runnable script per chromosome -> run/"
+         % (TEMPLATE or "template_code.py")),
     # The expensive one: a base-model load per individual. Keep COUNT small
     # while iterating, or run the earlier steps on their own.
     Step("process", process_run.main, [],

@@ -212,7 +212,7 @@ python generate_runs.py
 |---|---|---|
 | `--input` | `run/population.txt` | file of K-expressions, one per line |
 | `--output-dir` | `run` | folder to write the scripts into |
-| `--template` | `template_code.py` | the template to fill |
+| `--template` | `template_code.py` | the template to fill; `template_code_mocked.py` for a dry run |
 
 Produces `run/run_001.py` … `run/run_100.py` plus `run/index.txt`:
 
@@ -253,6 +253,47 @@ rather than being written into a generated file.
 To change what every generated script looks like, edit `template_code.py` and
 re-run `generate_runs.py`. Only add code to the generator itself when the new
 part varies per individual.
+
+#### `template_code_mocked.py` — the dry run
+
+Which template gets filled is `--template`, so the same generator produces a
+different kind of script from the same population:
+
+```bash
+python generate_runs.py --template template_code_mocked.py
+```
+
+The mocked template has the same markers and produces the same shaped script,
+but loads nothing and generates nothing: `ask()` assembles a reply out of canned
+fragments and `grade()` draws a quality with a reason to match. A whole sweep
+then takes **seconds instead of hours, with no GPU and no judge**, which is what
+you want when the thing under test is the pipeline rather than a blend.
+
+Set `TEMPLATE = "template_code_mocked.py"` at the top of `main.py` to run the
+whole pipeline that way.
+
+What it keeps real, so a dry run tells you something true about a population:
+
+- the weight draw, and the `weights:` line `process_run.py` reads it from
+- the ranks, read from each slot's own `adapter_config.json`
+- the `attach`/`combine` order, and PEFT's equal-rank rule for `linear` — a
+  `BAD` individual stops at the same node with the same message, so the `ok`/
+  `BAD` split in `index.txt` is the split you will get for real
+
+What it fakes is the answers and the scores. Mocked scripts print `QUALITY:` and
+`REASON:` lines after each reply; `process_run.py` folds those into the
+transcript, so mocked transcripts arrive already scored and `evaluate_run.py`
+skips them without contacting a judge at all. **A mocked quality is noise** —
+never read one as a result.
+
+Two things adjust themselves rather than needing a flag: `process_run.py` drops
+its venv check when the scripts it is about to run do not import unsloth, so a
+mocked sweep runs under any Python 3; and `evaluate_run.py` only reaches for the
+judge when some answer actually lacks a quality.
+
+`MOCK_SEED` fixes the fake answers and scores, and `MOCK_LOAD_DELAY` /
+`MOCK_ANSWER_DELAY` buy back some fake slowness — useful for exercising
+`process_run.py --timeout`.
 
 ### 4. `process_run.py` → `run/output_NNN.txt`, `run/results.txt`
 
@@ -599,6 +640,7 @@ warning — the effective cap is unchanged.
 | `run/trees.txt` | 100 tree drawings in level-row layout |
 | `generate_runs.py` | fills `template_code.py`, one runnable script per individual → `run/` |
 | `template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
+| `template_code_mocked.py` | the same, mocked: no model load, random answers and scores |
 | `run/run_001.py` … `run_100.py` | the generated combination scripts |
 | `run/index.txt` | script → state, final rank, expression |
 | `training_set.txt` | the eval prompts, one per line, read by every generated script |

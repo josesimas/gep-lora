@@ -22,6 +22,11 @@ By default the ones index.txt marks BAD are skipped -- they stop at their bad
 combine step, but only after paying for a full model load. Pass
 --include-blocked to run them anyway and capture the error.
 
+None of that cost applies to scripts generated from template_code_mocked.py:
+they load nothing, answer at random, and print their own QUALITY:/REASON: lines,
+which land in the transcript so evaluate_run.py has nothing left to score. This
+notices which kind it is looking at and drops the venv check accordingly.
+
 Usage:
     python process_run.py                     # every runnable individual
     python process_run.py --limit 3           # just the first few, to smoke test
@@ -103,6 +108,35 @@ def drawn_weights(stdout):
             for name, value in re.findall(r"(w\d+)=([-+0-9.eE]+)", line.group(0))}
 
 
+GRADE_PREFIXES = ("QUALITY:", "REASON:")
+
+
+def _split_grade(lines):
+    """Separate a reply from the QUALITY:/REASON: lines that may follow it.
+
+    Only the mocked template (template_code_mocked.py) prints those, so for a
+    real run this returns the lines untouched and an empty grade -- the scoring
+    still comes from evaluate_run.py. For a mocked run it is what carries the
+    made-up score into the transcript, so a dry sweep needs no judge endpoint.
+
+    A reply line that genuinely started with "QUALITY:" would be cut short here.
+    That is the price of not needing a separate channel out of the child
+    process, and no real reply has ever begun that way.
+    """
+    answer, grade = [], {}
+    for line in lines:
+        if line.startswith("QUALITY:"):
+            try:
+                grade["quality"] = float(line[len("QUALITY:"):].strip())
+            except ValueError:
+                pass                            # not a number: leave it ungraded
+        elif line.startswith("REASON:"):
+            grade["reason"] = line[len("REASON:"):].strip()
+        elif not grade:                         # still in the reply itself
+            answer.append(line)
+    return answer, grade
+
+
 def exchanges(stdout):
     """The YOU/COACH pairs in a run's stdout, as {"question", "answer"} dicts.
 
@@ -112,6 +146,9 @@ def exchanges(stdout):
 
     A question whose reply never arrived (a run killed mid-generation) keeps an
     empty answer, rather than being dropped as if it had never been asked.
+
+    An exchange also picks up "quality" and "reason" when the run printed them,
+    which only the mocked template does; see _split_grade.
     """
     blocks, current = [], None
     for line in stdout.splitlines():
@@ -127,15 +164,19 @@ def exchanges(stdout):
     transcript = []
     for block in blocks:
         question = block[0][len("YOU:"):].strip()
-        answer = []
+        answer, grade = [], {}
         for offset, line in enumerate(block[1:], start=1):
             if line.startswith("COACH:"):
                 # The reply is the rest of that line plus every line after it.
-                answer = [line[len("COACH:"):].strip()] + block[offset + 1:]
+                rest = [line[len("COACH:"):].strip()] + block[offset + 1:]
+                answer, grade = _split_grade(rest)
                 break
         while answer and not answer[-1].strip():   # trim the gap before the next question
             answer.pop()
-        transcript.append({"question": question, "answer": "\n".join(answer)})
+        exchange = {"question": question, "answer": "\n".join(answer)}
+        # Same key order a scored transcript ends up with either way.
+        exchange.update(grade)
+        transcript.append(exchange)
     return transcript
 
 
@@ -188,6 +229,25 @@ def execute(run_dir, individual, timeout):
     return Outcome(code, elapsed, output_path, result_path, len(transcript))
 
 
+def needs_unsloth(run_dir, individuals):
+    """Do the generated scripts import unsloth? The mocked ones do not.
+
+    Asked of the scripts themselves rather than of a flag, because the answer
+    is a property of the template they came from: scripts generated from
+    template_code_mocked.py load nothing, and demanding the venv for them would
+    put a GPU-less machine out of reach of the very sweep meant to run there.
+    They are all generated from one template, so the first is representative.
+    """
+    for individual in individuals[:1]:
+        try:
+            with open(os.path.join(run_dir, individual.script), encoding="utf-8") as handle:
+                source = handle.read()
+        except OSError:
+            return True                         # cannot tell: keep the guard
+        return "import unsloth" in source or "from unsloth" in source
+    return True
+
+
 def check_interpreter():
     """Fail fast if this interpreter cannot import what the scripts need.
 
@@ -227,9 +287,10 @@ def main(argv=None):
     # time and the script path would come out doubled.
     args.run_dir = os.path.abspath(args.run_dir)
 
-    check_interpreter()
-
     individuals = read_index(args.run_dir)
+    if needs_unsloth(args.run_dir, individuals):
+        check_interpreter()
+
     selected = [one for one in individuals
                 if args.include_blocked or one.state != "BAD"]
     skipped = len(individuals) - len(selected)
@@ -243,7 +304,9 @@ def main(argv=None):
     print("running %d of %d individuals%s"
           % (len(selected), len(individuals),
              " (%d skipped as BAD)" % skipped if skipped else ""))
-    print("each one loads the base model, so this takes a while\n")
+    print("each one loads the base model, so this takes a while\n"
+          if needs_unsloth(args.run_dir, individuals)
+          else "these are mocked scripts: nothing is loaded, so this is quick\n")
 
     rows = []
     failures = 0
