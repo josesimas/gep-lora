@@ -51,6 +51,12 @@ python main.py --mode sqlite
 settings, the seeds, the transcripts and the scores — see `store.py`. The two use separate
 script folders on purpose, so neither overwrites the other's `run_NNN.py`.
 
+In sqlite mode the generated scripts are a cache with a life cycle: `store.materialise()`
+writes any that are missing or stale before `process` runs, and `store.remove_scripts()`
+deletes each one it processed afterwards, so a finished sweep leaves only the database.
+`--keep-scripts` opts out; `main_sqlite.py runs` brings them back. Only scripts that
+actually ran are removed — ones skipped as `BAD` or held back by `--limit` stay.
+
 ```bash
 python store.py --show 0
 ```

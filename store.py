@@ -378,6 +378,36 @@ def materialise(conn, run_id, run_dir, force=False):
     return written
 
 
+def remove_scripts(conn, run_id, run_dir, names=None):
+    """Delete generated script files from disk. Returns how many went.
+
+    The inverse of materialise(), and safe for the same reason it is: the text
+    of every script is in individuals.script_source, so a deleted file comes
+    back the moment anything needs it. Once a sweep has been processed the files
+    have served their purpose -- they exist only because a script has to be a
+    file to be launched -- and leaving a population's worth of them lying about
+    only invites someone to run a stale one by hand.
+
+    `names` limits it to those scripts; None means every one this run owns.
+    Either way only names this run recorded are touched, never whatever else
+    happens to be sitting in run_dir.
+    """
+    wanted = None if names is None else set(names)
+    gone = 0
+    for row in individuals(conn, run_id):
+        name = row["script_name"]
+        if not name or (wanted is not None and name not in wanted):
+            continue
+        try:
+            os.remove(os.path.join(run_dir, name))
+            gone += 1
+        except OSError:
+            # Already deleted, or held open by something: not worth failing a
+            # finished sweep over a file that was only ever a cache.
+            pass
+    return gone
+
+
 # --- reading a sweep back out ---------------------------------------------
 
 

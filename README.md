@@ -621,11 +621,31 @@ Resumes the most recent sweep; `--run 3` names one instead.
 #### What still touches the disk
 
 The generated `run_NNN.py` scripts, and only those — `process` launches them as
-subprocesses, so they have to be real files. They are a cache of
-`individuals.script_source`, rewritten whenever they are missing or stale, and
-they land in `run_db/` because a generated script finds the LoRA folders and
-`training_set.txt` by going up **one** level from itself. A sibling of `run/`
-works; a folder inside it would not.
+subprocesses, so they have to be real files. They land in `run_db/` because a
+generated script finds the LoRA folders and `training_set.txt` by going up
+**one** level from itself. A sibling of `run/` works; a folder inside it would
+not.
+
+They are a cache of `individuals.script_source`, not a second copy of the truth,
+which is what makes both halves of their life cycle safe: `process` writes any
+that are missing or stale before it runs, and **deletes each one it has
+processed** once the sweep is through. So a finished sweep leaves `run_db/`
+holding the database and nothing else — no spent scripts piling up, and no stale
+script for someone to run by hand a week later.
+
+```bash
+python main.py --mode sqlite process --keep-scripts
+```
+
+keeps them when you want to read or re-run one. Otherwise they come back from
+the database on demand:
+
+```bash
+python main.py --mode sqlite runs
+```
+
+Only the scripts that actually ran are removed. Ones skipped as `BAD`, or left
+out by `--limit`, are still waiting and stay where they are.
 
 ---
 

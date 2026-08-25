@@ -28,14 +28,19 @@ the two modes deliberately behave differently.
 
 What still touches the disk
 ---------------------------
-The generated run_NNN.py scripts, and only those: process launches them as
-subprocesses, so they have to be real files. They are a cache of
-individuals.script_source and are rewritten from the database whenever they are
-missing or stale. They have to sit exactly one level below the project folder --
-a generated script finds the LoRA folders and training_set.txt by going up one
-from itself -- so they land in run_db/, a sibling of the text mode's run/ rather
-than a folder inside it. Separate folders, because otherwise a sweep in one mode
-would overwrite the other's scripts and leave run/index.txt naming files that no
+The generated run_NNN.py scripts, and only those, and only until they have run:
+process launches them as subprocesses, so they have to be real files, and it
+deletes each one it has processed once the sweep is through. They are a cache of
+individuals.script_source, rewritten from the database whenever they are missing
+or stale, so nothing is lost -- what is gained is that run_db/ does not fill up
+with spent scripts, and nobody can launch a stale one by hand a week later.
+Pass --keep-scripts to leave them.
+
+They have to sit exactly one level below the project folder -- a generated
+script finds the LoRA folders and training_set.txt by going up one from itself
+-- so they land in run_db/, a sibling of the text mode's run/ rather than a
+folder inside it. Separate folders, because otherwise a sweep in one mode would
+overwrite the other's scripts and leave run/index.txt naming files that no
 longer match it.
 
 Steps run in the order listed and stop at the first failure. An individual that
@@ -300,6 +305,21 @@ def step_process(context):
 
     print("\nran %d in %.1fs, %d failed" % (len(selected), time.time() - started, failures))
 
+    # The scripts have done their job: everything they printed is in the
+    # database, and their source is in individuals.script_source, so the files
+    # themselves are spent. Clearing them keeps run_db/ to the database plus
+    # whatever is still waiting to run, and makes it impossible to launch a
+    # stale one by hand later. This happens whatever the individuals did --
+    # a failed run is still a processed one, and its output is stored either way.
+    if options.keep_scripts:
+        print("kept the scripts in %s (--keep-scripts)" % context.run_dir)
+    else:
+        gone = store.remove_scripts(conn, run_id, context.run_dir,
+                                    [row["script_name"] for row in selected])
+        print("removed %d processed script(s) from %s -- they are still in the "
+              "database (python main_sqlite.py runs, or python store.py --export)"
+              % (gone, context.run_dir))
+
     # A chromosome that cannot run is a result, not a pipeline failure. Only a
     # sweep where nothing at all worked points at something systemic.
     if failures == len(selected):
@@ -402,7 +422,7 @@ STEPS = [
     # The expensive one: a base-model load per individual. Keep COUNT small
     # while iterating, or run the earlier steps on their own.
     Step("process", step_process,
-         "execute each script -> executions, exchanges"),
+         "execute each script -> executions, exchanges; then delete the scripts"),
     # Also slow, and needs the judge endpoint up: one grading call per answer.
     Step("evaluate", step_evaluate,
          "score every answer with the judge -> exchanges.quality"),
@@ -472,6 +492,9 @@ def main(argv=None):
                         help="process only the first N individuals (0 = all)")
     parser.add_argument("--include-blocked", action="store_true",
                         help="also run the ones marked BAD")
+    parser.add_argument("--keep-scripts", action="store_true",
+                        help="leave the generated scripts on disk after processing "
+                             "them (default: delete them; the source is in the database)")
     parser.add_argument("--timeout", type=int, default=900,
                         help="seconds to allow each script (default 900)")
     parser.add_argument("--force", action="store_true",
