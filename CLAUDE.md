@@ -35,7 +35,7 @@ All commands run from the repo root.
 python main.py
 ```
 
-Whole pipeline: `population -> trees -> runs -> process -> evaluate`, stopping at the first
+Whole pipeline: `population -> trees -> runs -> process -> evaluate -> fitness`, stopping at the first
 failure. `python main.py --list` shows the steps; naming steps runs a subset, always in
 pipeline order regardless of typing order.
 
@@ -106,6 +106,12 @@ helpers, and `--list/--show/--export`. Nothing else imports sqlite3.
 `UNARY_OPS`, `VARIABLES`, `ARITY`), the `Node` type, and `decode`/`encode`/`levels`.
 Everything else imports from it; there is no second parser. Grammar invariants enforced
 there: root is `CAT`; `CAT`/`SVD`/`LIN` take two *operators*; `L1`–`L5` take one *variable*.
+
+`calculate_fitness.py` folds a judged transcript into one number: `assign(conn, run_id)`
+averages `exchanges.quality` over each individual's most recent execution -- the
+`individual_quality` view -- and writes it to `individuals.fitness`. An individual with
+nothing to average (never run, `BAD`, crashed, still unjudged) gets `0.0`, not NULL, so a
+selection step never has to decide what a missing score means.
 
 `generate_runs.py` turns a decoded tree into a script:
 

@@ -39,7 +39,7 @@ BRANCH_PROB = 0.6
 # answers, and scores that arrive with the transcript, so the whole pipeline
 # finishes in seconds on a machine with no GPU and no judge running. Mocked
 # scores are noise; never read one as a result.
-TEMPLATE = "template_code.py"
+TEMPLATE = "template_code_mocked.py"
 
 
 # --- the blend weights -----------------------------------------------------

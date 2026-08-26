@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS individuals (
     script_name   TEXT,
     script_source TEXT,
     weight_seed   INTEGER,                 -- stamped into the script above
+    fitness       REAL DEFAULT 0.0,
+    is_best       INTEGER DEFAULT 0,
+    has_changed   INTEGER DEFAULT 0,
     UNIQUE (run_id, number)
 );
 
@@ -345,6 +348,18 @@ def score_exchange(conn, exchange_id, quality, reason, model):
     conn.execute(
         "UPDATE exchanges SET quality = ?, reason = ?, judged_at = ?, judge_model = ?"
         " WHERE id = ?", (quality, reason, _now(), model, exchange_id))
+
+
+def set_fitness(conn, run_id, number, fitness):
+    """Record one individual's fitness -- the number selection sorts on.
+
+    Keyed by (run_id, number) rather than by row id, because the caller works
+    from the individual_quality view, whose rows are individuals seen through
+    their latest execution.
+    """
+    conn.execute(
+        "UPDATE individuals SET fitness = ? WHERE run_id = ? AND number = ?",
+        (fitness, run_id, number))
 
 
 def quality_rows(conn, run_id):

@@ -1,11 +1,12 @@
 """
 main.py - Run the whole pipeline end to end against a sqlite database.
 
-    population -> trees -> runs -> process -> evaluate
+    population -> trees -> runs -> process -> evaluate -> fitness
 
 Nothing is left scattered across a folder afterwards. The population, every
 setting the sweep ran under, every seed, every generated script, every
-transcript and every score go into one database, described in store.py:
+transcript, every score and the fitness they come to go into one database,
+described in store.py:
 
     runs -> settings, individuals -> executions -> exchanges
 
@@ -72,6 +73,7 @@ import sys
 import time
 from collections import namedtuple
 
+import calculate_fitness
 import draw_trees
 import evaluate_run
 import generate_population
@@ -408,6 +410,45 @@ def step_evaluate(context):
         raise SystemExit("nothing could be scored -- check the judge endpoint")
 
 
+def step_fitness(context):
+    """Fold each transcript into one number -> individuals.fitness."""
+    conn, run_id = context.conn, context.run_id
+    rows = calculate_fitness.assign(conn, run_id)
+    if not rows:
+        raise SystemExit("run %d holds no individuals. Run the population step first."
+                         % run_id)
+    if not any(row["quality"] is not None for row in rows):
+        raise SystemExit("no answer in run %d carries a quality yet -- run the "
+                         "evaluate step first." % run_id)
+
+    print("fitness = mean quality across the exchanges of the latest execution\n")
+    print("    %-4s %-5s %-7s %-7s %s"
+          % ("#", "state", "answers", "fitness", "chromosome"))
+    values = []
+    for row in rows:                            # already best first
+        value = calculate_fitness.fitness_of(row)
+        values.append(value)
+        print("    %-4d %-5s %-7d %-7.3f %s"
+              % (row["number"], row["state"] or "-", row["answers"] or 0,
+                 value, row["chromosome"]))
+
+    print("\nwrote fitness for %d individual(s): min %.3f, max %.3f, mean %.3f"
+          % (len(values), min(values), max(values), sum(values) / len(values)))
+
+    # An individual averaged over part of its transcript still gets a fitness,
+    # but it is a weaker claim than one averaged over all of it -- say so.
+    partial = [row["number"] for row in rows
+               if row["quality"] is not None and (row["unscored"] or 0)]
+    if partial:
+        print("%d individual(s) averaged over a partly scored transcript: %s"
+              % (len(partial), ", ".join(str(number) for number in partial)))
+    # 0.0 here is a decision, not a gap -- see calculate_fitness.py.
+    empty = [row["number"] for row in rows if row["quality"] is None]
+    if empty:
+        print("%d individual(s) had no judged answer and scored 0.0: %s"
+              % (len(empty), ", ".join(str(number) for number in empty)))
+
+
 Step = namedtuple("Step", "name run description")
 
 STEPS = [
@@ -424,6 +465,9 @@ STEPS = [
     # Also slow, and needs the judge endpoint up: one grading call per answer.
     Step("evaluate", step_evaluate,
          "score every answer with the judge -> exchanges.quality"),
+    # Cheap, and pure arithmetic over what evaluate stored: no model, no judge.
+    Step("fitness", step_fitness,
+         "average each transcript's qualities -> individuals.fitness"),
 ]
 
 

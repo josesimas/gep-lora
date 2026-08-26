@@ -112,13 +112,15 @@ Run everything from `project/`.
 python main.py
 ```
 
-Runs every step in order — population, trees, runs, process, evaluate —
-stopping at the first failure, since each step builds on the one before it.
+Runs every step in order — population, trees, runs, process, evaluate,
+fitness — stopping at the first failure, since each step builds on the one
+before it.
 
-The last two steps are the slow ones: `process` executes the generated scripts,
-one base-model load per individual, and `evaluate` then makes one grading call
-per answer. A full `python main.py` is therefore a long operation, and
-`python main.py population trees runs` stops short of both.
+`process` and `evaluate` are the slow ones: `process` executes the generated
+scripts, one base-model load per individual, and `evaluate` then makes one
+grading call per answer. A full `python main.py` is therefore a long operation,
+and `python main.py population trees runs` stops short of both. `fitness`,
+which follows them, is arithmetic over what they stored and costs nothing.
 
 Run it with the **venv's python** — `process` launches each generated script
 with `sys.executable`, so the wrong interpreter fails every individual. It now
@@ -143,7 +145,7 @@ population, every setting it ran under, every seed, every generated script, ever
 transcript and every score. The sweep itself is a row, so sweeps accumulate
 instead of replacing each other, can be queried across, and — because the seeds
 are stored rather than only the values they produced — can be *repeated*. See
-[store.py](#7-storepy--the-sweep-database) below.
+[store.py](#8-storepy--the-sweep-database) below.
 
 The only thing that reaches the disk is the generated `run_NNN.py` scripts, in
 `run_db/`, and only until they have run; `process` deletes each one it has
@@ -439,7 +441,47 @@ a long reason cannot truncate it away, and `MAX_TOKENS` is generous because a
 reasoning judge spends its budget thinking and returns an empty message if it
 runs out mid-thought.
 
-### 6. `test.py` → `run/test_*`
+### 6. `calculate_fitness.py` → `individuals.fitness`
+
+The judge scores answers, not chromosomes. Selection needs the opposite — one
+comparable number per individual — so this step folds each transcript into its
+mean:
+
+```bash
+python main.py fitness
+```
+
+> fitness = the average `quality` across the exchanges of the individual's most
+> recent execution
+
+The most recent execution and not all of them, for the same reason `evaluate`
+scores only that one: the same chromosome run again under a different weight
+seed is a new result, not an amendment to the old one. That choice already
+lives in the `individual_quality` view, which is where the average comes from —
+this step writes it back onto the row so a selection step can sort on a column
+instead of recomputing a join.
+
+```
+#    state answers fitness chromosome
+1    ok    3       0.595   CAT.L1.L3.w2.w2
+2    ok    3       0.350   CAT.L5.SVD.w1.L1.L1.w2.w2
+3    ok    0       0.000   CAT.L5.L2.w5.w4
+```
+
+An individual with nothing to average — never run, crashed before it answered,
+`BAD`, or still unjudged — gets **0.0**, not NULL. Fitness is what selection
+sorts on, and a missing score there would have to be given a meaning at every
+call site; giving it one here, once, says the only sensible thing: an individual
+that produced no judged answer is worth nothing, and a blend PEFT refuses to
+build cannot be selected for.
+
+A partly judged individual is averaged over the answers that *do* have a score
+and named in the output, since a fitness over half a transcript is a weaker
+claim than one over all of it. The step is pure arithmetic over what `evaluate`
+stored — no model, no judge, no endpoint — so it is cheap to re-run, and it
+re-runs cleanly: it overwrites, never accumulates.
+
+### 7. `test.py` → `run/test_*`
 
 Try one chromosome by hand without starting a sweep. Set the variable at the top
 of the file and run it:
@@ -498,7 +540,7 @@ Bad input is reported rather than half-processed:
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
-### 7. `store.py` → the sweep database
+### 8. `store.py` → the sweep database
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
@@ -779,6 +821,7 @@ warning — the effective cap is unchanged.
 | `training_set.txt` | the eval prompts, one per line, read by every generated script |
 | `process_run.py` | launches a generated script and reads its transcript back |
 | `evaluate_run.py` | the judge: its settings, its rubric, and one grading call |
+| `calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
 | `test.py` | try a single chromosome → `run/test_*` |
 | `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `test.py` |
 | `combination.py` | the original two-adapter script the generated code is modelled on |
@@ -799,6 +842,7 @@ template_code.py                           (the shape of those scripts)
 
 process_run.launch/exchanges          -->  executions, exchanges
 evaluate_run.judge                    -->  exchanges.quality
+calculate_fitness.assign              -->  individuals.fitness
 
 store.py --show / --export                 reads any of it back out
 
