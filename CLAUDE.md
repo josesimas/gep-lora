@@ -36,8 +36,8 @@ python main.py
 ```
 
 Whole pipeline:
-`population -> trees -> runs -> process -> evaluate -> fitness -> elitism -> selection`,
-stopping at the first
+`population -> trees -> runs -> process -> evaluate -> fitness -> elitism -> selection
+-> mutation`, stopping at the first
 failure. `python main.py --list` shows the steps; naming steps runs a subset, always in
 pipeline order regardless of typing order.
 
@@ -139,6 +139,24 @@ generations, not one done twice. Fitness 0.0 is a zero-width slice and is never 
 all-zero population has no wheel, selects nobody and writes nothing. Each round derives its
 generator from `SELECTION_MASTER_SEED` and the size of the population it spins over, the way
 weight seeds derive from `WEIGHT_MASTER_SEED` and an individual's number.
+
+`mutation.py` is point mutation with the grammar built in: `mutate(chromosome, rate, rng)`
+gives each symbol probability `rate` of becoming a *different symbol of its own class*
+(`CAT`/`SVD`/`LIN`, `L1`-`L5`, `w1`-`w5`) and never touches the root. Class-local swaps are
+the only ones that preserve both arity and the child alphabet -- `children_alphabet()`
+depends on the class, not the symbol -- so the tree keeps its shape and every result still
+decodes; `generate_population.check()` is run on each one before it is stored, so a broken
+mutant is a bug rather than a result. `apply()` skips the `is_best` row entirely (mutating
+the elite would discard what elitism protects) and writes `has_changed` for every
+individual, 1 where the chromosome moved and 0 everywhere else -- this round's answer, not a
+running total. **has_changed = 1 clears that row's `fitness` to NULL** (`store.set_chromosome`):
+the score belonged to the chromosome just replaced, and keeping it would let a mutant be
+elected or win a slice of the wheel on a blend it no longer describes. Every reader of the
+column already coalesces NULL to 0.0, so a mutant is simply passed over until it has been
+judged again. Its `tree`, `script_source` and `rank` are stale too; `trees`/`runs` re-derive
+those. Re-run `process` before `fitness` -- `fitness` reads the latest *execution*, so
+running it first would recompute the old chromosome's score and put it back. A `CAT`->`LIN` swap over mismatched
+ranks is expected and is culled by the usual `BAD` path.
 
 `generate_runs.py` turns a decoded tree into a script:
 

@@ -2,7 +2,7 @@
 main.py - Run the whole pipeline end to end against a sqlite database.
 
     population -> trees -> runs -> process -> evaluate -> fitness -> elitism
-    -> selection
+    -> selection -> mutation
 
 Nothing is left scattered across a folder afterwards. The population, every
 setting the sweep ran under, every seed, every generated script, every
@@ -80,6 +80,7 @@ import elitism
 import evaluate_run
 import generate_population
 import generate_runs
+import mutation
 import process_run
 import selection
 import settings as config
@@ -149,6 +150,8 @@ def new_sweep(conn, label):
         conf["WEIGHT_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
     if conf.get("SELECTION_MASTER_SEED") is None:
         conf["SELECTION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
+    if conf.get("MUTATION_MASTER_SEED") is None:
+        conf["MUTATION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
 
     run_id = store.create_run(conn, template=conf.get("TEMPLATE") or "template_code.py",
                               label=label)
@@ -479,29 +482,27 @@ def step_elitism(context):
                  ", ".join(str(number) for number in tied)))
 
 
-def _selection_seed(context):
-    """This sweep's selection seed, drawing and recording one if it has none.
+def _master_seed(context, name):
+    """The sweep's seed called `name`, drawing and recording one if it has none.
 
     The same bargain the other seeds strike: a sweep that was never asked to be
     repeatable still is, because whatever it used is written down. A sweep
-    created before this setting existed gets its seed here instead of at
+    created before the setting existed gets its seed here instead of at
     creation, and keeps it from then on.
     """
-    seed = context.conf.get("SELECTION_MASTER_SEED")
+    seed = context.conf.get(name)
     if seed is None:
         seed = random.randrange(_SEED_LIMIT)
-        context.conf["SELECTION_MASTER_SEED"] = seed
-        store.save_settings(context.conn, context.run_id,
-                            {"SELECTION_MASTER_SEED": seed})
-        print("drew a selection seed for run %d and stored it: %d"
-              % (context.run_id, seed))
+        context.conf[name] = seed
+        store.save_settings(context.conn, context.run_id, {name: seed})
+        print("drew %s for run %d and stored it: %d" % (name, context.run_id, seed))
     return seed
 
 
 def step_selection(context):
     """Spin the roulette wheel -> more individuals, none of them replaced."""
     conn, run_id = context.conn, context.run_id
-    master = _selection_seed(context)
+    master = _master_seed(context, "SELECTION_MASTER_SEED")
     before = store.individuals(conn, run_id)
     if not before:
         raise SystemExit("run %d holds no individuals. Run the population step first."
@@ -554,6 +555,48 @@ def step_selection(context):
           "trees, scripts and seeds with: python main.py trees runs")
 
 
+def step_mutation(context):
+    """Mutate everything but the elite -> chromosome, has_changed."""
+    conn, run_id = context.conn, context.run_id
+    rate = context.conf.get("MUTATION_RATE", config.MUTATION_RATE)
+    if not 0.0 <= rate <= 1.0:
+        raise SystemExit("MUTATION_RATE is %r; it is a probability per symbol and "
+                         "has to be between 0.0 and 1.0" % rate)
+
+    master = _master_seed(context, "MUTATION_MASTER_SEED")
+    before = store.individuals(conn, run_id)
+    if not before:
+        raise SystemExit("run %d holds no individuals. Run the population step first."
+                         % run_id)
+
+    # Derived the way selection's is, and for the same reason: the population
+    # grows a generation at a time, so its size dates the round, and a sweep
+    # replayed from its stored seed mutates exactly as it did the first time.
+    rng = random.Random("%s:%d" % (master, len(before)))
+    changes, rows = mutation.apply(conn, run_id, rate, rng)
+
+    elite = [row["number"] for row in rows if row["is_best"]]
+    eligible = len(rows) - len(elite)
+    print("rate %.3f per symbol, over %d of %d individual(s)%s"
+          % (rate, eligible, len(rows),
+             " (#%s is the elite and is left alone)"
+             % ", #".join(str(number) for number in elite) if elite else ""))
+    if changes:
+        print("    %-4s %-7s %s" % ("#", "symbols", "chromosome"))
+        for change in changes:
+            print("    %-4d %-7d %s" % (change.number, change.symbols, change.before))
+            print("    %-4s %-7s %s" % ("", "->", change.after))
+    print("mutated %d, left %d unchanged; has_changed is set on %d individual(s)"
+          % (len(changes), len(rows) - len(changes), len(changes)))
+    if changes:
+        # Their fitness is gone, cleared with the chromosome that earned it. The
+        # tree, script and rank are merely stale descriptions, and nothing here
+        # can re-derive them.
+        print("their fitness is cleared, and their trees, scripts and ranks still "
+              "describe the chromosome they used to be")
+        print("re-derive and re-earn: python main.py trees runs, then process")
+
+
 Step = namedtuple("Step", "name run description")
 
 STEPS = [
@@ -580,6 +623,9 @@ STEPS = [
     # twice is two generations of selection, not one done twice.
     Step("selection", step_selection,
          "roulette wheel sampling -> the picks, appended to the population"),
+    # Leaves the elite alone, so the best result found so far survives intact.
+    Step("mutation", step_mutation,
+         "point-mutate every other chromosome -> chromosome, has_changed"),
 ]
 
 

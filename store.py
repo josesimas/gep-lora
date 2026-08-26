@@ -403,6 +403,41 @@ def set_fitness(conn, run_id, number, fitness):
         (fitness, run_id, number))
 
 
+def set_changed(conn, individual_id, has_changed):
+    """Record whether the last mutation round altered this individual.
+
+    has_changed = 1 clears the fitness, for the reason set_chromosome() gives.
+    """
+    if has_changed:
+        conn.execute(
+            "UPDATE individuals SET has_changed = 1, fitness = NULL WHERE id = ?",
+            (individual_id,))
+    else:
+        conn.execute("UPDATE individuals SET has_changed = 0 WHERE id = ?",
+                     (individual_id,))
+
+
+def set_chromosome(conn, individual_id, chromosome):
+    """Replace an individual's chromosome. It has changed, and it has no fitness.
+
+    All three go together. A new chromosome *is* the change, so has_changed
+    follows from it rather than being decided separately; and the fitness beside
+    it was earned by the chromosome that just went away, which makes it not
+    merely stale but wrong -- it would let an individual be elected, or win a
+    slice of the roulette wheel, on a score belonging to a blend it no longer
+    describes. NULL is the honest value: no fitness yet, the way an individual
+    that has never run has none.
+
+    The tree, script and rank are stale too, but they are only descriptions and
+    they are re-derived wholesale by trees and runs. Fitness has to be re-earned
+    through process and evaluate, so it is cleared here rather than left to
+    mislead until then.
+    """
+    conn.execute(
+        "UPDATE individuals SET chromosome = ?, has_changed = 1, fitness = NULL"
+        " WHERE id = ?", (chromosome, individual_id))
+
+
 def mark_best(conn, run_id, number):
     """Make one individual the sweep's elite, and the only one.
 

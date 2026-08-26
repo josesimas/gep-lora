@@ -113,15 +113,15 @@ python main.py
 ```
 
 Runs every step in order — population, trees, runs, process, evaluate,
-fitness, elitism, selection — stopping at the first failure, since each step
-builds on the one before it.
+fitness, elitism, selection, mutation — stopping at the first failure, since
+each step builds on the one before it.
 
 `process` and `evaluate` are the slow ones: `process` executes the generated
 scripts, one base-model load per individual, and `evaluate` then makes one
 grading call per answer. A full `python main.py` is therefore a long operation,
 and `python main.py population trees runs` stops short of both. `fitness`,
-`elitism` and `selection`, which follow them, work over what they stored and
-cost nothing.
+`elitism`, `selection` and `mutation`, which follow them, work over what they
+stored and cost nothing.
 
 Run it with the **venv's python** — `process` launches each generated script
 with `sys.executable`, so the wrong interpreter fails every individual. It now
@@ -146,7 +146,7 @@ population, every setting it ran under, every seed, every generated script, ever
 transcript and every score. The sweep itself is a row, so sweeps accumulate
 instead of replacing each other, can be queried across, and — because the seeds
 are stored rather than only the values they produced — can be *repeated*. See
-[store.py](#10-storepy--the-sweep-database) below.
+[store.py](#11-storepy--the-sweep-database) below.
 
 The only thing that reaches the disk is the generated `run_NNN.py` scripts, in
 `run_db/`, and only until they have run; `process` deletes each one it has
@@ -590,7 +590,9 @@ relevant step clears up, and neither of which is a reason to hold the copy back:
   parent's — the two rows describe the same blend — but it does mean two
   individuals can name the same `run_NNN.py` in that window.
 - **A copy inherits `fitness`**, so it is immediately selectable at its parent's
-  score rather than sitting out the next round at `0.0`.
+  score rather than sitting out the next round at `0.0` — right up until
+  [mutation](#9-mutationpy--individualschromosome-individualshas_changed)
+  changes its chromosome, which clears the inherited score.
 
 **Because it appends, the step is not idempotent.** Running it twice runs two
 rounds and the population grows twice. That is what a second generation *is*, so
@@ -613,7 +615,97 @@ population it is spinning over — the same idiom as `WEIGHT_MASTER_SEED` and an
 individual's number. One recorded seed, every draw repeatable, and a second
 round still draws its own parents rather than the first round's again.
 
-### 9. `test.py` → `run/test_*`
+### 9. `mutation.py` → `individuals.chromosome`, `individuals.has_changed`
+
+Selection makes copies; mutation is what makes them worth having.
+
+```bash
+python main.py mutation
+```
+
+Every symbol of every non-elite chromosome is offered a chance, `MUTATION_RATE`,
+of being replaced by a different symbol — **per symbol, not per chromosome**, so
+an eleven-symbol individual at `0.1` expects about one change and may well come
+through untouched.
+
+```
+rate 0.100 per symbol, over 5 of 6 individual(s) (#1 is the elite and is left alone)
+    #    symbols chromosome
+    2    2       CAT.L5.SVD.w1.L1.L1.w2.w2
+         ->      CAT.L5.CAT.w1.L2.L1.w2.w2
+mutated 3, left 3 unchanged; has_changed is set on 3 individual(s)
+```
+
+**The elite does not change.** The individual marked `is_best` is passed over —
+[elitism](#7-elitismpy--individualsis_best) named it precisely so the best
+result found so far survives a generation intact, and mutating it would throw
+away the thing the flag exists to protect. It is the one row this step reads and
+does not write.
+
+#### Only valid changes
+
+A symbol may only be replaced by one of its own kind, and the root is never
+touched at all:
+
+| Class | Swaps with | Why it stays valid |
+|---|---|---|
+| `CAT` `SVD` `LIN` | each other | arity 2, children still operators |
+| `L1`–`L5` | each other | arity 1, child still a variable |
+| `w1`–`w5` | each other | arity 0 |
+| the root | nothing | the grammar fixes it at `CAT` |
+
+That restriction is the whole trick. A symbol's arity, and the alphabet its
+children are drawn from, are properties of its **class** rather than of the
+symbol — so a swap inside a class leaves the tree exactly the shape it was:
+every node still has the number of children it had, and every child is still
+legal where it stands.
+
+Reaching across classes would not. Turning a `CAT` into an `L2` leaves a node
+with two children where one belongs, and the second of them a subtree where a
+bare `w` is required — not a chromosome at all. There is no repair step here and
+no tail to absorb the damage, so the mutation simply does not make changes it
+would have to repair. Every result goes through `generate_population.check()`
+before it is stored, which makes that a guarantee rather than a hope.
+
+What *can* still come out unbuildable is a `LIN` above two different ranks —
+swapping `CAT` for `LIN` produces one easily. That is a legal chromosome
+describing a blend PEFT will not build, so it is culled downstream exactly like
+any other: `runs` marks it `state = 'BAD'` and `process` skips it. See
+[the rank rule](#the-rank-rule-why-27-of-100-individuals-cant-run).
+
+#### `has_changed`, and the fitness that goes with it
+
+`has_changed` is set to `1` on an individual whose chromosome this step actually
+altered, and `0` on every other — the elite included, and an individual the dice
+passed over. It is **this round's answer, not a running total**, so it is written
+for every individual each time rather than only for the ones that moved.
+
+**Setting it to `1` clears that individual's `fitness` to NULL.** The score was
+earned by the chromosome that has just been replaced, which makes keeping it
+worse than stale — it would let a mutant be elected, or win a slice of the
+roulette wheel, on the strength of a blend it no longer describes. NULL says
+what is true: this chromosome has not been judged yet. Both `elitism` and
+`selection` already read a missing fitness as no fitness, so a mutant is passed
+over by each until `process` and `evaluate` have given it a score of its own.
+
+Its `tree`, `script_source` and `rank` are stale too, but those are only
+descriptions and are re-derived wholesale:
+
+```bash
+python main.py trees runs
+```
+
+Note that `fitness` reads the individual's **most recent execution**, so it must
+be `process` that runs next, not `fitness` — running `fitness` before the mutant
+has been executed again would compute it from the old chromosome's transcript
+and put the stale score back.
+
+| Where | Setting | Default | Meaning |
+|---|---|---|---|
+| `settings.py` | `MUTATION_RATE` | `0.1` | chance per symbol; `0.0` turns mutation off without removing the step |
+| `settings.py` | `MUTATION_MASTER_SEED` | `None` | where the dice come from; `None` draws one and records it |
+
+### 10. `test.py` → `run/test_*`
 
 Try one chromosome by hand without starting a sweep. Set the variable at the top
 of the file and run it:
@@ -672,7 +764,7 @@ Bad input is reported rather than half-processed:
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
-### 10. `store.py` → the sweep database
+### 11. `store.py` → the sweep database
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
@@ -956,6 +1048,7 @@ warning — the effective cap is unchanged.
 | `calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
 | `elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
 | `selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent |
+| `mutation.py` | point-mutates every chromosome but the elite's, within its grammar; clears the fitness it invalidates |
 | `test.py` | try a single chromosome → `run/test_*` |
 | `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `test.py` |
 | `combination.py` | the original two-adapter script the generated code is modelled on |
@@ -979,6 +1072,8 @@ evaluate_run.judge                    -->  exchanges.quality
 calculate_fitness.assign              -->  individuals.fitness
 elitism.elect                         -->  individuals.is_best
 selection.select                      -->  more individuals (appended)
+mutation.apply                        -->  individuals.chromosome + has_changed
+                                           (and fitness back to NULL)
 
 store.py --show / --export                 reads any of it back out
 

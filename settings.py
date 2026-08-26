@@ -69,6 +69,22 @@ SELECTION_MASTER_SEED = None
 SELECTION_COUNT = None
 
 
+# --- mutation --------------------------------------------------------------
+
+# The chance each symbol of a chromosome is replaced by another of its own kind
+# -- per symbol, not per chromosome, so an eleven-symbol individual at 0.1
+# expects about one change and may well come through untouched. A symbol only
+# ever becomes one of its own class (CAT/SVD/LIN, L1-L5, w1-w5) and the root is
+# never touched, which is what keeps every mutated chromosome readable; 0.0
+# turns mutation off without removing the step.
+MUTATION_RATE = 0.1
+
+# Where the mutation dice come from, on the same terms as the two seeds above:
+# an int makes a sweep reproducible from the start, None draws one at run time
+# and records it.
+MUTATION_MASTER_SEED = None
+
+
 # --- where things go -------------------------------------------------------
 
 # Where the generated scripts go, and the database itself, relative to this file.
