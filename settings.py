@@ -66,7 +66,7 @@ SELECTION_MASTER_SEED = None
 
 # How many individuals each spin of the wheel adds. None means as many as the
 # population already holds, which doubles it: N parents in, N offspring out.
-SELECTION_COUNT = None
+SELECTION_COUNT = 3
 
 
 # --- mutation --------------------------------------------------------------
@@ -83,6 +83,19 @@ MUTATION_RATE = 0.1
 # an int makes a sweep reproducible from the start, None draws one at run time
 # and records it.
 MUTATION_MASTER_SEED = None
+
+
+# --- continuing a sweep ----------------------------------------------------
+
+# How many generations continue_run.py runs when it is not told otherwise. One
+# generation is trees -> runs -> process -> evaluate -> fitness -> elitism ->
+# selection -> mutation over the population already in the database.
+#
+# Mind what this costs: process loads the base model once per individual, and
+# selection *appends* its picks, so with SELECTION_COUNT left at None the
+# population doubles every generation and the work of a run grows with it. Fix
+# SELECTION_COUNT to a number to grow by that much per generation instead.
+GENERATIONS = 10
 
 
 # --- where things go -------------------------------------------------------

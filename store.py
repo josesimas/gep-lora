@@ -362,6 +362,19 @@ def add_exchanges(conn, execution_id, transcript):
          for position, item in enumerate(transcript, 1)])
 
 
+def executed(conn, run_id):
+    """The ids of the individuals in one sweep that have ever been run.
+
+    An individual not in here has no execution at all, so there is nothing
+    stored about it whatever its flags say -- which is what separates "already
+    done" from "not done yet" when deciding what needs running.
+    """
+    return {row["individual_id"] for row in conn.execute(
+        "SELECT DISTINCT e.individual_id FROM executions e"
+        " JOIN individuals i ON i.id = e.individual_id WHERE i.run_id = ?",
+        (run_id,))}
+
+
 def latest_execution(conn, individual_id):
     return conn.execute(
         "SELECT * FROM executions WHERE individual_id = ?"

@@ -250,6 +250,29 @@ def step_runs(context):
     print("wrote %d script file(s) to %s" % (written, context.run_dir))
 
 
+def _clear_scripts(context, rows):
+    """Delete the script files of individuals whose result is stored.
+
+    The scripts have done their job: everything they printed is in the database,
+    and their source is in individuals.script_source, so the files themselves are
+    spent. Clearing them keeps run_db/ to the database plus whatever is still
+    waiting to run, and makes it impossible to launch a stale one by hand later.
+
+    That covers the ones that just ran -- a failed run is still a processed one,
+    and its output is stored either way -- and the ones skipped as unchanged,
+    which are spent for the same reason: they ran in an earlier generation. Ones
+    held back as BAD or by --limit have never run, so their scripts stay.
+    """
+    if context.options.keep_scripts:
+        print("kept the scripts in %s (--keep-scripts)" % context.run_dir)
+        return
+    gone = store.remove_scripts(context.conn, context.run_id, context.run_dir,
+                                [row["script_name"] for row in rows])
+    print("removed %d spent script(s) from %s -- they are still in the database "
+          "(python main.py runs, or python store.py --export)"
+          % (gone, context.run_dir))
+
+
 def step_process(context):
     """Execute each script -> executions and exchanges."""
     conn, run_id, options = context.conn, context.run_id, context.options
@@ -269,18 +292,45 @@ def step_process(context):
     if real:
         process_run.check_interpreter()
 
-    selected = [row for row in rows
+    runnable = [row for row in rows
                 if options.include_blocked or row["state"] != "BAD"]
-    skipped = len(rows) - len(selected)
+    blocked = len(rows) - len(runnable)
+
+    # An individual whose chromosome has not moved since it last ran would
+    # produce the same execution again at the cost of another base-model load,
+    # and its result is already in the database. has_changed is exactly that
+    # question, so it is exactly what decides. An individual that has never run
+    # is not "unchanged" -- there is nothing to have changed from -- so a fresh
+    # population, and every copy selection appends, still runs in full.
+    done = store.executed(conn, run_id)
+    if options.include_unchanged:
+        selected, unchanged = runnable, []
+    else:
+        selected = [row for row in runnable
+                    if row["has_changed"] or row["id"] not in done]
+        keep = {row["id"] for row in selected}
+        unchanged = [row for row in runnable if row["id"] not in keep]
+
     if options.limit:
         selected = selected[:options.limit]
+
     if not selected:
+        if unchanged:
+            # A generation where nothing moved is a result, not a failure: the
+            # database already holds the answer for every individual in it.
+            print("nothing to run: all %d individual(s) already have an execution "
+                  "of their current chromosome" % len(unchanged))
+            print("pass --include-unchanged to run them again anyway")
+            _clear_scripts(context, unchanged)
+            return
         raise SystemExit("nothing to run: all %d individuals are marked BAD. "
                          "Pass --include-blocked to run them anyway." % len(rows))
 
-    print("running %d of %d individuals%s"
+    print("running %d of %d individuals%s%s"
           % (len(selected), len(rows),
-             " (%d skipped as BAD)" % skipped if skipped else ""))
+             " (%d skipped as BAD)" % blocked if blocked else "",
+             " (%d unchanged since their last run)" % len(unchanged)
+             if unchanged else ""))
     print("each one loads the base model, so this takes a while\n" if real
           else "these are mocked scripts: nothing is loaded, so this is quick\n")
 
@@ -319,14 +369,7 @@ def step_process(context):
     # whatever is still waiting to run, and makes it impossible to launch a
     # stale one by hand later. This happens whatever the individuals did --
     # a failed run is still a processed one, and its output is stored either way.
-    if options.keep_scripts:
-        print("kept the scripts in %s (--keep-scripts)" % context.run_dir)
-    else:
-        gone = store.remove_scripts(conn, run_id, context.run_dir,
-                                    [row["script_name"] for row in selected])
-        print("removed %d processed script(s) from %s -- they are still in the "
-              "database (python main.py runs, or python store.py --export)"
-              % (gone, context.run_dir))
+    _clear_scripts(context, selected + unchanged)
 
     # A chromosome that cannot run is a result, not a pipeline failure. Only a
     # sweep where nothing at all worked points at something systemic.
@@ -632,6 +675,25 @@ STEPS = [
 # --- driver ----------------------------------------------------------------
 
 
+def resolve_run_dir(conf, override=None):
+    """Absolute path of the folder the generated scripts live in.
+
+    Absolute from here on: each script is launched with cwd set to this folder,
+    so a relative path would be resolved against itself a second time.
+    """
+    run_dir = override or conf.get("DB_RUN_DIR") or config.DB_RUN_DIR
+    if not os.path.isabs(run_dir):
+        run_dir = os.path.join(_HERE, run_dir)
+    return os.path.abspath(run_dir)
+
+
+def context_for(conn, run_id, conf, args):
+    """The Context a step gets. One place, so every driver builds the same one."""
+    return Context(conn, run_id, conf,
+                   resolve_run_dir(conf, getattr(args, "run_dir", None)),
+                   _template_path(conf.get("TEMPLATE")), args)
+
+
 def run(steps, context):
     """Run `steps` in order. Returns the exit code for the process.
 
@@ -691,6 +753,10 @@ def main(argv=None):
                         help="process only the first N individuals (0 = all)")
     parser.add_argument("--include-blocked", action="store_true",
                         help="also run the ones marked BAD")
+    parser.add_argument("--include-unchanged", action="store_true",
+                        help="also run individuals whose chromosome has not "
+                             "changed since their last execution (default: skip "
+                             "them; their result is already stored)")
     parser.add_argument("--keep-scripts", action="store_true",
                         help="leave the generated scripts on disk after processing "
                              "them (default: delete them; the source is in the database)")
@@ -736,15 +802,7 @@ def main(argv=None):
         conf = store.get_settings(conn, run_id)
         print("resuming run %d in %s\n" % (run_id, conn.path))
 
-    run_dir = args.run_dir or conf.get("DB_RUN_DIR") or config.DB_RUN_DIR
-    if not os.path.isabs(run_dir):
-        run_dir = os.path.join(_HERE, run_dir)
-    # Absolute from here on: each script is launched with cwd set to this
-    # folder, so a relative path would be resolved against itself a second time.
-    run_dir = os.path.abspath(run_dir)
-
-    context = Context(conn, run_id, conf, run_dir,
-                      _template_path(conf.get("TEMPLATE")), args)
+    context = context_for(conn, run_id, conf, args)
     try:
         return run(selected, context)
     finally:

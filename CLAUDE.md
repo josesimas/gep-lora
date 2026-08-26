@@ -52,6 +52,24 @@ out; `python main.py runs` brings them back. Only scripts that actually ran are 
 ones skipped as `BAD` or held back by `--limit` stay.
 
 ```bash
+python continue_run.py --generations 3
+```
+
+`main.py` runs a sweep through **one** generation; `continue_run.py` carries an existing one
+on, running `trees -> runs -> process -> evaluate -> fitness -> elitism -> selection ->
+mutation` per generation (`GENERATIONS` in `settings.py`, default 10). It never draws a
+population and never creates a sweep -- it resumes one from the database (`--db`, `--run`)
+under the settings that sweep was created with, reusing `main.STEPS` and `main.run()` rather
+than a second copy of the driver. The `_run` suffix is forced: `continue` is a keyword, so a
+`continue.py` could never be imported. **Mind the growth** -- selection appends, so with
+`SELECTION_COUNT = None` the population doubles every generation; the driver prints the
+projection before starting, and carries straight on -- it never prompts. Because a sweep reads its own stored settings, editing
+`settings.py` does nothing to one already under way -- `--set NAME=VALUE` (JSON values,
+repeatable, name must already exist) writes the change into the sweep's settings table
+instead, which is how SELECTION_COUNT gets fixed mid-run without the sweep losing track of
+what it ran under.
+
+```bash
 python store.py --show 0
 ```
 
@@ -206,6 +224,12 @@ property of the search space, not a bug. Ranks are computed statically at genera
 runtime by the generated script, which refuses the bad `linear` step with the same message
 instead of letting a bare `ValueError` out of PEFT. The `process` step skips `BAD`
 individuals unless `--include-blocked`.
+
+`process` also skips individuals with `has_changed = 0` **that already have an execution**
+-- their stored result is of the chromosome they still hold, so re-running one costs a
+base-model load to learn nothing. Never having run is not the same as being unchanged, so a
+fresh population and every copy `selection` appends still run in full. `--include-unchanged`
+overrides it; a step where nothing needs running is reported, not a failure.
 
 **Never assume a shared rank.** Every rank is read from that slot's own
 `adapter_config.json` (`slot_ranks()` at generation time, `_rank()` at runtime), taking

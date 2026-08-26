@@ -146,7 +146,7 @@ population, every setting it ran under, every seed, every generated script, ever
 transcript and every score. The sweep itself is a row, so sweeps accumulate
 instead of replacing each other, can be queried across, and — because the seeds
 are stored rather than only the values they produced — can be *repeated*. See
-[store.py](#11-storepy--the-sweep-database) below.
+[store.py](#12-storepy--the-sweep-database) below.
 
 The only thing that reaches the disk is the generated `run_NNN.py` scripts, in
 `run_db/`, and only until they have run; `process` deletes each one it has
@@ -160,6 +160,7 @@ processed. They are a cache of what the database already holds.
 | `--run-dir` | `run_db` | where the generated scripts go |
 | `--limit` | 0 (all) | process only the first N individuals |
 | `--include-blocked` | off | also run the ones marked `BAD` |
+| `--include-unchanged` | off | also run individuals whose chromosome has not changed |
 | `--keep-scripts` | off | leave the generated scripts on disk after processing |
 | `--timeout` | 900 | seconds to allow each script |
 | `--force` | off | re-score answers that already have a quality |
@@ -325,6 +326,7 @@ python main.py process --limit 3
 |---|---|---|
 | `--limit` | 0 (all) | run only the first N individuals |
 | `--include-blocked` | off | also run the ones marked `BAD` |
+| `--include-unchanged` | off | also run individuals whose chromosome has not changed since their last execution |
 | `--keep-scripts` | off | leave the generated scripts on disk afterwards |
 | `--timeout` | 900 | seconds to allow each script |
 
@@ -367,6 +369,33 @@ view shows the count without a join.
 but only *after* paying for a full model load, so running them costs the same as
 a real evaluation and tells you what the `runs` step already worked out.
 `--include-blocked` runs them anyway and captures the error.
+
+**Unchanged individuals are skipped too.** An individual whose chromosome has
+not moved since it last ran would produce the same execution again at the cost
+of another model load, and its result is already in the database.
+`has_changed` — written by
+[mutation](#9-mutationpy--individualschromosome-individualshas_changed) for
+every individual, every round — is exactly that question, so it is exactly what
+decides.
+
+An individual that has **never run** is not "unchanged": there is nothing for it
+to have changed from. A fresh population therefore runs in full, and so does
+every copy `selection` appends, since a copy has no executions of its own
+however its flags read.
+
+That is what keeps a long run affordable. Over four generations from a
+population of 3:
+
+```
+generation 1  population 6   running 3 of 6   (3 unchanged)
+generation 2  population 12  running 8 of 12  (4 unchanged)
+generation 3  population 24  running 15 of 24 (9 unchanged)
+generation 4  population 48  running 32 of 48 (16 unchanged)
+```
+
+58 model loads rather than 90. `--include-unchanged` runs them all regardless.
+A generation where *nothing* needs running is reported and passed over, not
+treated as a failure.
 
 **Individual failures are results, not pipeline failures.** A chromosome that
 crashes is recorded as an execution with its exit code and the sweep carries on;
@@ -705,7 +734,96 @@ and put the stale score back.
 | `settings.py` | `MUTATION_RATE` | `0.1` | chance per symbol; `0.0` turns mutation off without removing the step |
 | `settings.py` | `MUTATION_MASTER_SEED` | `None` | where the dice come from; `None` draws one and records it |
 
-### 10. `test.py` → `run/test_*`
+### 10. `continue_run.py` → generation after generation
+
+`main.py` runs a sweep from a fresh population through **one** generation.
+`continue_run.py` carries that sweep on:
+
+```bash
+python continue_run.py
+```
+
+One generation is every step but `population`, in pipeline order — a complete
+turn of the crank:
+
+```
+trees -> runs -> process -> evaluate -> fitness -> elitism -> selection -> mutation
+```
+
+describe the chromosomes, build them, run them, judge them, score them, keep the
+best, breed from the fit, vary the offspring. The population that comes out is
+the one the next generation goes in with.
+
+**Everything comes out of the database.** There is no `population` step here and
+no new sweep: this continues one that already exists, reads the settings *that
+sweep* was created with, and writes back into it. Nothing is taken from
+`settings.py` as it stands today except `GENERATIONS`, which is a property of
+the invocation rather than of the sweep.
+
+Which also means **editing `settings.py` does nothing to a sweep already under
+way** — a sweep created before you changed a knob stored the old value and goes
+on using it. That is the point for the seeds and the template; it is merely in
+the way for a knob you only discover you wanted after the first generation. So
+`--set` changes one *on* the sweep:
+
+```bash
+python continue_run.py --set SELECTION_COUNT=3
+```
+
+The value is written into the sweep's settings table — so the sweep still
+records what it ran under, rather than being read past — and takes effect from
+that generation on. The name has to be one the sweep already holds, so a typo is
+caught rather than quietly stored. Values are read as JSON, so `3`, `0.25` and
+`null` all mean what they look like. It is repeatable.
+
+```bash
+python continue_run.py --db run_real/gep.sqlite3 --run 3 --generations 5
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--db` | `run_db/gep.sqlite3` | the database holding the sweep |
+| `--run` | `0` (the latest) | which sweep to continue |
+| `--generations` | `GENERATIONS` (10) | how many turns to run |
+| `--set NAME=VALUE` | none | change one of the sweep's stored settings, e.g. `--set SELECTION_COUNT=3` |
+
+`--limit`, `--include-blocked`, `--include-unchanged`, `--keep-scripts`,
+`--timeout` and `--force` are there too, and mean what they mean in `main.py`
+— the steps read them off the options either way.
+
+#### Watch the size
+
+**Selection appends.** With `SELECTION_COUNT` at `None` it adds as many
+individuals as the population already holds, so the population *doubles* every
+generation — and `process` loads the base model once per individual, every
+generation — though only for the part of it that actually changed, since
+`process` skips individuals whose chromosome has not moved since their last
+execution. Ten generations from a population of 10:
+
+```
+population by generation: 10 -> 20 -> 40 -> ... -> 10240
+individuals through process in total: 10230
+```
+
+The driver prints that projection, and the total, **before it starts anything**,
+so the cost is on screen rather than discovered three hours in. It prints and
+carries on — it never stops to ask, so it stays usable from a script or a
+scheduled job. Fixing `SELECTION_COUNT` to a number makes the growth linear
+instead — with `--set SELECTION_COUNT=3` for the sweep in front of you, since
+editing `settings.py` only reaches the next one:
+
+```
+population by generation: 6 -> 9 -> 12 -> 15 -> 18
+individuals through process in total: 42
+```
+
+A generation that fails stops the loop: the sweep is marked `failed` and what
+the earlier generations did stays in the database.
+
+The `_run` suffix is not decoration — `continue` is a Python keyword, so a
+`continue.py` could be run but never imported.
+
+### 11. `test.py` → `run/test_*`
 
 Try one chromosome by hand without starting a sweep. Set the variable at the top
 of the file and run it:
@@ -764,7 +882,7 @@ Bad input is reported rather than half-processed:
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
-### 11. `store.py` → the sweep database
+### 12. `store.py` → the sweep database
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
@@ -1033,6 +1151,7 @@ warning — the effective cap is unchanged.
 |---|---|
 | `plan.txt` | the original spec |
 | `main.py` | the entry point and the driver; add future steps to its `STEPS` list |
+| `continue_run.py` | runs the generation loop on over a sweep already in the database |
 | `settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
 | `store.py` | the database: schema, helpers, `--list/--show/--export` |
 | `run_db/gep.sqlite3` | every sweep ever run, with its settings, seeds, transcripts and scores |
@@ -1078,6 +1197,8 @@ mutation.apply                        -->  individuals.chromosome + has_changed
 store.py --show / --export                 reads any of it back out
 
 test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
+
+continue_run.py  -->  that whole column again, once per generation
 ```
 
 Running the whole thing:
