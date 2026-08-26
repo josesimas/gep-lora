@@ -1,6 +1,10 @@
 """
-generate_population.py - Build a random population of GEP-style expression
-strings and write them to population.txt.
+generate_population.py - The alphabet, the encoding, and the random draw.
+
+This is the root module of the pipeline: it owns the symbols an individual is
+made of, the Node type, and the encode/decode pair everything else reads trees
+with. main.py calls build_population() for a sweep's population and decode() for
+each tree; there is no second parser anywhere.
 
 Encoding
 --------
@@ -23,19 +27,10 @@ Grammar
     w1 .. w5        variables, the leaves of the tree
 
 The first symbol is always CAT.
-
-Usage:
-    python generate_population.py                        # 100 individuals -> population.txt
-    python generate_population.py --count 500 --seed 7
-    python generate_population.py --preview 3            # also print the level rows
 """
 
-import argparse
-import os
-import random
 from collections import deque
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
 
 # --- the alphabet ---------------------------------------------------------
 
@@ -159,7 +154,7 @@ def check(expression):
     return root
 
 
-# --- driver ---------------------------------------------------------------
+# --- the population --------------------------------------------------------
 
 
 def build_population(count, rng, max_depth, branch_prob, unique):
@@ -173,68 +168,15 @@ def build_population(count, rng, max_depth, branch_prob, unique):
         if attempts > attempt_budget:
             raise RuntimeError(
                 "could only find %d unique expressions out of %d requested; "
-                "raise --max-depth or --branch-prob, or drop --unique"
+                "raise MAX_DEPTH or BRANCH_PROB in settings.py, or clear UNIQUE"
                 % (len(population), count)
             )
         depth = rng.randint(1, max_depth)
         expression = encode(random_tree(rng, depth, branch_prob))
-        check(expression)   # never write out something we cannot read back
+        check(expression)   # never store something we cannot read back
         if unique:
             if expression in seen:
                 continue
             seen.add(expression)
         population.append(expression)
     return population
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Generate a population of GEP-style expression strings."
-    )
-    parser.add_argument("--count", type=int, default=100,
-                        help="how many strings to generate (default 100)")
-    parser.add_argument("--output", default=os.path.join(_HERE, "run/population.txt"),
-                        help="output file (default population.txt next to this script)")
-    parser.add_argument("--seed", type=int, default=None,
-                        help="RNG seed, for a reproducible population")
-    parser.add_argument("--max-depth", type=int, default=4,
-                        help="deepest level an operator may sit at (default 4)")
-    parser.add_argument("--branch-prob", type=float, default=0.6,
-                        help="chance an operator is arity 2 and keeps growing (default 0.6)")
-    parser.add_argument("--unique", action="store_true",
-                        help="reject duplicate expressions")
-    parser.add_argument("--preview", type=int, default=0,
-                        help="print the first N individuals as level rows")
-    args = parser.parse_args(argv)
-
-    if args.count < 1:
-        parser.error("--count must be at least 1")
-    if args.max_depth < 1:
-        parser.error("--max-depth must be at least 1")
-    if not 0.0 <= args.branch_prob <= 1.0:
-        parser.error("--branch-prob must be between 0 and 1")
-
-    rng = random.Random(args.seed)
-    population = build_population(args.count, rng, args.max_depth,
-                                  args.branch_prob, args.unique)
-
-    # run/ may not exist yet on a clean checkout.
-    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
-    with open(args.output, "w", encoding="utf-8") as handle:
-        for expression in population:
-            handle.write(expression + "\n")
-
-    sizes = [len(expression.split(".")) for expression in population]
-    print("wrote %d individuals to %s" % (len(population), args.output))
-    print("symbols per individual: min %d, max %d, mean %.1f"
-          % (min(sizes), max(sizes), sum(sizes) / len(sizes)))
-
-    for expression in population[: args.preview]:
-        print()
-        print(expression)
-        for row in levels(decode(expression)[0]):
-            print("    " + ".".join(row))
-
-
-if __name__ == "__main__":
-    main()

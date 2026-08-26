@@ -1,93 +1,34 @@
 """
-process_run.py - Execute every generated script and collect what it says.
+process_run.py - Launch a generated script and make sense of what it printed.
 
-generate_runs.py writes run/run_001.py ... run_NNN.py but does not run them.
-This does: it launches each one the way you would by hand, captures everything
-it prints, and writes a summary.
-
-    run/output_001.txt          everything run_001.py printed
-    run/output_result_001.json  the exchanges, plus the chromosome and weight draw
-    run/results.txt             one row per individual: state, exit code, seconds
+main.py writes each individual's script out of the database, hands it to
+launch() as its own process, and files everything it said back into the
+database. This module is the part that knows how to do that: how to run one
+script, how to read a transcript out of its stdout, and how to check that this
+interpreter can run it at all.
 
 Each script is a separate process, because each loads the base model at import
 and attaches its own adapters -- they cannot share an interpreter. That also
-means this step is the expensive one: a model load per individual, so a
-population of 100 is a long sweep. Keep COUNT small in main.py while iterating.
+means process is the expensive step: a model load per individual, so a
+population of 100 is a long sweep. Keep COUNT small in settings.py while
+iterating, or use --limit.
 
 Individuals that fail are recorded, not fatal: a chromosome that cannot run is
 a result, the same as one that can. Only a sweep where nothing at all ran
 returns a failing exit code, since that points at something systemic.
 
-By default the ones index.txt marks BAD are skipped -- they stop at their bad
-combine step, but only after paying for a full model load. Pass
---include-blocked to run them anyway and capture the error.
-
 None of that cost applies to scripts generated from template_code_mocked.py:
 they load nothing, answer at random, and print their own QUALITY:/REASON: lines,
-which land in the transcript so evaluate_run.py has nothing left to score. This
-notices which kind it is looking at and drops the venv check accordingly.
-
-Usage:
-    python process_run.py                     # every runnable individual
-    python process_run.py --limit 3           # just the first few, to smoke test
-    python process_run.py --include-blocked   # BAD ones too
+which land in the transcript so the evaluate step has nothing left to score.
+imports_unsloth() is how the pipeline notices which kind it is looking at and
+drops the venv check accordingly.
 """
 
-import argparse
-import json
 import os
 import re
 import subprocess
 import sys
 import time
-from collections import namedtuple
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-
-INDEX_NAME = "index.txt"
-RESULTS_NAME = "results.txt"
-
-Outcome = namedtuple("Outcome", "code seconds output_path result_path exchanges")
-
-
-class Individual:
-    """One row of index.txt: which script, and what generation predicted."""
-
-    __slots__ = ("script", "state", "rank", "expression")
-
-    def __init__(self, script, state, rank, expression):
-        self.script = script
-        self.state = state            # "ok" or "BAD"
-        self.rank = rank
-        self.expression = expression
-
-
-def read_index(run_dir):
-    """Parse run/index.txt -> list of Individual, in file order."""
-    path = os.path.join(run_dir, INDEX_NAME)
-    try:
-        with open(path, encoding="utf-8") as handle:
-            lines = handle.read().splitlines()
-    except OSError as error:
-        raise SystemExit("cannot read %s (%s). Run generate_runs.py first."
-                         % (path, error.strerror))
-
-    individuals = []
-    for line in lines[1:]:                      # first line is the header
-        fields = line.split()
-        # script  state  "rank"  N  expression
-        if len(fields) < 5 or not fields[0].endswith(".py"):
-            continue
-        individuals.append(Individual(fields[0], fields[1], int(fields[3]), fields[4]))
-    if not individuals:
-        raise SystemExit("%s lists no individuals. Run generate_runs.py first." % path)
-    return individuals
-
-
-def _number(script):
-    """run_007.py -> "007", so every file for one individual lines up."""
-    match = re.search(r"(\d+)", script)
-    return match.group(1) if match else script
 
 
 def drawn_weights(stdout):
@@ -187,14 +128,13 @@ def launch(run_dir, script, timeout):
     expired. stdout is kept apart from stderr so the transcript can be taken
     from it cleanly.
 
-    Kept apart from execute() below because a script has to be launched the same
-    way whatever collects the result: execute() files the output under run/,
-    while main_sqlite.py puts the very same four values into the database.
+    Nothing is written here: the four values go straight into the database, so
+    the only file this step needs is the script itself.
     """
     script_path = os.path.join(run_dir, script)
     started = time.time()
     try:
-        # cwd is run/ so the caches unsloth drops stay in the output folder.
+        # cwd is the run folder, so the caches unsloth drops stay there.
         completed = subprocess.run(
             [sys.executable, script_path],
             cwd=run_dir, capture_output=True, text=True,
@@ -209,7 +149,7 @@ def launch(run_dir, script, timeout):
 
 
 def verdict_of(code):
-    """The one word results.txt uses for an exit code."""
+    """The one word an execution's verdict column holds for an exit code."""
     if code == 0:
         return "ok"
     if code is None:
@@ -217,61 +157,13 @@ def verdict_of(code):
     return "exit %d" % code
 
 
-def execute(run_dir, individual, timeout):
-    """Run one generated script and write both of its output files."""
-    code, elapsed, out, err = launch(run_dir, individual.script, timeout)
-    number = _number(individual.script)
-
-    # The full capture, for working out why a run went wrong.
-    output_path = os.path.join(run_dir, "output_%s.txt" % number)
-    with open(output_path, "w", encoding="utf-8") as handle:
-        handle.write("# %s\n# %s\n# predicted rank %d, index says %s\n\n"
-                     % (individual.script, individual.expression,
-                        individual.rank, individual.state))
-        handle.write(out + err)
-
-    # The conversation as JSON, with the two things needed to make sense of it
-    # later: which tree was built, and which weight draw it was built with. A
-    # score means little without both. A run that failed before answering leaves
-    # "exchanges": [], which still parses.
-    transcript = exchanges(out)
-    result_path = os.path.join(run_dir, "output_result_%s.json" % number)
-    with open(result_path, "w", encoding="utf-8") as handle:
-        json.dump({"chromosome": individual.expression,
-                   "weights": drawn_weights(out),
-                   "exchanges": transcript},
-                  handle, indent=2, ensure_ascii=False)
-        handle.write("\n")
-
-    return Outcome(code, elapsed, output_path, result_path, len(transcript))
-
-
 def imports_unsloth(source):
     """Does this generated script load the real thing? The mocked ones do not.
 
     A test on the source itself, so it can be asked of a script held in the
-    sqlite database as easily as of one sitting in run/.
+    database as easily as of one already written out to disk.
     """
     return "import unsloth" in source or "from unsloth" in source
-
-
-def needs_unsloth(run_dir, individuals):
-    """Do the generated scripts import unsloth? The mocked ones do not.
-
-    Asked of the scripts themselves rather than of a flag, because the answer
-    is a property of the template they came from: scripts generated from
-    template_code_mocked.py load nothing, and demanding the venv for them would
-    put a GPU-less machine out of reach of the very sweep meant to run there.
-    They are all generated from one template, so the first is representative.
-    """
-    for individual in individuals[:1]:
-        try:
-            with open(os.path.join(run_dir, individual.script), encoding="utf-8") as handle:
-                source = handle.read()
-        except OSError:
-            return True                         # cannot tell: keep the guard
-        return imports_unsloth(source)
-    return True
 
 
 def check_interpreter():
@@ -292,90 +184,3 @@ def check_interpreter():
             "project venv's python (see the PATH gotcha in README.md)."
             % sys.executable
         )
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Run every generated script and collect its output."
-    )
-    parser.add_argument("--run-dir", default=os.path.join(_HERE, "run"),
-                        help="folder holding the generated scripts (default run)")
-    parser.add_argument("--limit", type=int, default=0,
-                        help="run only the first N individuals (0 = all)")
-    parser.add_argument("--include-blocked", action="store_true",
-                        help="also run the ones index.txt marks BAD")
-    parser.add_argument("--timeout", type=int, default=900,
-                        help="seconds to allow each script (default 900)")
-    args = parser.parse_args(argv)
-
-    # Absolute from here on: each script is launched with cwd set to this
-    # folder, so a relative --run-dir would be resolved against itself a second
-    # time and the script path would come out doubled.
-    args.run_dir = os.path.abspath(args.run_dir)
-
-    individuals = read_index(args.run_dir)
-    if needs_unsloth(args.run_dir, individuals):
-        check_interpreter()
-
-    selected = [one for one in individuals
-                if args.include_blocked or one.state != "BAD"]
-    skipped = len(individuals) - len(selected)
-    if args.limit:
-        selected = selected[:args.limit]
-
-    if not selected:
-        raise SystemExit("nothing to run: all %d individuals are marked BAD. "
-                         "Pass --include-blocked to run them anyway." % len(individuals))
-
-    print("running %d of %d individuals%s"
-          % (len(selected), len(individuals),
-             " (%d skipped as BAD)" % skipped if skipped else ""))
-    print("each one loads the base model, so this takes a while\n"
-          if needs_unsloth(args.run_dir, individuals)
-          else "these are mocked scripts: nothing is loaded, so this is quick\n")
-
-    rows = []
-    failures = 0
-    started = time.time()
-    for number, one in enumerate(selected, 1):
-        print("[%d/%d] %s  %s" % (number, len(selected), one.script, one.expression))
-        outcome = execute(args.run_dir, one, args.timeout)
-
-        verdict = verdict_of(outcome.code)
-        if outcome.code != 0:
-            failures += 1
-        print("        %-9s %6.1fs  %d exchange(s) -> %s"
-              % (verdict, outcome.seconds, outcome.exchanges,
-                 os.path.basename(outcome.result_path)))
-
-        if outcome.code not in (0, None):
-            # Show why, so a systemic problem is obvious without opening files.
-            tail = [line for line
-                    in open(outcome.output_path, encoding="utf-8").read().splitlines()
-                    if line.strip()][-1:]
-            if tail:
-                print("        %s" % tail[0][:100])
-
-        rows.append("%-14s %-5s %-8s %7.1f %5d  %-26s %s"
-                    % (one.script, one.state, verdict, outcome.seconds, outcome.exchanges,
-                       os.path.basename(outcome.result_path), one.expression))
-
-    results_path = os.path.join(args.run_dir, RESULTS_NAME)
-    with open(results_path, "w", encoding="utf-8") as handle:
-        handle.write("%-14s %-5s %-8s %7s %5s  %-26s %s\n"
-                     % ("script", "state", "result", "secs", "qa", "transcript", "expression"))
-        handle.write("\n".join(rows) + "\n")
-
-    print("\nran %d in %.1fs, %d failed" % (len(selected), time.time() - started, failures))
-    print("results: %s" % results_path)
-
-    # A chromosome that cannot run is a result, not a pipeline failure. Only a
-    # sweep where nothing at all worked points at something systemic.
-    if failures == len(selected):
-        raise SystemExit("every individual failed -- check %s"
-                         % os.path.basename(results_path))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

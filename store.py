@@ -1,13 +1,13 @@
 """
-store.py - The sqlite database behind main_sqlite.py.
+store.py - The sqlite database behind main.py.
 
-The text mode scatters a sweep across run/: population.txt, trees.txt,
-index.txt, run_NNN.py, output_NNN.txt, output_result_NNN.json, results.txt.
-That is easy to read and impossible to query -- "which chromosomes scored above
-0.7, and under which weights" means opening a hundred files by hand, and a
-second sweep overwrites the first.
+A sweep scattered across a folder -- a population file, a tree file, an index,
+a script, an output and a transcript per individual -- is easy to read and
+impossible to query: "which chromosomes scored above 0.7, and under which
+weights" means opening a hundred files by hand, and the next sweep overwrites
+them all.
 
-This module holds the same information in one file, with the sweep itself as a
+This module holds the whole of a sweep in one file, with the sweep itself as a
 row so sweeps accumulate instead of replacing each other:
 
     runs          one sweep: when, which template, which interpreter, which commit
@@ -31,7 +31,7 @@ values reproduces both the chromosomes and the blends they were judged under.
 
 Usage as a module:
 
-    conn = store.connect("run/gep.sqlite3")
+    conn = store.connect("run_db/gep.sqlite3")
     run_id = store.create_run(conn, template="template_code.py")
     store.save_settings(conn, run_id, settings.snapshot())
 
@@ -55,8 +55,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 # --- schema ----------------------------------------------------------------
 
-# `state`, `verdict` and the NNN numbering deliberately match the text mode's
-# vocabulary, so a query reads the way index.txt and results.txt do.
+# `state` is ok | BAD as the generator decides it, `verdict` is what the exit
+# code came to, and the NNN numbering is the individual's own number -- the same
+# vocabulary the generated scripts and their output use.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY,
@@ -141,6 +142,12 @@ LEFT JOIN executions e
                    ORDER BY id DESC LIMIT 1)
 LEFT JOIN exchanges x ON x.execution_id = e.id
 GROUP BY i.id;
+
+CREATE VIEW IF NOT EXISTS individual_stats AS
+select i.number, i.chromosome, SUM(ex.quality) AS SumQuality, Max(ex.quality) AS MaxQuality, MIN(ex.quality) AS MinQuality, AVG(ex.quality) AS AvgQuality
+from individuals i inner join executions e on i.id = e.individual_id inner join exchanges ex on e.id = ex.execution_id
+where i.state = 'ok'
+group by i.number, chromosome
 """
 
 
@@ -300,8 +307,7 @@ def add_exchanges(conn, execution_id, transcript):
     """Store the question/answer pairs of one execution.
 
     A mocked run arrives already carrying "quality" and "reason", so those are
-    taken here when present and the judge never has to be asked -- the same way
-    the text mode lands them in the JSON transcript.
+    taken here when present and the judge never has to be asked.
     """
     conn.executemany(
         "INSERT INTO exchanges (execution_id, position, question, answer,"
@@ -412,11 +418,12 @@ def remove_scripts(conn, run_id, run_dir, names=None):
 
 
 def export_run(conn, run_id, out_dir):
-    """Write one sweep out in the text mode's layout.
+    """Write one sweep out as a folder of text files.
 
-    The database is the store; this is for the times you want to read a sweep
-    the old way -- diff two populations, grep a transcript, hand someone a
-    folder. Returns the list of paths written.
+    The database is the store; this is for the times a folder is what you want
+    -- diff two populations, grep a transcript, hand someone the scripts.
+    Everything written here is derived from the database, so the folder is a
+    view of a sweep and never the sweep itself. Returns the paths written.
     """
     os.makedirs(out_dir, exist_ok=True)
     rows = individuals(conn, run_id)

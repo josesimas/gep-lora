@@ -84,11 +84,11 @@ LORA_SLOTS = {
 # same tree scores differently each time it runs.
 #~ The next line is a whole-line marker: generate_runs.py replaces it with the
 #~ WEIGHT_SEED assignment itself, so a generated script carries a plain literal.
-#~ The text mode fills in None, which is the behaviour described above; the
-#~ sqlite mode fills in the integer it recorded for this individual, so a stored
-#~ sweep can be replayed weight for weight. Since the marker stands in for the
-#~ assignment, WEIGHT_SEED is the one name in this template a linter will call
-#~ undefined -- it is defined in every file generated from it.
+#~ A sweep fills in the integer it recorded for this individual, so a stored
+#~ sweep can be replayed weight for weight; None is what a caller that does not
+#~ pin the draw gets, which is the behaviour described above. Since the marker
+#~ stands in for the assignment, WEIGHT_SEED is the one name in this template a
+#~ linter will call undefined -- it is defined in every file generated from it.
 # @@WEIGHT_SEED@@
 
 _rng = random.Random(WEIGHT_SEED)

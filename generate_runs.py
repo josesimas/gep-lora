@@ -1,10 +1,11 @@
 """
-generate_runs.py - Turn every tree in population.txt into a runnable script.
+generate_runs.py - Turn a tree into a runnable script.
 
-Each individual becomes one self-contained file in run/, written in the style
-of combination.py: load the base model once, attach the LoRAs the tree names,
-fold them together with PEFT's add_weighted_adapter, then chat through the
-resulting adapter.
+Each individual becomes one self-contained script, written in the style of
+combination.py: load the base model once, attach the LoRAs the tree names, fold
+them together with PEFT's add_weighted_adapter, then chat through the resulting
+adapter. main.py calls plan() and render() here for every individual in a sweep
+and stores what comes back; the script only reaches disk long enough to be run.
 
 The script itself comes from a template -- template_code.py by default -- which
 is the generated file with the varying parts marked. Keeping the shape in a
@@ -13,9 +14,10 @@ and see what a generated script looks like directly; only what genuinely varies
 per individual is a marker.
 
 Which template to fill is an argument, so the same generator produces different
-kinds of script from the same population. template_code_mocked.py is the other
-one in the repo: same markers and same rank arithmetic, but no model load and
-random answers, for exercising the pipeline without a GPU.
+kinds of script from the same population -- it comes from TEMPLATE in
+settings.py. template_code_mocked.py is the other one in the repo: same markers
+and same rank arithmetic, but no model load and random answers, for exercising
+the pipeline without a GPU.
 
 Markers, all of the form @@NAME@@:
 
@@ -44,15 +46,9 @@ _check_add_weighted_adapter):
 
 So a LIN sitting above a CAT usually cannot run. That is a property of the
 search space, not a bug here: this generator computes every node's rank up
-front and stamps a warning into the files it affects.
-
-Usage:
-    python generate_runs.py                    # population.txt -> run/
-    python generate_runs.py --output-dir run2
-    python generate_runs.py --template template_code_mocked.py   # dry-run scripts
+front, marks the individual BAD, and stamps a warning into the script it makes.
 """
 
-import argparse
 import ast
 import json
 import os
@@ -315,11 +311,11 @@ def render(expression, steps, final, script_name, provenance, label,
     if the caller has already read one -- a batch job reads it once and reuses
     the lines, a one-off caller just names the file.
 
-    `weight_seed` is what the script's WEIGHT_SEED becomes. None is the historical
-    behaviour: the script redraws its blend weights from the OS every execution,
-    so the same chromosome is judged under different weights each time. An int
-    pins the draw, which is how main_sqlite.py makes a stored sweep repeatable --
-    it records the seed it stamped in here.
+    `weight_seed` is what the script's WEIGHT_SEED becomes. None leaves the
+    script redrawing its blend weights from the OS every execution, so the same
+    chromosome is judged under different weights each time. An int pins the draw,
+    which is how main.py makes a stored sweep repeatable -- it records the seed
+    it stamped in here.
     """
     template_lines = (load_template(template_path) if template_lines is None
                       else template_lines)
@@ -346,82 +342,3 @@ def render(expression, steps, final, script_name, provenance, label,
         "FINAL_ADAPTER": final,
     }
     return fill(template_lines, blocks, values)
-
-
-# --- driver ---------------------------------------------------------------
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Generate one runnable script per tree, from template_code.py."
-    )
-    parser.add_argument("--input", default=os.path.join(_HERE, "run", "population.txt"),
-                        help="file of K-expressions, one per line (default population.txt)")
-    parser.add_argument("--output-dir", default=os.path.join(_HERE, "run"),
-                        help="folder to write the scripts into (default run)")
-    parser.add_argument("--template", default=TEMPLATE,
-                        help="the template to fill (default template_code.py; "
-                             "template_code_mocked.py generates dry-run scripts)")
-    parser.add_argument("--weight-seed", type=int, default=None,
-                        help="pin every generated script's blend weights to this "
-                             "seed (default: each execution redraws its own)")
-    args = parser.parse_args(argv)
-
-    # A bare filename is looked for next to this script too, so
-    # `--template template_code_mocked.py` works from any working directory.
-    if not os.path.isabs(args.template) and not os.path.exists(args.template):
-        args.template = os.path.join(_HERE, args.template)
-
-    with open(args.input, encoding="utf-8") as handle:
-        expressions = [line.strip() for line in handle if line.strip()]
-    if not expressions:
-        raise SystemExit("%s has no expressions in it" % args.input)
-
-    # Read the template once; every individual reuses the same lines.
-    template_lines = load_template(args.template)
-
-    # Each slot's rank comes from its own adapter_config.json -- they may differ.
-    ranks = slot_ranks(args.output_dir, args.template)
-
-    # The generated scripts read their prompts at startup; fail here if they cannot.
-    prompts_path, prompt_count = eval_prompt_count(args.output_dir, args.template)
-
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    index_lines = []
-    runnable = 0
-    for number, expression in enumerate(expressions, 1):
-        steps, final = plan(decode(expression)[0], ranks)
-        name = "run_%03d.py" % number
-        text = render(
-            expression, steps, final,
-            script_name=name,
-            provenance="Generated by generate_runs.py from line %d of population.txt." % number,
-            label="Individual %d" % number,
-            template_lines=template_lines,
-            weight_seed=args.weight_seed,
-        )
-        with open(os.path.join(args.output_dir, name), "w", encoding="utf-8") as handle:
-            handle.write(text)
-
-        broken = any(step.broken for step in steps)
-        runnable += not broken
-        index_lines.append("%s  %-4s rank %-4d %s"
-                           % (name, "BAD" if broken else "ok", steps[-1].rank, expression))
-
-    index_path = os.path.join(args.output_dir, "index.txt")
-    with open(index_path, "w", encoding="utf-8") as handle:
-        handle.write("script      state rank  expression\n")
-        handle.write("\n".join(index_lines) + "\n")
-
-    print("wrote %d scripts to %s (from %s)"
-          % (len(expressions), args.output_dir, os.path.basename(args.template)))
-    print("slot ranks: %s" % ", ".join("%s=%d" % pair for pair in sorted(ranks.items())))
-    print("eval prompts: %d from %s" % (prompt_count, os.path.basename(prompts_path)))
-    print("%d runnable, %d blocked by PEFT's equal-rank rule for linear"
-          % (runnable, len(expressions) - runnable))
-    print("index: %s" % index_path)
-
-
-if __name__ == "__main__":
-    main()

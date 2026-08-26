@@ -1,17 +1,15 @@
 """
-evaluate_run.py - Score every answer in the run transcripts with a judge model.
+evaluate_run.py - Score an answer with a judge model.
 
-process_run.py writes run/output_result_NNN.json: the chromosome, the weight
-draw, and the question/answer pairs the blended model produced. This reads each
-of those, sends every question/answer pair to a *different* model with a grading
-system prompt, and writes the score back into that exchange:
+The process step stores the question/answer pairs a blended model produced.
+This module grades them: it sends each pair to a *different* model with a
+grading system prompt, and returns the score main.py writes back onto that
+exchange:
 
-    {
-      "question": "Help me organize my desktop.",
-      "answer":   "Before we lay anything out, ...",
-      "quality":  0.65,
-      "reason":   "asks a useful clarifying question but gives no concrete step"
-    }
+    question   "Help me organize my desktop."
+    answer     "Before we lay anything out, ..."
+    quality    0.65
+    reason     "asks a useful clarifying question but gives no concrete step"
 
 Quality runs 0.0 to 1.0, where 1.0 is the best answer and 0.0 the worst. That is
 the number a fitness function selects on.
@@ -19,29 +17,22 @@ the number a fitness function selects on.
 The judge is reached over the OpenAI-compatible /v1/chat/completions API, which
 LMStudio, OpenAI, OpenRouter, vLLM and most gateways all speak. It defaults to a
 local LMStudio instance; point BASE_URL and API_KEY at a cloud endpoint to use a
-hosted model instead. Every parameter is at the top of this file.
+hosted model instead. Every parameter is at the top of this file, and every one
+of them is recorded into a sweep when it starts -- SYSTEM_PROMPT included, since
+it is the rubric the whole search selects on.
 
-Scoring is resumable: an exchange that already has a "quality" is left alone
-unless you pass --force, so an interrupted run can simply be re-run.
-
-Usage:
-    python evaluate_run.py                       # score everything not yet scored
-    python evaluate_run.py --force               # re-score, overwriting existing scores
-    python evaluate_run.py --limit 1             # one transcript, to check the setup
-    python evaluate_run.py --model gpt-4o-mini --base-url https://api.openai.com/v1
+Scoring is resumable: an exchange that already has a quality is left alone
+unless the evaluate step is run with --force, so an interrupted sweep can simply
+be re-run. A sweep generated from template_code_mocked.py arrives already scored
+and never reaches the judge at all.
 """
 
-import argparse
-import glob
 import json
 import os
 import re
-import sys
 import time
 import urllib.error
 import urllib.request
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ===========================================================================
 # The judge model. Everything you need to change lives in this block.
@@ -110,9 +101,6 @@ Reply with JSON and nothing else, with the score FIRST:
 {"quality": <number between 0 and 1>, "reason": "<at most 12 words>"}
 """
 
-# The transcripts to score.
-RESULT_GLOB = "output_result_*.json"
-
 # ===========================================================================
 
 
@@ -140,7 +128,8 @@ def discover_model(base_url, api_key, timeout):
     except (urllib.error.URLError, OSError, ValueError) as error:
         raise SystemExit(
             "cannot reach the judge at %s (%s). Is LMStudio running with a model "
-            "loaded and its server started? Set --base-url for a different endpoint."
+            "loaded and its server started? Point BASE_URL at a different endpoint "
+            "to use another one."
             % (base_url, error)
         )
     # LMStudio lists embedding models alongside chat ones; those cannot grade.
@@ -233,141 +222,3 @@ def judge(question, answer, settings):
         if attempt < RETRIES:
             time.sleep(RETRY_WAIT)
     raise RuntimeError("judge unreachable after %d attempts: %s" % (RETRIES + 1, last_error))
-
-
-def has_unscored(path):
-    """Does this transcript still hold an answer without a quality?
-
-    Asked before the judge is contacted at all: a sweep generated from
-    template_code_mocked.py arrives already scored, and having to start a judge
-    just to be told there is nothing to grade would undo the point of it.
-    """
-    try:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return True                             # unreadable: let score_file report it
-    exchanges = data["exchanges"] if isinstance(data, dict) else data
-    return any("quality" not in exchange for exchange in exchanges)
-
-
-def score_file(path, settings, force):
-    """Score every exchange in one transcript and save it. Returns counts."""
-    with open(path, encoding="utf-8") as handle:
-        data = json.load(handle)
-
-    # Tolerate the older shape, where the file was a bare list of exchanges.
-    exchanges = data["exchanges"] if isinstance(data, dict) else data
-
-    scored = skipped = failed = 0
-    for number, exchange in enumerate(exchanges, 1):
-        if "quality" in exchange and not force:
-            skipped += 1
-            continue
-
-        answer = exchange.get("answer", "")
-        if not answer.strip():
-            # Nothing to grade: an unanswered question is worth nothing, and
-            # asking the judge about an empty string just wastes a call.
-            exchange["quality"] = 0.0
-            exchange["reason"] = "no answer given"
-            scored += 1
-            print("    [%d] 0.00  (no answer)" % number)
-            continue
-
-        try:
-            quality, reason = judge(exchange["question"], answer, settings)
-            exchange["quality"] = round(quality, 3)
-            exchange["reason"] = reason
-            scored += 1
-            print("    [%d] %.2f  %s" % (number, exchange["quality"], reason))
-        except RuntimeError as error:
-            failed += 1
-            print("    [%d] FAILED  %s" % (number, error))
-        except ValueError as error:
-            failed += 1
-            print("    [%d] FAILED  %s" % (number, error))
-
-    # Save after each file, so an interrupted run keeps the work already done.
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2, ensure_ascii=False)
-        handle.write("\n")
-    return scored, skipped, failed
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Score the answers in each run transcript with a judge model."
-    )
-    parser.add_argument("--run-dir", default=os.path.join(_HERE, "run"),
-                        help="folder holding the transcripts (default run)")
-    parser.add_argument("--base-url", default=BASE_URL,
-                        help="OpenAI-compatible endpoint (default %s)" % BASE_URL)
-    parser.add_argument("--api-key", default=API_KEY,
-                        help="bearer token; also read from JUDGE_API_KEY")
-    parser.add_argument("--model", default=MODEL,
-                        help="judge model id (default: whatever the endpoint has loaded)")
-    parser.add_argument("--timeout", type=int, default=TIMEOUT,
-                        help="seconds to allow one grading call (default %d)" % TIMEOUT)
-    parser.add_argument("--limit", type=int, default=0,
-                        help="score only the first N transcripts (0 = all)")
-    parser.add_argument("--force", action="store_true",
-                        help="re-score answers that already have a quality")
-    args = parser.parse_args(argv)
-
-    run_dir = os.path.abspath(args.run_dir)
-    paths = sorted(glob.glob(os.path.join(run_dir, RESULT_GLOB)))
-    if not paths:
-        raise SystemExit("no %s files in %s. Run process_run.py first."
-                         % (RESULT_GLOB, run_dir))
-    if args.limit:
-        paths = paths[:args.limit]
-
-    # Only reach for the judge if there is grading left to do, so a transcript
-    # set that is already complete costs nothing and needs no endpoint up.
-    wanted = args.force or any(has_unscored(path) for path in paths)
-
-    settings = {
-        "base_url": args.base_url,
-        "api_key": args.api_key,
-        "timeout": args.timeout,
-        "model": args.model or (discover_model(args.base_url, args.api_key, args.timeout)
-                                if wanted else None),
-    }
-
-    if wanted:
-        print("judge: %s at %s" % (settings["model"], settings["base_url"]))
-    else:
-        print("judge: not contacted -- every answer already has a quality")
-    print("scoring %d transcript(s)%s\n"
-          % (len(paths), " (--force: re-scoring)" if args.force else ""))
-
-    totals = [0, 0, 0]
-    started = time.time()
-    for path in paths:
-        print(os.path.basename(path))
-        counts = score_file(path, settings, args.force)
-        totals = [running + new for running, new in zip(totals, counts)]
-
-    scored, skipped, failed = totals
-    print("\nscored %d, skipped %d already done, %d failed, in %.1fs"
-          % (scored, skipped, failed, time.time() - started))
-
-    qualities = []
-    for path in paths:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
-        exchanges = data["exchanges"] if isinstance(data, dict) else data
-        qualities += [e["quality"] for e in exchanges if "quality" in e]
-    if qualities:
-        print("quality across %d answers: min %.2f, max %.2f, mean %.2f"
-              % (len(qualities), min(qualities), max(qualities),
-                 sum(qualities) / len(qualities)))
-
-    if failed and not scored:
-        raise SystemExit("nothing could be scored -- check the judge endpoint")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

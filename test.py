@@ -1,20 +1,21 @@
 """
-test.py - Try one chromosome by hand, without touching population.txt.
+test.py - Try one chromosome by hand, without starting a sweep.
 
-Set CHROMOSOME below, run the file, and you get the same three things the
-batch tools produce, but for that one individual:
+Set CHROMOSOME below, run the file, and you get the same things a sweep builds
+for each of its individuals, but for that one chromosome and without touching
+the database:
 
     - the tree printed to the console, with its build plan and rank check
-    - run/test_tree.txt   the tree drawn as in trees.txt
-    - run/test_run.py     the runnable combination script, as in run/
+    - run/test_tree.txt   the tree drawn as it is stored on an individual
+    - run/test_run.py     the runnable combination script, as generated
 
-The test_ prefix keeps these apart from the population's run_NNN.py and
-trees.txt. They land in run/ rather than a subfolder because a generated script
+The test_ prefix keeps these apart from a sweep's run_NNN.py, and they land in
+run/ -- a folder of their own, beside run_db/ -- because a generated script
 works out where the LoRAs live as one level up from itself.
 
-It calls the very same builders the batch tools use (draw_trees.draw and
-generate_runs.plan/render), so what you see here is exactly what you would
-have got had this chromosome been a line in population.txt.
+It calls the very same builders the pipeline uses (draw_trees.draw and
+generate_runs.plan/render), so what you see here is exactly what you would have
+got had this chromosome been drawn into a population.
 
 Usage:
     python test.py                          # uses CHROMOSOME below
@@ -35,7 +36,8 @@ CHROMOSOME = "CAT.CAT.CAT.CAT.CAT.L5.L2.L2.L1.L1.L5.w1.w5.w2.w1.w1.w4"
 
 # Where the two output files go. Must stay one level below the project folder:
 # a generated script resolves the LoRA and training_set.txt paths relative to
-# its own parent directory.
+# its own parent directory. A folder of its own, so nothing here can collide
+# with a sweep's scripts in run_db/.
 OUTPUT_DIR = "run"
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
