@@ -146,7 +146,7 @@ population, every setting it ran under, every seed, every generated script, ever
 transcript and every score. The sweep itself is a row, so sweeps accumulate
 instead of replacing each other, can be queried across, and — because the seeds
 are stored rather than only the values they produced — can be *repeated*. See
-[store.py](#12-storepy--the-sweep-database) below.
+[store.py](#13-storepy--the-sweep-database) below.
 
 The only thing that reaches the disk is the generated `run_NNN.py` scripts, in
 `run_db/`, and only until they have run; `process` deletes each one it has
@@ -823,7 +823,54 @@ the earlier generations did stays in the database.
 The `_run` suffix is not decoration — `continue` is a Python keyword, so a
 `continue.py` could be run but never imported.
 
-### 11. `test.py` → `run/test_*`
+### 11. `full_run.py` → the whole search, one command
+
+`main.py` and `continue_run.py`, in that order, against the same sweep:
+
+```bash
+python full_run.py
+```
+
+which is
+
+```bash
+python main.py
+python continue_run.py --run <the sweep main.py just made>
+```
+
+so a full run is **1 + `GENERATIONS`** generations — `main.py`'s own turn of the
+crank, then the ones `continue_run.py` adds. `--generations` controls the second
+half; there is no way to have fewer than the one `main.py` runs, because drawing
+a population and leaving it unjudged would not be a generation. (Use `main.py`
+on its own for that.)
+
+```bash
+python full_run.py --generations 3
+python full_run.py --db run_real/gep.sqlite3 --label "overnight"
+python full_run.py --limit 2 --generations 1     # a smoke test of the lot
+```
+
+It calls the two drivers **as libraries, in this interpreter**. That matters:
+`process` launches every generated script with `sys.executable`, so a subprocess
+would be one more chance to run the search under the wrong Python. Whatever you
+start this with is what the whole sweep uses — so it still wants the venv's
+python, for the same reason `main.py` does.
+
+The sweep is handed on **by id, not by "the latest one"**: `main.py`'s new sweep
+is looked up once it exists and named explicitly, so a database that gains a
+sweep from somewhere else in between cannot be picked up by mistake. Running
+`full_run.py` twice into one database leaves two sweeps side by side, each
+continued only by its own half of the run.
+
+Options go to whichever driver understands them — `--label` to `main.py`,
+`--generations` and `--set` to `continue_run.py`, and `--db`, `--run-dir`,
+`--limit`, `--include-blocked`, `--include-unchanged`, `--keep-scripts`,
+`--timeout` and `--force` to both, meaning there what they mean there.
+
+A failing half stops the run: if `main.py` cannot produce a sweep there is
+nothing to continue, and its exit code comes straight back out.
+
+### 12. `test.py` → `run/test_*`
 
 Try one chromosome by hand without starting a sweep. Set the variable at the top
 of the file and run it:
@@ -882,7 +929,7 @@ Bad input is reported rather than half-processed:
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
-### 12. `store.py` → the sweep database
+### 13. `store.py` → the sweep database
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
@@ -1152,6 +1199,7 @@ warning — the effective cap is unchanged.
 | `plan.txt` | the original spec |
 | `main.py` | the entry point and the driver; add future steps to its `STEPS` list |
 | `continue_run.py` | runs the generation loop on over a sweep already in the database |
+| `full_run.py` | main.py then continue_run.py — a whole search in one command |
 | `settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
 | `store.py` | the database: schema, helpers, `--list/--show/--export` |
 | `run_db/gep.sqlite3` | every sweep ever run, with its settings, seeds, transcripts and scores |

@@ -70,6 +70,18 @@ instead, which is how SELECTION_COUNT gets fixed mid-run without the sweep losin
 what it ran under.
 
 ```bash
+python full_run.py
+```
+
+`main.py` then `continue_run.py` against the same sweep -- a whole search, `1 + GENERATIONS`
+generations, in one command. It calls both drivers as **libraries in this interpreter** (a
+subprocess would be another chance to run under the wrong Python, since `process` uses
+`sys.executable`), and hands the sweep on **by id** rather than by "the latest", so a
+database that gains a sweep in between cannot be picked up by mistake. `--label` goes to
+`main.py`, `--generations`/`--set` to `continue_run.py`, the rest to both. A failing first
+half stops the run.
+
+```bash
 python store.py --show 0
 ```
 

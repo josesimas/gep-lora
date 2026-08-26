@@ -39,7 +39,7 @@ BRANCH_PROB = 0.6
 # answers, and scores that arrive with the transcript, so the whole pipeline
 # finishes in seconds on a machine with no GPU and no judge running. Mocked
 # scores are noise; never read one as a result.
-TEMPLATE = "template_code_mocked.py"
+TEMPLATE = "template_code.py"
 
 
 # --- the blend weights -----------------------------------------------------
@@ -95,7 +95,7 @@ MUTATION_MASTER_SEED = None
 # selection *appends* its picks, so with SELECTION_COUNT left at None the
 # population doubles every generation and the work of a run grows with it. Fix
 # SELECTION_COUNT to a number to grow by that much per generation instead.
-GENERATIONS = 10
+GENERATIONS = 5
 
 
 # --- where things go -------------------------------------------------------
