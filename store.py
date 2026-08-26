@@ -362,6 +362,19 @@ def set_fitness(conn, run_id, number, fitness):
         (fitness, run_id, number))
 
 
+def mark_best(conn, run_id, number):
+    """Make one individual the sweep's elite, and the only one.
+
+    Both halves in one statement, because they are one fact: is_best says which
+    individual this generation carries forward, and a sweep with two of them --
+    or with last generation's still set -- says nothing at all. Clearing first
+    and setting after would leave that window open on the way through.
+    """
+    conn.execute(
+        "UPDATE individuals SET is_best = (number = ?) WHERE run_id = ?",
+        (number, run_id))
+
+
 def quality_rows(conn, run_id):
     """The fitness view for one sweep, best first."""
     return conn.execute(

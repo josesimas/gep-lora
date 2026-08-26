@@ -1,7 +1,7 @@
 """
 main.py - Run the whole pipeline end to end against a sqlite database.
 
-    population -> trees -> runs -> process -> evaluate -> fitness
+    population -> trees -> runs -> process -> evaluate -> fitness -> elitism
 
 Nothing is left scattered across a folder afterwards. The population, every
 setting the sweep ran under, every seed, every generated script, every
@@ -75,6 +75,7 @@ from collections import namedtuple
 
 import calculate_fitness
 import draw_trees
+import elitism
 import evaluate_run
 import generate_population
 import generate_runs
@@ -449,6 +450,31 @@ def step_fitness(context):
               % (len(empty), ", ".join(str(number) for number in empty)))
 
 
+def step_elitism(context):
+    """Name the one individual to carry forward -> individuals.is_best."""
+    conn, run_id = context.conn, context.run_id
+    best, rows = elitism.elect(conn, run_id)
+    if not rows:
+        raise SystemExit("run %d holds no individuals. Run the population step first."
+                         % run_id)
+    if best is None:
+        # Nothing was written, so is_best is whatever it was -- see elitism.py.
+        raise SystemExit("every individual in run %d has fitness 0.0 -- run the "
+                         "fitness step first, or, if they really all scored 0.0, "
+                         "this generation has no elite to carry forward." % run_id)
+
+    tied = [row["number"] for row in rows
+            if (row["fitness"] or 0.0) == (best["fitness"] or 0.0)]
+    print("elite: individual %d, fitness %.3f" % (best["number"], best["fitness"]))
+    print("    %s" % best["chromosome"])
+    print("cleared is_best on the other %d individual(s)" % (len(rows) - 1))
+    if len(tied) > 1:
+        # Say so rather than letting the choice look like a ranking.
+        print("%d individuals tie at %.3f (%s); the lowest number takes it"
+              % (len(tied), best["fitness"] or 0.0,
+                 ", ".join(str(number) for number in tied)))
+
+
 Step = namedtuple("Step", "name run description")
 
 STEPS = [
@@ -468,6 +494,9 @@ STEPS = [
     # Cheap, and pure arithmetic over what evaluate stored: no model, no judge.
     Step("fitness", step_fitness,
          "average each transcript's qualities -> individuals.fitness"),
+    # Cheap too, and reads nothing but the column fitness just wrote.
+    Step("elitism", step_elitism,
+         "mark the fittest individual as the one to keep -> individuals.is_best"),
 ]
 
 

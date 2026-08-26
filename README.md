@@ -113,14 +113,15 @@ python main.py
 ```
 
 Runs every step in order — population, trees, runs, process, evaluate,
-fitness — stopping at the first failure, since each step builds on the one
-before it.
+fitness, elitism — stopping at the first failure, since each step builds on the
+one before it.
 
 `process` and `evaluate` are the slow ones: `process` executes the generated
 scripts, one base-model load per individual, and `evaluate` then makes one
 grading call per answer. A full `python main.py` is therefore a long operation,
-and `python main.py population trees runs` stops short of both. `fitness`,
-which follows them, is arithmetic over what they stored and costs nothing.
+and `python main.py population trees runs` stops short of both. `fitness` and
+`elitism`, which follow them, are arithmetic over what they stored and cost
+nothing.
 
 Run it with the **venv's python** — `process` launches each generated script
 with `sys.executable`, so the wrong interpreter fails every individual. It now
@@ -145,7 +146,7 @@ population, every setting it ran under, every seed, every generated script, ever
 transcript and every score. The sweep itself is a row, so sweeps accumulate
 instead of replacing each other, can be queried across, and — because the seeds
 are stored rather than only the values they produced — can be *repeated*. See
-[store.py](#8-storepy--the-sweep-database) below.
+[store.py](#9-storepy--the-sweep-database) below.
 
 The only thing that reaches the disk is the generated `run_NNN.py` scripts, in
 `run_db/`, and only until they have run; `process` deletes each one it has
@@ -481,7 +482,50 @@ claim than one over all of it. The step is pure arithmetic over what `evaluate`
 stored — no model, no judge, no endpoint — so it is cheap to re-run, and it
 re-runs cleanly: it overwrites, never accumulates.
 
-### 7. `test.py` → `run/test_*`
+### 7. `elitism.py` → `individuals.is_best`
+
+Names the one individual this generation carries forward:
+
+```bash
+python main.py elitism
+```
+
+> `is_best = 1` for one individual with the highest fitness, `0` for every other
+
+Elitism is the rule that the best individual survives a generation untouched.
+Selection, crossover and mutation are all free to lose it otherwise — the best
+chromosome of one generation can easily have no descendant in the next, and a
+search that can go backwards wastes the generations it spends climbing again.
+This step marks it; a later one copies it across unchanged.
+
+```
+elite: individual 3, fitness 0.759
+    CAT.L5.L2.w5.w4
+cleared is_best on the other 2 individual(s)
+```
+
+**Exactly one, and only one.** The flag is set and every other cleared in a
+single statement, since they are one fact: a sweep carrying two elites — or
+still carrying the last generation's — says nothing at all.
+
+**Ties are ordinary**, not an edge case: `fitness` is a mean of judged answers,
+so two blends can easily land on the same score. The lowest individual number
+takes it — an arbitrary rule, but a fixed one, so re-running the step over the
+same database elects the same individual rather than a different one each time.
+A tie is named in the output so the pick doesn't read as a ranking.
+
+**An all-zero population elects nobody.** `fitness` defaults to `0.0`, so that
+is either a sweep that never reached the `fitness` step or one where every
+individual failed. The step writes nothing and stops, naming both possibilities
+— a sweep keeps whatever `is_best` it already had rather than gaining a
+meaningless one.
+
+The flag comes from the stored `fitness` column and nothing else. Reading the
+transcripts again here would be a second, quietly different definition of
+"best": when the fitness rule changes it changes in `calculate_fitness.py`, and
+this step follows it without knowing that it did.
+
+### 8. `test.py` → `run/test_*`
 
 Try one chromosome by hand without starting a sweep. Set the variable at the top
 of the file and run it:
@@ -540,7 +584,7 @@ Bad input is reported rather than half-processed:
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
-### 8. `store.py` → the sweep database
+### 9. `store.py` → the sweep database
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
@@ -822,6 +866,7 @@ warning — the effective cap is unchanged.
 | `process_run.py` | launches a generated script and reads its transcript back |
 | `evaluate_run.py` | the judge: its settings, its rubric, and one grading call |
 | `calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
+| `elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
 | `test.py` | try a single chromosome → `run/test_*` |
 | `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `test.py` |
 | `combination.py` | the original two-adapter script the generated code is modelled on |
@@ -843,6 +888,7 @@ template_code.py                           (the shape of those scripts)
 process_run.launch/exchanges          -->  executions, exchanges
 evaluate_run.judge                    -->  exchanges.quality
 calculate_fitness.assign              -->  individuals.fitness
+elitism.elect                         -->  individuals.is_best
 
 store.py --show / --export                 reads any of it back out
 

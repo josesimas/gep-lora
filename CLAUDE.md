@@ -35,7 +35,8 @@ All commands run from the repo root.
 python main.py
 ```
 
-Whole pipeline: `population -> trees -> runs -> process -> evaluate -> fitness`, stopping at the first
+Whole pipeline: `population -> trees -> runs -> process -> evaluate -> fitness -> elitism`,
+stopping at the first
 failure. `python main.py --list` shows the steps; naming steps runs a subset, always in
 pipeline order regardless of typing order.
 
@@ -112,6 +113,15 @@ averages `exchanges.quality` over each individual's most recent execution -- the
 `individual_quality` view -- and writes it to `individuals.fitness`. An individual with
 nothing to average (never run, `BAD`, crashed, still unjudged) gets `0.0`, not NULL, so a
 selection step never has to decide what a missing score means.
+
+`elitism.py` names the survivor: `elect(conn, run_id)` marks one individual with the
+highest `fitness` as `is_best` and clears every other, in one statement, so a sweep never
+carries two elites or last generation's. Ties break on the lowest individual number -- a
+fixed rule, so re-running elects the same one. An all-zero population elects nobody and
+writes nothing: `fitness` defaults to 0.0, so that means either the fitness step never ran
+or nothing scored, and neither has an elite worth keeping. It reads the stored `fitness`
+column and never the transcripts -- one definition of "best", living in
+[calculate_fitness.py](calculate_fitness.py).
 
 `generate_runs.py` turns a decoded tree into a script:
 
