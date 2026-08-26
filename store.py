@@ -265,6 +265,47 @@ def add_individuals(conn, run_id, chromosomes):
     conn.commit()
 
 
+def append_copies(conn, run_id, rows):
+    """Add a copy of each of `rows` to a population. -> the numbers they got.
+
+    The counterpart of add_individuals(), which replaces: numbering continues
+    from the highest already stored, so the copies are new individuals rather
+    than a re-drawn generation, and every number an existing script, execution
+    or transcript refers to still means what it meant.
+
+    A copy is the parent field for field -- tree, state, rank, script, weight
+    seed and fitness, not just the chromosome. Only `id` and `number` are its
+    own, since those are what make it a row of its own; everything else it
+    inherits and keeps until something changes it.
+
+    Except is_best, which every copy arrives with at 0. That flag does not
+    describe an individual, it picks one out of the population -- the single
+    one this generation carries forward -- so it is not the parent's to hand on.
+    Copying it would give a sweep two elites, or six, and mark_best() exists
+    precisely to keep that from ever being true. A copy of the elite is not
+    itself the elite; the next election decides that, on the fitness it earns.
+
+    The column list comes from the table rather than being written out here, so
+    a field added to individuals is copied too instead of being quietly dropped
+    from every copy the search makes.
+    """
+    if not rows:
+        return []
+    columns = [column["name"] for column in conn.execute("PRAGMA table_info(individuals)")
+               if column["name"] not in ("id", "number")]
+    top = conn.execute("SELECT MAX(number) AS top FROM individuals WHERE run_id = ?",
+                       (run_id,)).fetchone()["top"] or 0
+    numbers = list(range(top + 1, top + 1 + len(rows)))
+    conn.executemany(
+        "INSERT INTO individuals (number, %s) VALUES (%s)"
+        % (", ".join(columns), ", ".join("?" * (len(columns) + 1))),
+        [[number] + [0 if column == "is_best" else row[column]
+                     for column in columns]
+         for number, row in zip(numbers, rows)])
+    conn.commit()
+    return numbers
+
+
 def individuals(conn, run_id, state=None):
     """The population in number order, optionally only those in one state."""
     sql = "SELECT * FROM individuals WHERE run_id = ?"

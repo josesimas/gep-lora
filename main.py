@@ -2,6 +2,7 @@
 main.py - Run the whole pipeline end to end against a sqlite database.
 
     population -> trees -> runs -> process -> evaluate -> fitness -> elitism
+    -> selection
 
 Nothing is left scattered across a folder afterwards. The population, every
 setting the sweep ran under, every seed, every generated script, every
@@ -80,6 +81,7 @@ import evaluate_run
 import generate_population
 import generate_runs
 import process_run
+import selection
 import settings as config
 import store
 
@@ -145,6 +147,8 @@ def new_sweep(conn, label):
         conf["SEED"] = random.randrange(_SEED_LIMIT)
     if conf.get("WEIGHT_MASTER_SEED") is None:
         conf["WEIGHT_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
+    if conf.get("SELECTION_MASTER_SEED") is None:
+        conf["SELECTION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
 
     run_id = store.create_run(conn, template=conf.get("TEMPLATE") or "template_code.py",
                               label=label)
@@ -475,6 +479,81 @@ def step_elitism(context):
                  ", ".join(str(number) for number in tied)))
 
 
+def _selection_seed(context):
+    """This sweep's selection seed, drawing and recording one if it has none.
+
+    The same bargain the other seeds strike: a sweep that was never asked to be
+    repeatable still is, because whatever it used is written down. A sweep
+    created before this setting existed gets its seed here instead of at
+    creation, and keeps it from then on.
+    """
+    seed = context.conf.get("SELECTION_MASTER_SEED")
+    if seed is None:
+        seed = random.randrange(_SEED_LIMIT)
+        context.conf["SELECTION_MASTER_SEED"] = seed
+        store.save_settings(context.conn, context.run_id,
+                            {"SELECTION_MASTER_SEED": seed})
+        print("drew a selection seed for run %d and stored it: %d"
+              % (context.run_id, seed))
+    return seed
+
+
+def step_selection(context):
+    """Spin the roulette wheel -> more individuals, none of them replaced."""
+    conn, run_id = context.conn, context.run_id
+    master = _selection_seed(context)
+    before = store.individuals(conn, run_id)
+    if not before:
+        raise SystemExit("run %d holds no individuals. Run the population step first."
+                         % run_id)
+
+    # Derived from the sweep's seed and the size of the population being spun
+    # over, so a second round draws its own parents rather than the first
+    # round's again, and re-running a sweep from its stored seed reproduces
+    # every round of it.
+    rng = random.Random("%s:%d" % (master, len(before)))
+    count = context.conf.get("SELECTION_COUNT")
+    picked = selection.select(conn, run_id, count, rng)
+
+    if not picked.parents:
+        raise SystemExit("every individual in run %d has fitness 0.0 -- there is no "
+                         "wheel to spin. Run the fitness step first, or, if they "
+                         "really all scored 0.0, this generation selects nobody."
+                         % run_id)
+
+    # How often each parent came up: the whole point of drawing with
+    # replacement, and the quickest read on whether the wheel is doing anything.
+    times = {}
+    for row in picked.parents:
+        times[row["number"]] = times.get(row["number"], 0) + 1
+    print("spun the wheel %d time(s) over %d individual(s)"
+          % (len(picked.parents), len(before)))
+    print("    %-9s %-7s %-6s %s" % ("parent", "fitness", "picked", "chromosome"))
+    for row in sorted(picked.parents, key=lambda row: -(row["fitness"] or 0.0)):
+        if row["number"] in times:
+            print("    %-9d %-7.3f %-6d %s"
+                  % (row["number"], row["fitness"] or 0.0,
+                     times.pop(row["number"]), row["chromosome"]))
+
+    missed = [row["number"] for row in before if row["number"] not in
+              {row["number"] for row in picked.parents}]
+    if missed:
+        print("%d individual(s) the wheel never landed on: %s -- they stay in the "
+              "population regardless" % (len(missed),
+                                         ", ".join(str(number) for number in missed)))
+    print("appended %d individual(s) as %s; the population is now %d, up from %d"
+          % (len(picked.numbers),
+             "#%d-#%d" % (picked.numbers[0], picked.numbers[-1])
+             if len(picked.numbers) > 1 else "#%d" % picked.numbers[0],
+             len(before) + len(picked.numbers), len(before)))
+    # Each copy is its parent field for field, so it arrives holding the
+    # parent's script name, weight seed and fitness as well as its chromosome.
+    # Those are the parent's answers, and stay right only while the chromosome
+    # is still the parent's; trees and runs re-derive them for everyone.
+    print("each one is a copy of its parent, field for field -- re-derive their "
+          "trees, scripts and seeds with: python main.py trees runs")
+
+
 Step = namedtuple("Step", "name run description")
 
 STEPS = [
@@ -497,6 +576,10 @@ STEPS = [
     # Cheap too, and reads nothing but the column fitness just wrote.
     Step("elitism", step_elitism,
          "mark the fittest individual as the one to keep -> individuals.is_best"),
+    # Appends: it grows the population rather than replacing it, so running it
+    # twice is two generations of selection, not one done twice.
+    Step("selection", step_selection,
+         "roulette wheel sampling -> the picks, appended to the population"),
 ]
 
 

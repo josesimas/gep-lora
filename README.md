@@ -113,15 +113,15 @@ python main.py
 ```
 
 Runs every step in order — population, trees, runs, process, evaluate,
-fitness, elitism — stopping at the first failure, since each step builds on the
-one before it.
+fitness, elitism, selection — stopping at the first failure, since each step
+builds on the one before it.
 
 `process` and `evaluate` are the slow ones: `process` executes the generated
 scripts, one base-model load per individual, and `evaluate` then makes one
 grading call per answer. A full `python main.py` is therefore a long operation,
-and `python main.py population trees runs` stops short of both. `fitness` and
-`elitism`, which follow them, are arithmetic over what they stored and cost
-nothing.
+and `python main.py population trees runs` stops short of both. `fitness`,
+`elitism` and `selection`, which follow them, work over what they stored and
+cost nothing.
 
 Run it with the **venv's python** — `process` launches each generated script
 with `sys.executable`, so the wrong interpreter fails every individual. It now
@@ -146,7 +146,7 @@ population, every setting it ran under, every seed, every generated script, ever
 transcript and every score. The sweep itself is a row, so sweeps accumulate
 instead of replacing each other, can be queried across, and — because the seeds
 are stored rather than only the values they produced — can be *repeated*. See
-[store.py](#9-storepy--the-sweep-database) below.
+[store.py](#10-storepy--the-sweep-database) below.
 
 The only thing that reaches the disk is the generated `run_NNN.py` scripts, in
 `run_db/`, and only until they have run; `process` deletes each one it has
@@ -525,7 +525,95 @@ transcripts again here would be a second, quietly different definition of
 "best": when the fitness rule changes it changes in `calculate_fitness.py`, and
 this step follows it without knowing that it did.
 
-### 8. `test.py` → `run/test_*`
+### 8. `selection.py` → more `individuals`
+
+Fitness-proportionate selection, the classic roulette wheel:
+
+```bash
+python main.py selection
+```
+
+Every individual gets a slice of the wheel as wide as its fitness; the wheel is
+spun once per pick, and whoever it lands on is taken. A chromosome twice as fit
+is twice as likely to be picked, and nobody is picked for certain — a mediocre
+individual keeps a real chance, which is what stops the search collapsing onto
+the first good blend it finds.
+
+```
+spun the wheel 3 time(s) over 3 individual(s)
+    parent    fitness picked chromosome
+    3         0.685   2      CAT.L5.L2.w5.w4
+    2         0.604   1      CAT.L5.SVD.w1.L1.L1.w2.w2
+appended 3 individual(s) as #4-#6; the population is now 6, up from 3
+```
+
+**Picks are drawn with replacement** — the same individual can come up several
+times in one round. That is the mechanism, not a flaw in it: it is how a fit
+chromosome comes to have several descendants.
+
+**Nothing is deleted.** The picks are *appended*. This step does not thin a
+generation down to its survivors and it never overwrites a row: an individual
+already in the sweep keeps its number, its script, its executions and its
+transcripts whether or not the wheel ever landed on it. What it leaves behind is
+a larger population whose newest members are copies of its fittest.
+
+A copy is **the parent field for field** — its tree, its state, its rank, its
+script, its weight seed and its fitness, not merely its chromosome. Only the
+`id` and the `number` are its own, and only because those are what make it a row
+of its own. So a copy is a clone in the full sense: it arrives already carrying
+the result its parent earned, rather than as a blank waiting to be built and
+judged. The column list is read from the table, so a field added to
+`individuals` is copied too instead of being quietly dropped from every copy the
+search makes.
+
+**`is_best` is the one exception**, and every copy arrives with it at `0`. That
+flag does not describe an individual, it picks one out of the population — the
+single one this generation carries forward — so it is not the parent's to hand
+on. A copy of the elite is not itself the elite; the next election decides that,
+on the fitness the copy earns.
+
+That inheritance is meant to be **spent, not kept**. The copies exist for
+whatever comes next to vary, and a varied copy has a chromosome its inherited
+tree, script, rank and fitness no longer describe — they are the parent's
+answers to a question the child no longer asks. Re-deriving them from the
+chromosome, for every individual, is exactly what this does:
+
+```bash
+python main.py trees runs
+```
+
+Two consequences of inheriting the rest, both of which the next run of the
+relevant step clears up, and neither of which is a reason to hold the copy back:
+
+- **A copy shares its parent's `script_name` and `weight_seed`** until `runs`
+  re-stamps them from its number. Harmless while the chromosome is still the
+  parent's — the two rows describe the same blend — but it does mean two
+  individuals can name the same `run_NNN.py` in that window.
+- **A copy inherits `fitness`**, so it is immediately selectable at its parent's
+  score rather than sitting out the next round at `0.0`.
+
+**Because it appends, the step is not idempotent.** Running it twice runs two
+rounds and the population grows twice. That is what a second generation *is*, so
+it is deliberate — but `python main.py selection` is something you do on
+purpose, not something you repeat to be sure it took.
+
+An individual whose fitness is `0.0` has a slice of width zero and can never be
+picked — correct for roulette, and worth saying out loud since `fitness`
+defaults to `0.0`, so an individual that has never been through `process` and
+`evaluate` sits out until it has. A population where *everything* is `0.0` has
+no wheel at all; that case selects nobody, writes nothing and stops.
+
+| Where | Setting | Default | Meaning |
+|---|---|---|---|
+| `settings.py` | `SELECTION_MASTER_SEED` | `None` | where the spins come from; `None` draws one and records it |
+| `settings.py` | `SELECTION_COUNT` | `None` | how many picks per round; `None` means as many as the population holds |
+
+Each round derives its own generator from the master seed and the size of the
+population it is spinning over — the same idiom as `WEIGHT_MASTER_SEED` and an
+individual's number. One recorded seed, every draw repeatable, and a second
+round still draws its own parents rather than the first round's again.
+
+### 9. `test.py` → `run/test_*`
 
 Try one chromosome by hand without starting a sweep. Set the variable at the top
 of the file and run it:
@@ -584,7 +672,7 @@ Bad input is reported rather than half-processed:
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
-### 9. `store.py` → the sweep database
+### 10. `store.py` → the sweep database
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
@@ -867,6 +955,7 @@ warning — the effective cap is unchanged.
 | `evaluate_run.py` | the judge: its settings, its rubric, and one grading call |
 | `calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
 | `elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
+| `selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent |
 | `test.py` | try a single chromosome → `run/test_*` |
 | `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `test.py` |
 | `combination.py` | the original two-adapter script the generated code is modelled on |
@@ -889,6 +978,7 @@ process_run.launch/exchanges          -->  executions, exchanges
 evaluate_run.judge                    -->  exchanges.quality
 calculate_fitness.assign              -->  individuals.fitness
 elitism.elect                         -->  individuals.is_best
+selection.select                      -->  more individuals (appended)
 
 store.py --show / --export                 reads any of it back out
 

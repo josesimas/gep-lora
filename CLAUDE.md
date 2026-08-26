@@ -35,7 +35,8 @@ All commands run from the repo root.
 python main.py
 ```
 
-Whole pipeline: `population -> trees -> runs -> process -> evaluate -> fitness -> elitism`,
+Whole pipeline:
+`population -> trees -> runs -> process -> evaluate -> fitness -> elitism -> selection`,
 stopping at the first
 failure. `python main.py --list` shows the steps; naming steps runs a subset, always in
 pipeline order regardless of typing order.
@@ -122,6 +123,22 @@ writes nothing: `fitness` defaults to 0.0, so that means either the fitness step
 or nothing scored, and neither has an elite worth keeping. It reads the stored `fitness`
 column and never the transcripts -- one definition of "best", living in
 [calculate_fitness.py](calculate_fitness.py).
+
+`selection.py` is roulette wheel sampling: `select(conn, run_id, count, rng)` gives each
+individual a slice of the wheel as wide as its `fitness`, spins it `count` times **with
+replacement**, and **appends** the picks -- it deletes nothing and overwrites nothing, so an
+existing individual keeps its number, script, executions and transcripts either way. A pick
+is a new row that copies its parent **field for field** (`store.append_copies`, whose column
+list comes from the table so a new field is copied too): only `id`, `number` and `is_best`
+are its own -- `is_best` picks one individual out of the population rather than describing
+one, so no copy inherits it and every copy starts at 0. It does inherit the parent's
+`script_name`, `weight_seed` and `fitness` -- transient, and cleared up by the next run of
+`runs` (names and seeds, re-derived from the number) and `fitness`. That inheritance is meant
+to be spent by whatever varies the copy, not kept. The step is therefore **not idempotent**: running it twice is two
+generations, not one done twice. Fitness 0.0 is a zero-width slice and is never picked; an
+all-zero population has no wheel, selects nobody and writes nothing. Each round derives its
+generator from `SELECTION_MASTER_SEED` and the size of the population it spins over, the way
+weight seeds derive from `WEIGHT_MASTER_SEED` and an individual's number.
 
 `generate_runs.py` turns a decoded tree into a script:
 

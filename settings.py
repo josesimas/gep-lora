@@ -53,6 +53,22 @@ TEMPLATE = "template_code_mocked.py"
 WEIGHT_MASTER_SEED = None
 
 
+# --- selection -------------------------------------------------------------
+
+# Where the roulette wheel's spins come from. Each application of the selection
+# step derives its own generator from this seed and the size of the population
+# it is spinning over, the way each individual derives its weight seed from
+# WEIGHT_MASTER_SEED and its own number: one sweep, one recorded seed, and every
+# draw in it repeatable -- but a second generation still draws its own parents
+# rather than the first one's again. An int makes a sweep reproducible from the
+# start; None draws a master seed at run time and stores it.
+SELECTION_MASTER_SEED = None
+
+# How many individuals each spin of the wheel adds. None means as many as the
+# population already holds, which doubles it: N parents in, N offspring out.
+SELECTION_COUNT = None
+
+
 # --- where things go -------------------------------------------------------
 
 # Where the generated scripts go, and the database itself, relative to this file.
