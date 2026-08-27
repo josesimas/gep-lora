@@ -4,6 +4,7 @@ population.txt
 trees.txt
 run
 run_db
+run_db*
 run_real
 test
 tmp
