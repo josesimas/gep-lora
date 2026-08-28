@@ -152,14 +152,16 @@ def rank_of(adapter_dir):
     return max([config["r"]] + list((config.get("rank_pattern") or {}).values()))
 
 
-def slot_line(folder):
+def slot_line(folder, slot="L?"):
     """The LORA_SLOTS entry that points at `folder`, ready to paste.
 
     A generated script sits in the run folder and sets `_PROJECT` to its parent
     -- this repo -- so a slot inside the repo is written relative to that, the
     way the five existing entries are. Anything outside it goes in absolute,
     which LORA_SLOTS accepts and which is the only honest way to write a path
-    `_PROJECT` cannot reach.
+    `_PROJECT` cannot reach. `slot` is left as a placeholder for one adapter,
+    since only the caller knows which of L1..L5 it is displacing; create_all_loras
+    fills it in because it writes the whole set at once.
     """
     try:
         relative = os.path.relpath(folder, _HERE)
@@ -167,9 +169,9 @@ def slot_line(folder):
         # Windows: relpath refuses to relate paths on two different drives.
         relative = ".."
     if relative.startswith(".."):
-        return '"L?": r"%s",' % folder
+        return '"%s": r"%s",' % (slot, folder)
     parts = ", ".join('"%s"' % part for part in relative.replace("\\", "/").split("/"))
-    return '"L?": os.path.join(_PROJECT, %s),' % parts
+    return '"%s": os.path.join(_PROJECT, %s),' % (slot, parts)
 
 
 def train(options):
