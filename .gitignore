@@ -8,6 +8,7 @@ run_db*
 run_real
 test
 tmp
+unsloth_compiled_cache
 
 # Ignore everything inside Lora* folders by default
 Lora00*/
