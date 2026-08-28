@@ -28,12 +28,26 @@ Partly judged individuals are averaged over the answers that do have a score
 (the view's AVG skips NULLs) and reported, since a fitness over half a
 transcript is a weaker claim than one over all of it.
 
+The same numbers are also written to `fitness_history`, one row per individual
+per generation, stamped with the moment they were worked out. `individuals.
+fitness` is a column that only ever holds *now*: the next generation overwrites
+it and mutation clears it outright, so a sweep that keeps only that column can
+say how fit its population is and nothing at all about whether the search is
+getting anywhere. The history is the record of the run as a run -- what a
+fitness curve is drawn from.
+
 main.py calls this as a library:
 
     calculate_fitness.assign(conn, run_id)
 """
 
+from collections import namedtuple
+
 import store
+
+# What one pass of this step came to: which generation it recorded, when it
+# recorded it, and the individual_quality rows it worked from, best first.
+Snapshot = namedtuple("Snapshot", "generation recorded_at rows")
 
 
 def fitness_of(row):
@@ -45,14 +59,45 @@ def fitness_of(row):
     return 0.0 if quality is None else round(float(quality), 6)
 
 
-def assign(conn, run_id):
-    """Write individuals.fitness for a whole sweep.
+def entry_for(row):
+    """One `individual_quality` row as a fitness_history row.
 
-    Returns the rows it worked from, best first, so a caller can report on the
-    sweep without asking the database a second time.
+    It carries the chromosome and the state alongside the number, rather than
+    leaning on a join back to `individuals`: the individual this describes will
+    be mutated into a different chromosome and given a different fitness before
+    the sweep is done, and a history read through the population as it stands
+    today would report every past generation in terms of the present one.
+    """
+    return {"number": row["number"],
+            "chromosome": row["chromosome"],
+            "state": row["state"],
+            "fitness": fitness_of(row),
+            "answers": row["answers"] or 0,
+            "unscored": row["unscored"] or 0}
+
+
+def assign(conn, run_id):
+    """Write individuals.fitness for a whole sweep, and record the generation.
+
+    Two writes of one number: the column selection and elitism read, and a row
+    in `fitness_history` so the value survives the next generation overwriting
+    the column.
+
+    Returns a Snapshot -- the generation recorded, its timestamp, and the rows
+    it worked from, best first -- so a caller can report on the sweep without
+    asking the database a second time.
+
+    A sweep with no individuals is not a generation and is not recorded; the
+    caller has a better complaint to make about that than this step does.
     """
     rows = store.quality_rows(conn, run_id)
     for row in rows:
         store.set_fitness(conn, run_id, row["number"], fitness_of(row))
     conn.commit()
-    return rows
+    if not rows:
+        return Snapshot(0, None, rows)
+
+    generation = store.fitness_generation(conn, run_id, len(rows))
+    recorded_at = store.record_fitness(conn, run_id, generation,
+                                       [entry_for(row) for row in rows])
+    return Snapshot(generation, recorded_at, rows)

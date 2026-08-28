@@ -131,7 +131,8 @@ value it did not use.
 
 `main.py` is the entry point and the driver: it owns the `STEPS` list, the `Context` each
 step gets, and the argument parser. `settings.py` is the one copy of the knobs; `store.py`
-owns the sqlite schema (`runs -> settings, individuals -> executions -> exchanges`), its
+owns the sqlite schema (`runs -> settings, individuals -> executions -> exchanges`,
+plus `fitness_history` hanging off `runs`), its
 helpers, and `--list/--show/--export`. Nothing else imports sqlite3.
 
 `generate_population.py` is the root module — it owns the alphabet (`BINARY_OPS`,
@@ -143,7 +144,20 @@ there: root is `CAT`; `CAT`/`SVD`/`LIN` take two *operators*; `L1`–`L5` take o
 averages `exchanges.quality` over each individual's most recent execution -- the
 `individual_quality` view -- and writes it to `individuals.fitness`. An individual with
 nothing to average (never run, `BAD`, crashed, still unjudged) gets `0.0`, not NULL, so a
-selection step never has to decide what a missing score means.
+selection step never has to decide what a missing score means. It **also** writes the whole
+population's scores to `fitness_history` -- one row per individual per generation, stamped
+with `recorded_at` -- because `individuals.fitness` only ever holds *now*: the next
+generation overwrites it and mutation clears it outright, so without the history a sweep
+cannot say whether the search went anywhere. Each history row keeps the chromosome and
+state **as they were then**, so reading the past never goes through the present population.
+Nothing in the schema counts generations (neither driver stores one), so
+`store.fitness_generation()` derives it from population size -- which selection grows by
+appending and never shrinks, the same thing `selection` and `mutation` seed their
+generators from: grown since the last snapshot means a new generation, unchanged means the
+same one restated, which is what keeps a re-run of the cheap `fitness` step from inventing
+a generation. `assign()` returns a `Snapshot(generation, recorded_at, rows)`.
+`store.fitness_by_generation()` / `best_of_generation()` are the read side, printed by the
+step, by `store.py --show`, and exported as `fitness_history.txt`.
 
 `elitism.py` names the survivor: `elect(conn, run_id)` marks one individual with the
 highest `fitness` as `is_best` and clears every other, in one statement, so a sweep never

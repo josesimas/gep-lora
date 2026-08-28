@@ -95,7 +95,7 @@ MUTATION_MASTER_SEED = None
 # selection *appends* its picks, so with SELECTION_COUNT left at None the
 # population doubles every generation and the work of a run grows with it. Fix
 # SELECTION_COUNT to a number to grow by that much per generation instead.
-GENERATIONS = 2
+GENERATIONS = 10
 
 
 # --- where things go -------------------------------------------------------

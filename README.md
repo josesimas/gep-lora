@@ -471,7 +471,7 @@ a long reason cannot truncate it away, and `MAX_TOKENS` is generous because a
 reasoning judge spends its budget thinking and returns an empty message if it
 runs out mid-thought.
 
-### 6. `calculate_fitness.py` → `individuals.fitness`
+### 6. `calculate_fitness.py` → `individuals.fitness`, `fitness_history`
 
 The judge scores answers, not chromosomes. Selection needs the opposite — one
 comparable number per individual — so this step folds each transcript into its
@@ -510,6 +510,73 @@ and named in the output, since a fitness over half a transcript is a weaker
 claim than one over all of it. The step is pure arithmetic over what `evaluate`
 stored — no model, no judge, no endpoint — so it is cheap to re-run, and it
 re-runs cleanly: it overwrites, never accumulates.
+
+#### The generation it was, not just the generation it is
+
+`individuals.fitness` is a column that only ever holds *now*. The next
+generation overwrites it, and mutation clears it outright the moment the
+chromosome that earned it is replaced — so a sweep keeping only that column can
+say how fit its population is today and nothing whatever about whether the
+search got anywhere. The same numbers therefore go into **`fitness_history`**,
+one row per individual per generation:
+
+| column | |
+|---|---|
+| `generation` | 1-based, in the order the `fitness` step ran |
+| `population` | how many individuals that generation held |
+| `recorded_at` | when the step worked the numbers out |
+| `number` | the individual's own number |
+| `chromosome`, `state` | as they were **then**, not as they are now |
+| `fitness` | what `individuals.fitness` was given |
+| `answers`, `unscored` | how much transcript the mean was taken over |
+
+A row is self-contained for the same reason an execution is. The individual it
+names will be mutated into a different chromosome and given a different fitness
+before the sweep is done, so a history read through a join back to
+`individuals` would report every past generation in terms of the present one.
+
+**Nothing counts generations for you**, because until now nothing needed to: a
+sweep is a population that keeps being rewritten in place, and neither
+`main.py` nor `continue_run.py` stores a generation number. The count is
+derived in `store.fitness_generation()` from the one thing that dates a round
+— the size of the population, which selection grows by appending and never
+shrinks, the same derivation `selection` and `mutation` seed their generators
+from. The first snapshot is generation 1; a later one is a **new** generation
+if the population has grown since the last, and the **same** generation
+restated if it has not. That is what makes `python main.py fitness` — cheap,
+and a reasonable thing to redo after a re-scored `evaluate` — rewrite the
+current generation instead of inventing another one.
+
+The blind spot is a generation that appends nobody: `SELECTION_COUNT = 0`, or a
+wheel with nothing to spin. Such a round is indistinguishable from the one
+before it and is recorded as a restatement of it. Both are already dead ends
+for the search — an all-zero population stops at the `elitism` step — so
+nothing a running sweep wanted is lost there.
+
+The step prints the generation it recorded, and the curve so far once there is
+more than one:
+
+```
+recorded generation 4 in fitness_history at 2026-08-28T11:12:06
+    gen   recorded             pop    best    mean    fittest chromosome
+    1     2026-08-28T11:12:05  6      0.717   0.298   CAT.L5.L5.w3.w3
+    2     2026-08-28T11:12:05  8      0.717   0.328   CAT.L5.L5.w3.w3
+    3     2026-08-28T11:12:06  10     0.717   0.400   CAT.L5.L5.w3.w3
+    4     2026-08-28T11:12:06  12     0.834   0.478   CAT.SVD.L3.L1.SVD.w2.w3.L2.L4.w2.w3
+```
+
+`python store.py --show` prints the same table for a stored sweep (with
+`worst` as well), and `--export` writes it out as `fitness_history.txt`
+alongside the per-individual rows — the one exported file that is not a view of
+the population as it stands now. Note that a rising `mean` with a flat `best`
+is the population *growing*, not improving: selection appends copies of the
+fit, so the average climbs on its own.
+
+```sql
+-- the curve, straight out of the database
+SELECT generation, recorded_at, population, MAX(fitness) AS best, AVG(fitness) AS mean
+  FROM fitness_history WHERE run_id = 3 GROUP BY generation ORDER BY generation;
+```
 
 ### 7. `elitism.py` → `individuals.is_best`
 
@@ -943,6 +1010,8 @@ runs          one sweep: when, which template, which interpreter, which commit
     executions  one per time that individual was run: exit code, seconds, the
                 weight seed and the weights it drew, stdout, stderr
       exchanges the questions and answers, and the judge's score for each
+  fitness_history  what each individual's fitness was at the end of each
+                generation, and when it was worked out
 ```
 
 `evaluate` scores the most recent execution of each individual; older ones keep
@@ -1237,6 +1306,7 @@ template_code.py                           (the shape of those scripts)
 process_run.launch/exchanges          -->  executions, exchanges
 evaluate_run.judge                    -->  exchanges.quality
 calculate_fitness.assign              -->  individuals.fitness
+                                           + fitness_history (per generation)
 elitism.elect                         -->  individuals.is_best
 selection.select                      -->  more individuals (appended)
 mutation.apply                        -->  individuals.chromosome + has_changed

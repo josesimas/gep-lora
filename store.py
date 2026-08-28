@@ -18,6 +18,8 @@ row so sweeps accumulate instead of replacing each other:
                     seconds, the weight seed and the weights it drew, stdout,
                     stderr
           exchanges the questions and answers, and the judge's score for each
+      fitness_history  what each individual's fitness was at the end of each
+                    generation, and when it was worked out
 
 Everything a scorer needs is reachable from one query, and nothing is derived
 from a filename. The only thing that still has to exist on disk is the generated
@@ -119,9 +121,35 @@ CREATE TABLE IF NOT EXISTS exchanges (
     UNIQUE (execution_id, position)
 );
 
+-- Fitness as it stood at the end of each generation, one row per individual
+-- per generation. individuals.fitness only ever holds the latest value and
+-- mutation clears it outright, so without this a sweep can say how fit its
+-- population is now and nothing whatever about how it got there.
+--
+-- A row is self-contained for the reason an execution is: it keeps the
+-- chromosome and the verdict it was scored under, because the individual it
+-- names goes on being rewritten -- mutation replaces the chromosome, the next
+-- generation replaces the fitness -- and a history that has to join back to the
+-- current population to be read would report the past in terms of the present.
+CREATE TABLE IF NOT EXISTS fitness_history (
+    id          INTEGER PRIMARY KEY,
+    run_id      INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    generation  INTEGER NOT NULL,        -- 1-based, in the order fitness ran
+    population  INTEGER NOT NULL,        -- individuals the generation held
+    recorded_at TEXT    NOT NULL,        -- when the fitness step wrote the row
+    number      INTEGER NOT NULL,        -- the individual's own number
+    chromosome  TEXT    NOT NULL,        -- as it was then, not as it is now
+    state       TEXT,                    -- ok | BAD, as it was then
+    fitness     REAL,                    -- what individuals.fitness was given
+    answers     INTEGER,                 -- exchanges the mean was taken over
+    unscored    INTEGER,                 -- how many of those carried no quality
+    UNIQUE (run_id, generation, number)
+);
+
 CREATE INDEX IF NOT EXISTS individuals_by_run ON individuals(run_id, number);
 CREATE INDEX IF NOT EXISTS executions_by_individual ON executions(individual_id);
 CREATE INDEX IF NOT EXISTS exchanges_by_execution ON exchanges(execution_id);
+CREATE INDEX IF NOT EXISTS fitness_history_by_run ON fitness_history(run_id, generation);
 
 -- The fitness view: one row per individual, over its most recent execution.
 -- Mean quality is what a selection step would sort on.
@@ -416,6 +444,109 @@ def set_fitness(conn, run_id, number, fitness):
         (fitness, run_id, number))
 
 
+# --- fitness, generation by generation ------------------------------------
+
+
+def fitness_generation(conn, run_id, population):
+    """Which generation a fitness snapshot over `population` individuals is.
+
+    Nothing in the schema counts generations, because until now nothing needed
+    to: a sweep is a population that keeps being rewritten in place. The count
+    is derived here instead, from the one thing that dates a round -- the size
+    of the population, which selection grows by appending and never shrinks.
+    The same derivation selection and mutation seed their generators from.
+
+    So: the first snapshot is generation 1, and a later one is a new generation
+    if the population has grown since the last was taken, and the *same*
+    generation restated if it has not. That is what makes re-running
+
+        python main.py fitness
+
+    -- pure arithmetic over stored transcripts, and a reasonable thing to redo
+    after a re-scored `evaluate` -- rewrite the current generation rather than
+    invent another one.
+
+    The blind spot is a generation that appends nobody: SELECTION_COUNT at 0,
+    or a wheel with nothing to spin. Such a round is indistinguishable from the
+    one before it here and is recorded as a restatement of it. Both cases are
+    already dead ends for the search -- an all-zero population stops at the
+    elitism step -- so the history losing a row there costs nothing a running
+    sweep would have wanted.
+    """
+    row = conn.execute(
+        "SELECT generation, population FROM fitness_history WHERE run_id = ?"
+        " ORDER BY generation DESC LIMIT 1", (run_id,)).fetchone()
+    if row is None:
+        return 1
+    return row["generation"] + (0 if row["population"] == population else 1)
+
+
+def record_fitness(conn, run_id, generation, entries):
+    """Store one generation's fitness for a whole population. -> the timestamp.
+
+    Every row of the generation carries the same `recorded_at`, because they are
+    one snapshot taken at one moment and not a stream of separate events; the
+    stamp dates the generation, and is the only place a sweep says when its
+    generations happened.
+
+    Anything already held for this generation is replaced, so a re-run of the
+    fitness step restates the round with what it now knows instead of failing on
+    the unique key or leaving half the old snapshot behind.
+
+    `entries` are dicts with the columns below, which is what calculate_fitness
+    builds out of the individual_quality view.
+    """
+    stamp = _now()
+    conn.execute("DELETE FROM fitness_history WHERE run_id = ? AND generation = ?",
+                 (run_id, generation))
+    conn.executemany(
+        "INSERT INTO fitness_history (run_id, generation, population, recorded_at,"
+        " number, chromosome, state, fitness, answers, unscored)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(run_id, generation, len(entries), stamp, entry["number"],
+          entry["chromosome"], entry["state"], entry["fitness"],
+          entry["answers"], entry["unscored"]) for entry in entries])
+    conn.commit()
+    return stamp
+
+
+def fitness_history(conn, run_id, generation=None):
+    """The recorded history of one sweep, oldest generation first."""
+    sql = "SELECT * FROM fitness_history WHERE run_id = ?"
+    args = [run_id]
+    if generation is not None:
+        sql += " AND generation = ?"
+        args.append(generation)
+    return conn.execute(sql + " ORDER BY generation, number", args).fetchall()
+
+
+def fitness_by_generation(conn, run_id):
+    """One row per generation: when it was, and how its fitness came out.
+
+    The shape you want to watch a search in -- whether the mean is climbing, and
+    whether the best chromosome is getting better or the population is merely
+    getting larger.
+    """
+    return conn.execute(
+        "SELECT generation, population, MIN(recorded_at) AS recorded_at,"
+        " COUNT(*) AS individuals, MIN(fitness) AS worst, MAX(fitness) AS best,"
+        " AVG(fitness) AS mean,"
+        " SUM(CASE WHEN fitness > 0 THEN 1 ELSE 0 END) AS scored"
+        " FROM fitness_history WHERE run_id = ?"
+        " GROUP BY generation ORDER BY generation", (run_id,)).fetchall()
+
+
+def best_of_generation(conn, run_id, generation):
+    """The fittest individual of one recorded generation, lowest number on a tie.
+
+    Elitism's rule, applied to the history rather than to the population, so the
+    two agree about which chromosome a generation was won by.
+    """
+    return conn.execute(
+        "SELECT * FROM fitness_history WHERE run_id = ? AND generation = ?"
+        " ORDER BY fitness DESC, number LIMIT 1", (run_id, generation)).fetchone()
+
+
 def set_changed(conn, individual_id, has_changed):
     """Record whether the last mutation round altered this individual.
 
@@ -602,6 +733,27 @@ def export_run(conn, run_id, out_dir):
         write("results.txt", "%-14s %-5s %-8s %7s %5s  %-26s %s\n"
               % ("script", "state", "result", "secs", "qa", "transcript", "expression")
               + "\n".join(results) + "\n")
+
+    # The one file here that is not a view of the population as it stands now:
+    # every generation the sweep went through, in the order it went through
+    # them, with the chromosomes and the scores as they were at the time.
+    history = fitness_history(conn, run_id)
+    if history:
+        write("fitness_history.txt",
+              "%-5s %-20s %-6s %-7s %-7s %-7s\n"
+              % ("gen", "recorded", "pop", "best", "mean", "worst")
+              + "".join("%-5d %-20s %-6d %-7.3f %-7.3f %-7.3f\n"
+                        % (entry["generation"], entry["recorded_at"],
+                           entry["population"], entry["best"] or 0.0,
+                           entry["mean"] or 0.0, entry["worst"] or 0.0)
+                        for entry in fitness_by_generation(conn, run_id))
+              + "\n%-5s %-4s %-5s %-7s %-7s %s\n"
+              % ("gen", "#", "state", "fitness", "answers", "chromosome")
+              + "".join("%-5d %-4d %-5s %-7.3f %-7d %s\n"
+                        % (row["generation"], row["number"], row["state"] or "-",
+                           row["fitness"] or 0.0, row["answers"] or 0,
+                           row["chromosome"])
+                        for row in history))
     return written
 
 
@@ -641,6 +793,21 @@ def summarise(conn, run_id):
     if scored:
         print("\nquality across %d individual(s): min %.3f, max %.3f, mean %.3f"
               % (len(scored), min(scored), max(scored), sum(scored) / len(scored)))
+
+    # The population above is the sweep as it stands; this is the sweep as it
+    # went, which is the half that says whether the search was working.
+    history = fitness_by_generation(conn, run_id)
+    if history:
+        print("\nfitness by generation")
+        print("    %-5s %-20s %-6s %-7s %-7s %-7s %s"
+              % ("gen", "recorded", "pop", "best", "mean", "worst",
+                 "fittest chromosome"))
+        for entry in history:
+            best = best_of_generation(conn, run_id, entry["generation"])
+            print("    %-5d %-20s %-6d %-7.3f %-7.3f %-7.3f %s"
+                  % (entry["generation"], entry["recorded_at"], entry["population"],
+                     entry["best"] or 0.0, entry["mean"] or 0.0,
+                     entry["worst"] or 0.0, best["chromosome"] if best else "-"))
 
 
 def main(argv=None):

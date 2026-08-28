@@ -1,5 +1,6 @@
 # Features
 
+* Track fitness over the generations
 * More fitness functions
 * Run the training set through the base model and use the results in the evaluation of the loras (send then to the judge LLM)
 * Get all the settings around the external services (Judge and Lora calculation) into a config.py

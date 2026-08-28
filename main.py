@@ -462,9 +462,11 @@ def step_evaluate(context):
 
 
 def step_fitness(context):
-    """Fold each transcript into one number -> individuals.fitness."""
+    """Fold each transcript into one number -> individuals.fitness, and record
+    that generation of it -> fitness_history."""
     conn, run_id = context.conn, context.run_id
-    rows = calculate_fitness.assign(conn, run_id)
+    snapshot = calculate_fitness.assign(conn, run_id)
+    rows = snapshot.rows
     if not rows:
         raise SystemExit("run %d holds no individuals. Run the population step first."
                          % run_id)
@@ -498,6 +500,23 @@ def step_fitness(context):
     if empty:
         print("%d individual(s) had no judged answer and scored 0.0: %s"
               % (len(empty), ", ".join(str(number) for number in empty)))
+
+    # The column above says what the population is worth now; this says what it
+    # was worth each generation, which is the only way a finished sweep can show
+    # whether the search went anywhere. Re-running this step restates the
+    # current generation rather than adding one -- see store.fitness_generation.
+    print("\nrecorded generation %d in fitness_history at %s"
+          % (snapshot.generation, snapshot.recorded_at))
+    history = store.fitness_by_generation(conn, run_id)
+    if len(history) > 1:
+        print("    %-5s %-20s %-6s %-7s %-7s %s"
+              % ("gen", "recorded", "pop", "best", "mean", "fittest chromosome"))
+        for entry in history:
+            best = store.best_of_generation(conn, run_id, entry["generation"])
+            print("    %-5d %-20s %-6d %-7.3f %-7.3f %s"
+                  % (entry["generation"], entry["recorded_at"], entry["population"],
+                     entry["best"] or 0.0, entry["mean"] or 0.0,
+                     best["chromosome"] if best else "-"))
 
 
 def step_elitism(context):
@@ -658,7 +677,8 @@ STEPS = [
          "score every answer with the judge -> exchanges.quality"),
     # Cheap, and pure arithmetic over what evaluate stored: no model, no judge.
     Step("fitness", step_fitness,
-         "average each transcript's qualities -> individuals.fitness"),
+         "average each transcript's qualities -> individuals.fitness,"
+         " fitness_history"),
     # Cheap too, and reads nothing but the column fitness just wrote.
     Step("elitism", step_elitism,
          "mark the fittest individual as the one to keep -> individuals.is_best"),
