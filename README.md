@@ -267,15 +267,16 @@ written, minus the markers.
 | a line starting with `#~` | template-only note, never reaches the output |
 
 Blocks are `TREE`, `BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`,
-`WEIGHT_SEED`, `TRAINING_SET`; inline values are `SCRIPT_NAME`, `PROVENANCE`,
-`LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`. Any marker
-left unfilled raises rather than being written into a generated file.
+`WEIGHT_SEED`, `TRAINING_SET`, `LORA_SLOTS`; inline values are `SCRIPT_NAME`,
+`PROVENANCE`, `LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`.
+Any marker left unfilled raises rather than being written into a generated file.
 
-`WEIGHT_SEED` and `TRAINING_SET` are one line each, but blocks rather than inline
-values, because each stands in for the *assignment* — so a generated script
-carries `WEIGHT_SEED = 12345` and `TRAINING_SET = '...'` as plain literals. They
-are also the two names a linter calls undefined in the templates themselves, and
-finds defined in every file generated from them.
+`WEIGHT_SEED`, `TRAINING_SET` and `LORA_SLOTS` are blocks rather than inline
+values because each stands in for the *assignment* — so a generated script
+carries `WEIGHT_SEED = 12345`, `TRAINING_SET = '...'` and the whole
+`LORA_SLOTS = {...}` dict as plain literals. They are also the three names a
+linter calls undefined in the templates themselves, and finds defined in every
+file generated from them.
 
 To change what every generated script looks like, edit `template_code.py` and
 re-run `python main.py runs`. Only add code to the generator itself when the new
@@ -1203,17 +1204,24 @@ repeatable after the fact. To try one particular draw by hand, edit the
 carries as a literal rather than inheriting from the template.
 
 **`LORA_SLOTS`** — one independent entry per slot, so any single line can be
-repointed at a different adapter without touching the others:
+repointed at a different adapter without touching the others. It lives in
+`settings.py`, not in the templates:
 
 ```python
 LORA_SLOTS = {
-    "L1": os.path.join(_PROJECT, "Lora001", "my_planning_coach-lora_adapter"),
-    "L2": os.path.join(_PROJECT, "Lora002", "my_planning_coach-lora_adapter"),
-    "L3": os.path.join(_PROJECT, "Lora003", "my_planning_coach-lora_adapter"),
-    "L4": os.path.join(_PROJECT, "Lora004", "my_planning_coach-lora_adapter"),
-    "L5": os.path.join(_PROJECT, "Lora005", "my_planning_coach-lora_adapter"),
+    "L1": "loras/Lora001/my_planning_coach-lora_adapter",
+    "L2": "loras/Lora002/my_planning_coach-lora_adapter",
+    "L3": "loras/Lora003/my_planning_coach-lora_adapter",
+    "L4": "loras/Lora004/my_planning_coach-lora_adapter",
+    "L5": "loras/Lora005/my_planning_coach-lora_adapter",
 }
 ```
+
+The slots *are* the search space, so they belong with the rest of the knobs: one
+edit reaches both templates, and the sweep records which five adapters its
+fitness numbers were earned on. `generate_runs.lora_slots()` resolves them once —
+relative to the repo folder — and writes the result into every generated script
+as a literal dict, so a script carries real paths rather than deriving them.
 
 Five genuinely distinct adapters, one per slot, all trained on the same base
 model (`unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit` — they must share a base
@@ -1221,16 +1229,17 @@ for PEFT to combine them). Their ranks differ:
 
 | Slot | Folder | `r` |
 |---|---|---|
-| `L1` | `Lora001` | 16 |
-| `L2` | `Lora002` | 16 |
-| `L3` | `Lora003` | 8 |
-| `L4` | `Lora004` | 4 |
-| `L5` | `Lora005` | 32 |
+| `L1` | `loras/Lora001` | 16 |
+| `L2` | `loras/Lora002` | 16 |
+| `L3` | `loras/Lora003` | 8 |
+| `L4` | `loras/Lora004` | 4 |
+| `L5` | `loras/Lora005` | 32 |
 
-`_PROJECT` is the folder holding this README, resolved from the generated
-script's own location, so scripts in `run_db/` and `test.py`'s output in `run/`
-both find the adapters. Any entry may equally be an absolute path or a Hub repo
-id.
+A relative entry is taken from the folder holding this README, so scripts in
+`run_db/` and `test.py`'s output in `run/` both find the same adapters. An
+absolute path is used as it stands, and so is anything that is neither — a Hub
+repo id, say — though that is as far as it has ever gone: every rank check reads
+the adapter's own `adapter_config.json` off disk.
 
 Ranks are **not** assumed equal. Each slot's rank is read from its own
 `adapter_config.json` — at generation time for the docstring and the `state` and

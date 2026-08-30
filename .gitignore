@@ -9,11 +9,15 @@ run_real
 test
 tmp
 unsloth_compiled_cache
+run_tmp
 
-# Ignore everything inside Lora* folders by default
-Lora00*/
+# Ignore everything inside the adapter folders by default. This ignores their
+# *contents* rather than the folders themselves: git cannot re-include a file
+# whose parent directory is excluded, so the two negations below only work if
+# loras/Lora00N/ is itself still visible.
+loras/Lora00*/*
 
 # Re-include only the files you want to track
-!Lora00*/main.py
-!Lora00*/inference.py
+!loras/Lora00*/main.py
+!loras/Lora00*/inference.py
 

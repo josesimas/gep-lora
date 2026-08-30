@@ -1,5 +1,5 @@
 """
-create_all_loras.py - Fill Lora001..Lora00N with one adapter each, from one
+create_all_loras.py - Fill loras/Lora001..Lora00N with one adapter each, from one
 dataset and one base model, varying a single training parameter across them.
 
 create_lora.py makes one adapter. This makes the set the search actually needs,
@@ -49,13 +49,16 @@ import create_lora
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# The subfolder each Lora00N folder keeps its adapter in. This is the name the
-# existing five use and the one template_code.py's LORA_SLOTS spells out, so
+# The subfolder each loras/Lora00N folder keeps its adapter in. This is the name
+# the existing five use and the one settings.py's LORA_SLOTS spells out, so
 # leaving it alone means the generated scripts need no edit at all.
 ADAPTER_NAME = "my_planning_coach-lora_adapter"
 
-# The script this one drives, and the folder pattern it fills.
+# The script this one drives, and the folders it fills: loras/Lora001,
+# loras/Lora002, ... One place for the parent, so moving the set again is one
+# line here rather than a hunt through the joins below.
 CREATE_LORA = os.path.join(_HERE, "create_lora.py")
+LORA_DIR = os.path.join(_HERE, "loras")
 FOLDER_FORMAT = "Lora%03d"
 
 
@@ -117,7 +120,7 @@ def plan(options):
     else:
         values = learning_rates(options.count, options.lr_min, options.lr_max)
 
-    return [(os.path.join(_HERE, FOLDER_FORMAT % (options.start + i),
+    return [(os.path.join(LORA_DIR, FOLDER_FORMAT % (options.start + i),
                           options.adapter_name), value)
             for i, value in enumerate(values)]
 
@@ -147,7 +150,7 @@ def next_free(count):
     """The lowest start number whose whole run of `count` folders is free."""
     start = 1
     while True:
-        wanted = [os.path.join(_HERE, FOLDER_FORMAT % (start + i))
+        wanted = [os.path.join(LORA_DIR, FOLDER_FORMAT % (start + i))
                   for i in range(count)]
         if not any(os.path.isdir(w) and os.listdir(w) for w in wanted):
             return start
@@ -226,19 +229,16 @@ def train_all(batch, options):
 
 
 def known_slot(folder):
-    """Whether template_code.py's LORA_SLOTS already points at `folder`.
+    """Whether settings.py's LORA_SLOTS already points at `folder`.
 
-    resolve_from_template() is generate_runs.py's way of reading the template's
-    constants rather than keeping a second copy that could drift; this is the
-    same move, so a hand-edited LORA_SLOTS is answered by the file itself.
+    Asked of the setting itself rather than of a copy kept here, so a
+    hand-edited LORA_SLOTS is answered by the file that holds it.
+    generate_runs.lora_slots() is what resolves the relative entries, which is
+    the same resolution a generated script will be built with.
     """
     try:
         import generate_runs
-        # output_dir is where a generated script would sit; only its parent
-        # matters, since that is the _PROJECT the template resolves against.
-        slots = generate_runs.resolve_from_template(
-            ["LORA_SLOTS"], generate_runs.TEMPLATE,
-            os.path.join(_HERE, "run_db"))["LORA_SLOTS"]
+        slots = generate_runs.lora_slots()
     except Exception:
         # Never worth failing a finished batch over: the block is printed either
         # way, and "paste this in" is the safe half of the advice.
@@ -276,13 +276,13 @@ def report(results, options):
     if len(good) != len(results):
         # The block below numbers slots over the adapters that exist, so a gap
         # in the middle of the batch pulls the ones after it up a slot. Worth
-        # saying out loud rather than letting it read as Lora00N -> LN.
+        # saying out loud rather than letting it read as loras/Lora00N -> LN.
         print("\nNote: %d adapter(s) failed, so the slots below are numbered over "
               "the ones that trained -- a gap shifts everything after it. Re-run "
               "the failures before leaning on this block."
               % (len(results) - len(good)))
 
-    print("\nLORA_SLOTS for template_code.py:")
+    print("\nLORA_SLOTS for settings.py:")
     for index, (folder, rank) in enumerate(good, start=1):
         # Past L5 there is no slot to fill: L1..L5 is the grammar's alphabet
         # (UNARY_OPS in generate_population.py), so a sixth adapter needs the
@@ -290,21 +290,21 @@ def report(results, options):
         slot = "L%d" % index if index <= 5 else "L? (no slot: the grammar stops at L5)"
         print("    " + create_lora.slot_line(folder, slot))
 
-    # Whether the block above is what template_code.py already says, rather than
+    # Whether the block above is what settings.py already says, rather than
     # something to paste over it. Read, not assumed: --start, --adapter-name and
     # a hand-edited LORA_SLOTS can each put the two out of step.
     if all(known_slot(folder) for folder, _ in good):
-        print("\nThose are the paths template_code.py already holds, so nothing "
+        print("\nThose are the paths settings.py already holds, so nothing "
               "needs editing -- the generated scripts pick the new adapters up "
               "as they are.")
     else:
-        print("\nPaste that into template_code.py's LORA_SLOTS, then re-run "
+        print("\nPaste that into settings.py's LORA_SLOTS, then re-run "
               "`python main.py runs` so the generated scripts pick it up.")
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Train a whole set of LoRA adapters into Lora001..Lora00N, "
+        description="Train a whole set of LoRA adapters into loras/Lora001..Lora00N, "
                     "varying one parameter across them.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="examples:\n"
@@ -323,7 +323,7 @@ def parse_args(argv=None):
              "given, which sets its own length.")
     parser.add_argument(
         "--start", type=int, default=1,
-        help="the number the first folder takes (default 1, so Lora001 up). Use "
+        help="the number the first folder takes (default 1, so loras/Lora001 up). Use "
              "it to write a new set alongside an existing one.")
     parser.add_argument(
         "--vary", choices=("rank", "learning-rate"), default="rank",
@@ -376,7 +376,7 @@ def parse_args(argv=None):
              % create_lora.BASE_MODEL)
     parser.add_argument(
         "--adapter-name", default=ADAPTER_NAME,
-        help="subfolder each adapter is written to inside its Lora00N folder "
+        help="subfolder each adapter is written to inside its loras/Lora00N folder "
              "(default %s, which is the path template_code.py already expects)."
              % ADAPTER_NAME)
     parser.add_argument(

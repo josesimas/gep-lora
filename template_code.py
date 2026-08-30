@@ -64,20 +64,20 @@ _PROJECT = os.path.dirname(_HERE)                  # run/ -> project/
 BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
 
 # Where each of the 5 LoRAs the trees refer to lives. One independent entry per
-# slot: repoint any single line at a different adapter and nothing else in this
-# file has to change. An entry may equally be an absolute path or a Hub repo id.
+# slot, already resolved: repoint a slot in settings.py and every script built
+# afterwards follows.
 #
 # These five were trained at different ranks (r=16, 16, 8, 4, 32), which the code
 # handles -- _rank() reads each one's adapter_config.json rather than assuming
 # they match. That matters because PEFT's cat sums input ranks, svd takes the
 # max, and linear refuses inputs whose ranks differ.
-LORA_SLOTS = {
-    "L1": os.path.join(_PROJECT, "Lora001", "my_planning_coach-lora_adapter"),
-    "L2": os.path.join(_PROJECT, "Lora002", "my_planning_coach-lora_adapter"),
-    "L3": os.path.join(_PROJECT, "Lora003", "my_planning_coach-lora_adapter"),
-    "L4": os.path.join(_PROJECT, "Lora004", "my_planning_coach-lora_adapter"),
-    "L5": os.path.join(_PROJECT, "Lora005", "my_planning_coach-lora_adapter"),
-}
+#~ Whole-line marker, like WEIGHT_SEED and TRAINING_SET: generate_runs.py
+#~ replaces it with the LORA_SLOTS assignment itself, filled from LORA_SLOTS in
+#~ settings.py. The slots are the search space, so they belong with the rest of
+#~ the knobs -- and with them there, the sweep records which five adapters its
+#~ fitness numbers were earned on. A third name a linter calls undefined here
+#~ and finds defined in every file generated from this.
+# @@LORA_SLOTS@@
 
 # What w1..w5 are worth: a fresh random draw every run, strictly between 0 and
 # 1. Set WEIGHT_SEED to an int to repeat one particular draw -- without it the

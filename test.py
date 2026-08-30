@@ -61,9 +61,10 @@ def main():
         print("note: %d trailing symbol(s) are not part of the tree: %s"
               % (len(tail), ".".join(tail)))
 
-    # Ranks come from each slot's adapter_config.json; they may differ.
+    # Ranks come from each slot's adapter_config.json; they may differ. The
+    # slots themselves are LORA_SLOTS in settings.py, the same ones a sweep uses.
     out_dir = os.path.join(_HERE, OUTPUT_DIR)
-    steps, final = plan(root, slot_ranks(out_dir))
+    steps, final = plan(root, slot_ranks())
     broken = [step for step in steps if step.broken]
 
     print("\ntree")

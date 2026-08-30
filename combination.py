@@ -2,8 +2,8 @@
 combination.py - Stack BOTH trained LoRAs on top of the base model, then chat.
 
 You now have two LoRA adapters trained from the same base model:
-    Lora001/my_planning_coach-lora_adapter
-    Lora002/my_planning_coach-lora_adapter
+    loras/Lora001/my_planning_coach-lora_adapter
+    loras/Lora002/my_planning_coach-lora_adapter
 
 This script loads the base model once and applies BOTH adapters, one after the
 other, then generates exactly like inference.py does.
@@ -36,8 +36,8 @@ from unsloth.chat_templates import get_chat_template
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 # The two LoRA folders to stack. Both must share the same base model (they do).
-ADAPTER1_DIR = os.path.join(_HERE, "Lora001", "my_planning_coach-lora_adapter")
-ADAPTER2_DIR = os.path.join(_HERE, "Lora002", "my_planning_coach-lora_adapter")
+ADAPTER1_DIR = os.path.join(_HERE, "loras", "Lora001", "my_planning_coach-lora_adapter")
+ADAPTER2_DIR = os.path.join(_HERE, "loras", "Lora002", "my_planning_coach-lora_adapter")
 
 # How strongly to apply each adapter. 1.0 = full strength. Lower one to blend.
 # Both LoRAs were trained on the same tiny set, so their deltas nearly coincide;

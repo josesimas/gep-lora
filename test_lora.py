@@ -9,12 +9,12 @@ words the model uses.
 
     python test_lora.py "Help me plan my week."
     python test_lora.py                          # keep asking, model stays loaded
-    python test_lora.py --lora Lora003 "Describe autumn."
+    python test_lora.py --lora Lora003 "Describe autumn."   # or loras/Lora003
     python test_lora.py --lora path/to/any_adapter "Hi there!"
 
 Both answers come out of a single base-model load. The adapter is attached once
 and switched off for the "before" answer -- `with model.disable_adapter()`, the
-same move Lora00*/main.py makes at the end of training. Loading the base twice
+same move loras/Lora00*/main.py makes at the end of training. Loading the base twice
 would cost twice as long and prove nothing extra, since it is the same weights
 either way.
 
@@ -40,10 +40,13 @@ import create_lora
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# The subfolder each Lora00N folder keeps its adapter in, so `--lora Lora003`
-# can mean the adapter inside it rather than the folder itself.
+# Where the Lora00N folders live, and the subfolder each one keeps its adapter
+# in, so `--lora Lora003` can mean the adapter inside it rather than the folder
+# itself -- and can still be written as the bare folder name now that the set
+# has moved under loras/.
+LORA_DIR = "loras"
 ADAPTER_NAME = "my_planning_coach-lora_adapter"
-DEFAULT_LORA = os.path.join("Lora001", ADAPTER_NAME)
+DEFAULT_LORA = os.path.join(LORA_DIR, "Lora001", ADAPTER_NAME)
 
 MAX_SEQ = 2048
 
@@ -60,14 +63,17 @@ def resolve_adapter(path):
     """An adapter directory, from a path or from a bare Lora00N folder name.
 
     `--lora Lora003` should find the adapter inside it without the convention
-    being spelled out, but a path that is already an adapter always wins -- the
-    check is for adapter_config.json, since that is what makes a directory an
-    adapter rather than a folder that contains one.
+    being spelled out -- neither the loras/ folder the set lives in nor the
+    adapter subfolder has to be typed -- but a path that is already an adapter
+    always wins. The check is for adapter_config.json, since that is what makes
+    a directory an adapter rather than a folder that contains one.
     """
     candidates = [path,
                   os.path.join(path, ADAPTER_NAME),
                   os.path.join(_HERE, path),
-                  os.path.join(_HERE, path, ADAPTER_NAME)]
+                  os.path.join(_HERE, path, ADAPTER_NAME),
+                  os.path.join(_HERE, LORA_DIR, path),
+                  os.path.join(_HERE, LORA_DIR, path, ADAPTER_NAME)]
     for candidate in candidates:
         if os.path.isfile(os.path.join(candidate, "adapter_config.json")):
             return os.path.abspath(candidate)
@@ -195,7 +201,8 @@ def parse_args(argv=None):
         epilog="examples:\n"
                '  python test_lora.py "Help me plan my week."\n'
                "  python test_lora.py                       # ask repeatedly\n"
-               '  python test_lora.py --lora Lora003 "Describe autumn."',
+               '  python test_lora.py --lora Lora003 "Describe autumn."\n'
+               '  python test_lora.py --lora loras/Lora003 "Describe autumn."',
     )
     parser.add_argument(
         "prompt", nargs="*",
@@ -204,7 +211,8 @@ def parse_args(argv=None):
     parser.add_argument(
         "--lora", "-l", default=DEFAULT_LORA,
         help="the adapter to compare against the bare model (default %s). Either "
-             "an adapter folder or a Lora00N folder holding one; any location "
+             "an adapter folder or a Lora00N folder holding one, named with or "
+             "without the loras/ prefix; any location "
              "works, including one create_lora.py just wrote."
              % DEFAULT_LORA.replace("\\", "/"))
     parser.add_argument(

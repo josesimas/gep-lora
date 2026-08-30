@@ -209,8 +209,11 @@ def step_runs(context):
                          % run_id)
 
     template_lines = generate_runs.load_template(context.template)
-    # Each slot's rank comes from its own adapter_config.json -- they may differ.
-    ranks = generate_runs.slot_ranks(context.run_dir, context.template)
+    # The adapters come from this sweep's stored LORA_SLOTS, not from the
+    # template; each slot's rank comes from its own adapter_config.json, and
+    # they may differ.
+    slots = context.conf.get("LORA_SLOTS")
+    ranks = generate_runs.slot_ranks(slots)
     # The eval prompts come from this sweep's stored TRAINING_SET, not from the
     # template; the generated scripts read them at startup, so fail here if they
     # cannot be read at all.
@@ -236,6 +239,7 @@ def step_runs(context):
             template_lines=template_lines,
             weight_seed=weight_seed,
             training_set=training_set,
+            slots=slots,
         )
         broken = any(step.broken for step in steps)
         runnable += not broken

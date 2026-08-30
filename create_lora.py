@@ -2,17 +2,17 @@
 create_lora.py - Train one LoRA adapter and leave it in a folder the pipeline
 can point a slot at.
 
-The five adapters under Lora001/..Lora005/ were each produced by their own copy
-of a training script. This is the one script that makes another, so a new
-behaviour to blend costs a dataset and a command rather than a sixth folder of
-duplicated training code:
+The five adapters under loras/Lora001/..loras/Lora005/ were each produced by their
+own copy of a training script. This is the one script that makes another, so a
+new behaviour to blend costs a dataset and a command rather than a sixth folder
+of duplicated training code:
 
-    python create_lora.py Lora006/poem_adapter --dataset poem
-    python create_lora.py Lora007/shout_adapter --dataset uppercase --rank 8
+    python create_lora.py loras/Lora006/poem_adapter --dataset poem
+    python create_lora.py loras/Lora007/shout_adapter --dataset uppercase --rank 8
 
 The folder it writes is exactly the shape the generated scripts expect -- an
 adapter_config.json naming the same base model, an adapter_model.safetensors,
-and the tokenizer -- so making it usable is one line in template_code.py's
+and the tokenizer -- so making it usable is one line in settings.py's
 LORA_SLOTS, which this script prints when it is done.
 
 Two things are held fixed on purpose, because a blend is only meaningful when
@@ -155,13 +155,14 @@ def rank_of(adapter_dir):
 def slot_line(folder, slot="L?"):
     """The LORA_SLOTS entry that points at `folder`, ready to paste.
 
-    A generated script sits in the run folder and sets `_PROJECT` to its parent
-    -- this repo -- so a slot inside the repo is written relative to that, the
-    way the five existing entries are. Anything outside it goes in absolute,
-    which LORA_SLOTS accepts and which is the only honest way to write a path
-    `_PROJECT` cannot reach. `slot` is left as a placeholder for one adapter,
-    since only the caller knows which of L1..L5 it is displacing; create_all_loras
-    fills it in because it writes the whole set at once.
+    LORA_SLOTS lives in settings.py, whose relative entries are taken from the
+    repo folder, so a slot inside the repo is written relative and with forward
+    slashes -- the way the five existing entries are, and readable on either
+    platform. Anything outside the repo goes in absolute, which LORA_SLOTS
+    accepts and which is the only honest way to write a path the repo folder
+    cannot reach. `slot` is left as a placeholder for one adapter, since only
+    the caller knows which of L1..L5 it is displacing; create_all_loras fills it
+    in because it writes the whole set at once.
     """
     try:
         relative = os.path.relpath(folder, _HERE)
@@ -170,8 +171,7 @@ def slot_line(folder, slot="L?"):
         relative = ".."
     if relative.startswith(".."):
         return '"%s": r"%s",' % (slot, folder)
-    parts = ", ".join('"%s"' % part for part in relative.replace("\\", "/").split("/"))
-    return '"%s": os.path.join(_PROJECT, %s),' % (slot, parts)
+    return '"%s": "%s",' % (slot, relative.replace(os.sep, "/"))
 
 
 def train(options):
@@ -241,7 +241,7 @@ def train(options):
     trainer.train()
 
     # The tokenizer goes in too. The existing adapter folders carry one, which
-    # is what lets a folder be loaded on its own (Lora00*/inference.py) as well
+    # is what lets a folder be loaded on its own (loras/Lora00*/inference.py) as well
     # as attached to an already-loaded base.
     model.save_pretrained(options.folder)
     tokenizer.save_pretrained(options.folder)
@@ -271,7 +271,7 @@ def parse_args(argv=None):
         description="Train one LoRA adapter into a folder the pipeline can use.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="example:\n"
-               "  python create_lora.py Lora006/poem_adapter --dataset poem --rank 8",
+               "  python create_lora.py loras/Lora006/poem_adapter --dataset poem --rank 8",
     )
     parser.add_argument(
         "folder",
@@ -345,11 +345,11 @@ def main(argv=None):
         print("\nYOU: %s" % options.prompt)
         print("LORA: %s" % sample(model, tokenizer, options.prompt))
 
-    # The last mile: what to paste into template_code.py so a tree can reach it.
+    # The last mile: what to paste into settings.py so a tree can reach it.
     # A slot is *repointed* rather than added -- L1..L5 is the grammar's own
     # alphabet (UNARY_OPS in generate_population.py), so a sixth slot is a
     # grammar change, not a configuration one.
-    print("\nTo put it in the search, point a slot at it in template_code.py's "
+    print("\nTo put it in the search, point a slot at it in settings.py's "
           "LORA_SLOTS (mind which rank you displace -- it decides which LIN "
           "combinations are legal):")
     print("    " + slot_line(options.folder))

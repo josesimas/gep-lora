@@ -71,13 +71,10 @@ BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
 # The same slots as the real template, read the same way: the ranks decide
 # which trees are blocked, and a mock that disagreed about that would be
 # testing a different population than the one you are about to run for real.
-LORA_SLOTS = {
-    "L1": os.path.join(_PROJECT, "Lora001", "my_planning_coach-lora_adapter"),
-    "L2": os.path.join(_PROJECT, "Lora002", "my_planning_coach-lora_adapter"),
-    "L3": os.path.join(_PROJECT, "Lora003", "my_planning_coach-lora_adapter"),
-    "L4": os.path.join(_PROJECT, "Lora004", "my_planning_coach-lora_adapter"),
-    "L5": os.path.join(_PROJECT, "Lora005", "my_planning_coach-lora_adapter"),
-}
+#~ Whole-line marker filled by generate_runs.py from LORA_SLOTS in settings.py,
+#~ exactly as in template_code.py -- which is what keeps the two agreeing about
+#~ the ranks without either of them holding a copy of the paths.
+# @@LORA_SLOTS@@
 
 # What w1..w5 are worth: a fresh random draw every run, strictly between 0 and
 # 1, exactly as in the real template. Set WEIGHT_SEED to an int to repeat one

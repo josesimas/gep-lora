@@ -49,7 +49,6 @@ search space, not a bug here: this generator computes every node's rank up
 front, marks the individual BAD, and stamps a warning into the script it makes.
 """
 
-import ast
 import json
 import os
 
@@ -66,43 +65,6 @@ TEMPLATE = os.path.join(_HERE, "template_code.py")
 
 MARKER = "@@%s@@"
 TEMPLATE_COMMENT = "#~"
-
-
-def resolve_from_template(names, template_path, output_dir):
-    """Evaluate module-level settings out of the template.
-
-    LORA_SLOTS lives in template_code.py so the generated scripts stay
-    self-contained, but this generator needs it too, for the rank analysis.
-    Rather than keep a second copy that could drift, execute those assignments
-    straight from the template, with the same _HERE/_PROJECT the generated
-    script will compute.
-
-    Settings that do *not* have to be in the template belong in settings.py
-    instead -- TRAINING_SET is one, resolved by training_set_path() below and
-    stamped into each script -- so reach for this only for values a generated
-    script must carry itself.
-    """
-    wanted = set(names)
-    with open(template_path, encoding="utf-8") as handle:
-        source = handle.read()
-
-    here = os.path.abspath(output_dir)
-    namespace = {"os": os, "_HERE": here, "_PROJECT": os.path.dirname(here)}
-    found = {}
-    for node in ast.parse(source).body:
-        if not isinstance(node, ast.Assign):
-            continue
-        # Plain `NAME = ...` only; this skips things like os.environ[...] = ...
-        hit = wanted.intersection(getattr(target, "id", "") for target in node.targets)
-        if hit:
-            exec(compile(ast.Module([node], []), template_path, "exec"), namespace)
-            found.update({name: namespace[name] for name in hit})
-
-    missing = wanted - set(found)
-    if missing:
-        raise SystemExit("no %s assignment found in %s"
-                         % (", ".join(sorted(missing)), template_path))
-    return found
 
 
 def training_set_path(value=None):
@@ -142,24 +104,46 @@ def eval_prompt_count(training_set=None):
     return path, count
 
 
-def slot_ranks(output_dir, template_path=TEMPLATE):
+def lora_slots(slots=None):
+    """{slot: location} with the ones that name a local folder made absolute.
+
+    LORA_SLOTS is a setting rather than a block in the templates, so a slot is
+    repointed in one place and both templates follow, and a sweep records which
+    five adapters it was scored on. A relative entry is taken from this file's
+    folder, the same rule training_set_path() uses -- but only when it really is
+    a folder here; anything else is passed through as written, which is what
+    leaves the door open for an absolute path or a Hub repo id. None means
+    whatever settings.py currently says; callers holding a sweep's stored
+    settings should pass those instead, or a resumed sweep would quietly blend
+    different adapters.
+    """
+    resolved = {}
+    for slot, where in (slots or settings.LORA_SLOTS).items():
+        if not os.path.isabs(where):
+            local = os.path.abspath(os.path.join(_HERE, where))
+            if os.path.isdir(local):
+                where = local
+        resolved[slot] = where
+    return resolved
+
+
+def slot_ranks(slots=None):
     """{slot: rank} read from each adapter's own adapter_config.json.
 
     Ranks are not assumed equal: the five slots may point at LoRAs trained with
     different r values, and cat/svd/linear each treat that differently.
     """
     ranks = {}
-    slots = resolve_from_template(["LORA_SLOTS"], template_path, output_dir)["LORA_SLOTS"]
-    for slot, path in sorted(slots.items()):
+    for slot, path in sorted(lora_slots(slots).items()):
         config_path = os.path.join(path, "adapter_config.json")
         try:
             with open(config_path, encoding="utf-8") as handle:
                 config = json.load(handle)
         except OSError as error:
             raise SystemExit(
-                "slot %s: cannot read %s (%s). Point LORA_SLOTS[%r] in %s at a "
-                "real adapter folder, or fix the path."
-                % (slot, config_path, error.strerror, slot, os.path.basename(template_path))
+                "slot %s: cannot read %s (%s). Point LORA_SLOTS[%r] in settings.py "
+                "at a real adapter folder, or fix the path."
+                % (slot, config_path, error.strerror, slot)
             )
         # Same rule PEFT uses: rank_pattern can raise the rank above r.
         ranks[slot] = max([config["r"]] + list((config.get("rank_pattern") or {}).values()))
@@ -327,7 +311,7 @@ def fill(template_lines, blocks, values):
 
 def render(expression, steps, final, script_name, provenance, label,
            template_lines=None, template_path=TEMPLATE, weight_seed=None,
-           training_set=None):
+           training_set=None, slots=None):
     """The complete text of one runnable script, built from the template.
 
     Callers pass the planning results from plan(); the template supplies
@@ -344,8 +328,9 @@ def render(expression, steps, final, script_name, provenance, label,
     it stamped in here.
 
     `training_set` is what the script's TRAINING_SET becomes, resolved to an
-    absolute path; None takes it from settings.py. main.py passes the sweep's
-    stored value, so a resumed sweep keeps reading the prompts it was created
+    absolute path; None takes it from settings.py. `slots` is the same for
+    LORA_SLOTS. main.py passes the sweep's stored values for both, so a resumed
+    sweep keeps reading the prompts and blending the adapters it was created
     with even if settings.py has since moved on.
     """
     template_lines = (load_template(template_path) if template_lines is None
@@ -366,6 +351,12 @@ def render(expression, steps, final, script_name, provenance, label,
         # Likewise a block: the generated script gets the resolved path as a
         # literal, rather than working it out from where it happens to sit.
         "TRAINING_SET": ["TRAINING_SET = %r" % training_set_path(training_set)],
+        # And likewise the adapters: one resolved entry per slot, in slot order
+        # so two scripts built from the same settings are byte-identical here.
+        "LORA_SLOTS": (["LORA_SLOTS = {"]
+                       + ["    %r: %r," % pair
+                          for pair in sorted(lora_slots(slots).items())]
+                       + ["}"]),
     }
     values = {
         "SCRIPT_NAME": script_name,

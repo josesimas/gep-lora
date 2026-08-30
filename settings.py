@@ -31,6 +31,33 @@ MAX_DEPTH = 4
 BRANCH_PROB = 0.6
 
 
+# --- the adapters being blended --------------------------------------------
+
+# Where each of the five LoRAs the trees refer to lives -- the search space
+# itself, so it belongs with the rest of the knobs rather than in the templates:
+# repoint a slot here and both templates follow, and the sweep records which
+# five adapters its fitness numbers were earned on.
+#
+# One independent entry per slot. A relative path is taken from this file's
+# folder; an absolute one is used as it stands. Anything that is neither -- a
+# Hub repo id, say -- is passed through untouched, which is as far as that has
+# ever worked: every rank check reads the adapter's own adapter_config.json off
+# disk. generate_runs.py resolves these once and writes the result into each
+# generated script, so a script carries real paths rather than working them out
+# from where it happens to sit.
+#
+# These five were trained at different ranks (r=16, 16, 8, 4, 32), which the
+# code handles -- nothing assumes they match, because PEFT's cat sums input
+# ranks, svd takes the max, and linear refuses inputs whose ranks differ.
+LORA_SLOTS = {
+    "L1": "loras/Lora001/my_planning_coach-lora_adapter",
+    "L2": "loras/Lora002/my_planning_coach-lora_adapter",
+    "L3": "loras/Lora003/my_planning_coach-lora_adapter",
+    "L4": "loras/Lora004/my_planning_coach-lora_adapter",
+    "L5": "loras/Lora005/my_planning_coach-lora_adapter",
+}
+
+
 # --- the generated scripts -------------------------------------------------
 
 # Which template generate_runs.py fills. None means its own default,
