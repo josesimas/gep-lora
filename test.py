@@ -33,7 +33,7 @@ from generate_runs import build_order_block, plan, render, slot_ranks
 # ---------------------------------------------------------------------------
 # The individual to try. Set this and run.
 # ---------------------------------------------------------------------------
-CHROMOSOME = "CAT.CAT.CAT.CAT.CAT.L5.L2.L2.L1.L1.L5.w1.w5.w2.w1.w1.w4"
+CHROMOSOME = "CAT.CAT.L1.L5.L4.w3.w3.w2"
 
 # Where the two output files go. Must stay one level below the project folder:
 # a generated script resolves the LoRA paths relative to its own parent
