@@ -13,3 +13,6 @@
 * Create a parallel pipeline that is less batch oriented (process one chromosome only end to end)
 * Explore ways to avoid loading and unloading the same weights more than once
 * Add parallelism to the model evaluation and processing steps 
+    * ~~Done for lora processing~~
+    * TBD for evaluation
+* Run the evaluation step using unsloth and local code instead of querying a remote model
