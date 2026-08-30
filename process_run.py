@@ -13,6 +13,12 @@ means process is the expensive step: a model load per individual, so a
 population of 100 is a long sweep. Keep COUNT small in settings.py while
 iterating, or use --limit.
 
+Separate processes are also what makes them overlappable, and launch_batch()
+runs PROCESS_RUN_BATCH_SIZE of them at once -- the model loads are what a sweep
+spends its time on, and they are independent. The ceiling is fixed rather than
+adaptive: N scripts means N copies of the base model resident together, so the
+number belongs to the machine and is set in settings.py, not guessed at here.
+
 Individuals that fail are recorded, not fatal: a chromosome that cannot run is
 a result, the same as one that can. Only a sweep where nothing at all ran
 returns a failing exit code, since that points at something systemic.
@@ -24,6 +30,7 @@ imports_unsloth() is how the pipeline notices which kind it is looking at and
 drops the venv check accordingly.
 """
 
+import concurrent.futures
 import os
 import re
 import subprocess
@@ -146,6 +153,52 @@ def launch(run_dir, script, timeout):
         err += "\n\n!! killed after %ss (--timeout)\n" % timeout
         code = None
     return code, time.time() - started, out, err
+
+
+def batch_size(value):
+    """How many scripts may run at once, from the setting -> at least 1.
+
+    A sweep created before PROCESS_RUN_BATCH_SIZE existed has no value recorded
+    for it, and a value below 1 is the same request as 1 stated badly; both mean
+    one script at a time rather than an error, since neither says anything about
+    the machine this is now running on.
+    """
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return 1
+
+
+def batches(items, size):
+    """`items` in consecutive groups of at most `size`, in the order given.
+
+    Groups rather than a refilling queue: main.py stores a batch's results
+    before it starts the next one, which is what keeps the database written from
+    one thread and in the order the individuals were selected in.
+    """
+    return [items[start:start + size] for start in range(0, len(items), size)]
+
+
+def launch_batch(run_dir, scripts, timeout):
+    """Run these scripts at once. -> one launch() result each, in `scripts` order.
+
+    Results come back in the order asked for, not the order they finished, so a
+    caller can pair them with the individuals it passed in without the children
+    having to say who they are.
+
+    Threads, not processes: each one only waits on a subprocess, and the work is
+    in the children anyway. The timeout is per script, as it is sequentially --
+    a batch is not killed because one member of it hung.
+
+    The seconds each result carries are still that script's own wall clock, so
+    they overlap and no longer add up to the time the batch took.
+    """
+    if len(scripts) == 1:                       # the sequential case, unchanged
+        return [launch(run_dir, scripts[0], timeout)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(scripts)) as pool:
+        running = [pool.submit(launch, run_dir, script, timeout)
+                   for script in scripts]
+        return [future.result() for future in running]
 
 
 def verdict_of(code):

@@ -12,7 +12,7 @@ Change a value and re-run; nothing else needs editing.
 # --- the population --------------------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 3
+COUNT = 4
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time -- and, since a sweep records what it drew,
@@ -69,6 +69,27 @@ LORA_SLOTS = {
 TEMPLATE = "template_code.py"
 
 
+# --- running the generated scripts -----------------------------------------
+
+# How many generated scripts the process step keeps in flight at once. The
+# scripts are launched in batches of this size and a batch is waited out before
+# the next one starts, so this is a fixed ceiling on concurrency rather than a
+# queue that refills: a batch takes as long as its slowest member.
+#
+# 1 is the old behaviour, one script at a time. Anything higher trades memory
+# for wall clock, and the trade is steep for a real run: every script loads the
+# base model into its own process, so a batch of N is N copies of the model
+# resident at the same time. Set this to what the GPU can actually hold -- an
+# individual that runs out of memory is recorded as a failed execution like any
+# other, so an over-large batch does not stop a sweep, it quietly fills it with
+# failures. Mocked runs (TEMPLATE = "template_code_mocked.py") load nothing and
+# can go much higher.
+#
+# The scripts in a batch share the run folder as their working directory, so
+# they also share the caches unsloth drops there.
+PROCESS_RUN_BATCH_SIZE = 4
+
+
 # --- the blend weights -----------------------------------------------------
 
 # Where the per-individual weight seeds come from. Each individual's script is
@@ -93,7 +114,7 @@ SELECTION_MASTER_SEED = None
 
 # How many individuals each spin of the wheel adds. None means as many as the
 # population already holds, which doubles it: N parents in, N offspring out.
-SELECTION_COUNT = 3
+SELECTION_COUNT = 2
 
 
 # --- mutation --------------------------------------------------------------
@@ -162,7 +183,7 @@ TRAINING_SET = "datasets/poem_lora_dataset.json"
 # individual per generation, so halving it halves the eval half of a sweep --
 # worth turning down while iterating and back up for a real search, remembering
 # that a short eval set makes a noisier fitness signal.
-TRAINING_COUNT = None
+TRAINING_COUNT = 20
 
 
 def snapshot():

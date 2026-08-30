@@ -117,8 +117,8 @@ fitness, elitism, selection, mutation — stopping at the first failure, since
 each step builds on the one before it.
 
 `process` and `evaluate` are the slow ones: `process` executes the generated
-scripts, one base-model load per individual, and `evaluate` then makes one
-grading call per answer. A full `python main.py` is therefore a long operation,
+scripts, one base-model load per individual — `PROCESS_RUN_BATCH_SIZE` of them
+at a time — and `evaluate` then makes one grading call per answer. A full `python main.py` is therefore a long operation,
 and `python main.py population trees runs` stops short of both. `fitness`,
 `elitism`, `selection` and `mutation`, which follow them, work over what they
 stored and cost nothing.
@@ -341,6 +341,27 @@ Each individual runs as a **separate process** — every script loads the base
 model at import and attaches its own adapters, so they cannot share an
 interpreter. That makes this the expensive step: one model load per individual.
 `--limit 3` is the way to smoke-test before committing to a full sweep.
+
+Separate processes are also what lets them overlap. `PROCESS_RUN_BATCH_SIZE` in
+`settings.py` is how many run **at once**: the selected individuals are cut into
+consecutive batches of that size, and a batch is waited out before the next one
+starts — a fixed ceiling on concurrency, not a queue that refills, so a batch
+takes as long as its slowest member. `1` is one at a time, and the output then
+reads exactly as it did before batching existed.
+
+The ceiling is fixed because the cost is fixed: a batch of N is N copies of the
+base model resident at the same time. Set it to what the GPU can actually hold.
+An individual that runs out of memory is recorded as a failed execution like any
+other, so too large a batch does not stop a sweep — it quietly fills it with
+failures. A mocked sweep loads nothing and can go far higher.
+
+Results are stored in the order the batch was asked for rather than the order
+its members finished, and only from the driver's own thread, so the database is
+written exactly as it was one at a time; the commit is still per individual, so
+an interrupted batch keeps whatever already came back. The `seconds` on an
+execution is that script's own wall clock, so within a batch they overlap and no
+longer add up to the time the step took. The scripts in a batch share the run
+folder as their working directory, and so share the caches unsloth drops there.
 
 Each run becomes an `executions` row — exit code, verdict, seconds, the weight
 seed it was stamped with, the weights it drew, and the whole of stdout and stderr

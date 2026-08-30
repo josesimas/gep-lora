@@ -291,7 +291,8 @@ def _clear_scripts(context, rows):
 
 def step_process(context):
     """Execute each script -> executions and exchanges."""
-    conn, run_id, options = context.conn, context.run_id, context.options
+    conn, run_id = context.conn, context.run_id
+    conf, options = context.conf, context.options
     rows = [row for row in store.individuals(conn, run_id) if row["script_source"]]
     if not rows:
         raise SystemExit("run %d holds no generated scripts. Run the runs step first."
@@ -342,40 +343,74 @@ def step_process(context):
         raise SystemExit("nothing to run: all %d individuals are marked BAD. "
                          "Pass --include-blocked to run them anyway." % len(rows))
 
+    # How many run at once. The sweep's own value, so a batch size cannot be
+    # changed under a sweep already under way; a sweep created before this knob
+    # existed falls back to what settings.py says now.
+    size = process_run.batch_size(
+        conf.get("PROCESS_RUN_BATCH_SIZE", config.PROCESS_RUN_BATCH_SIZE))
+    groups = process_run.batches(selected, size)
+
     print("running %d of %d individuals%s%s"
           % (len(selected), len(rows),
              " (%d skipped as BAD)" % blocked if blocked else "",
              " (%d unchanged since their last run)" % len(unchanged)
              if unchanged else ""))
-    print("each one loads the base model, so this takes a while\n" if real
-          else "these are mocked scripts: nothing is loaded, so this is quick\n")
+    if real:
+        # Say what a batch costs where it is paid: every script in one is
+        # another copy of the base model resident at the same time.
+        print("each one loads the base model, so this takes a while%s\n"
+              % ("" if size == 1 else
+                 " -- %d of them loaded at once, in batches of %d" % (size, size)))
+    else:
+        print("these are mocked scripts: nothing is loaded, so this is quick\n")
 
     failures = 0
     started = time.time()
-    for number, row in enumerate(selected, 1):
-        print("[%d/%d] %s  %s" % (number, len(selected), row["script_name"],
-                                  row["chromosome"]))
-        code, seconds, out, err = process_run.launch(
-            context.run_dir, row["script_name"], options.timeout)
-        verdict = process_run.verdict_of(code)
-        if code != 0:
-            failures += 1
+    number = 0
+    for position, group in enumerate(groups, 1):
+        # A whole batch is announced before it is launched, so a long wait says
+        # what it is waiting for.
+        first = number + 1
+        for offset, row in enumerate(group):
+            print("[%d/%d] %s  %s" % (first + offset, len(selected),
+                                      row["script_name"], row["chromosome"]))
+        if size > 1:
+            print("        batch %d/%d: %d running at once"
+                  % (position, len(groups), len(group)))
 
-        transcript = process_run.exchanges(out)
-        execution_id = store.add_execution(
-            conn, row["id"], seconds, code, verdict, row["weight_seed"],
-            process_run.drawn_weights(out), out, err)
-        store.add_exchanges(conn, execution_id, transcript)
-        # Commit per individual, so an interrupted sweep keeps what it has done.
-        conn.commit()
+        results = process_run.launch_batch(
+            context.run_dir, [row["script_name"] for row in group],
+            options.timeout)
 
-        print("        %-9s %6.1fs  %d exchange(s) -> execution %d"
-              % (verdict, seconds, len(transcript), execution_id))
-        if code != 0:
-            # Show why, so a systemic problem is obvious without a query.
-            tail = [line for line in (out + err).splitlines() if line.strip()][-1:]
-            if tail:
-                print("        %s" % tail[0][:100])
+        # Stored in the order they were asked for rather than the order they
+        # finished, and from this thread only: the children print to their own
+        # pipes and nothing but this loop touches the database.
+        for row, (code, seconds, out, err) in zip(group, results):
+            number += 1
+            verdict = process_run.verdict_of(code)
+            if code != 0:
+                failures += 1
+
+            transcript = process_run.exchanges(out)
+            execution_id = store.add_execution(
+                conn, row["id"], seconds, code, verdict, row["weight_seed"],
+                process_run.drawn_weights(out), out, err)
+            store.add_exchanges(conn, execution_id, transcript)
+            # Commit per individual, so an interrupted sweep keeps what it has
+            # done -- a half-finished batch still leaves the ones that came back.
+            conn.commit()
+
+            # In a batch these lines no longer sit under their own heading, so
+            # they carry the script name; one at a time they read as before.
+            print("        %s%-9s %6.1fs  %d exchange(s) -> execution %d"
+                  % ("" if size == 1 else row["script_name"] + "  ",
+                     verdict, seconds, len(transcript), execution_id))
+            if code != 0:
+                # Show why, so a systemic problem is obvious without a query.
+                tail = [line for line in (out + err).splitlines()
+                        if line.strip()][-1:]
+                if tail:
+                    print("        %s" % tail[0][:100])
 
     print("\nran %d in %.1fs, %d failed" % (len(selected), time.time() - started, failures))
 

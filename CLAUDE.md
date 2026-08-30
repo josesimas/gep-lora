@@ -102,6 +102,16 @@ python main.py process --limit 3
 
 Smoke-test the expensive step against the latest sweep. `process` costs one base-model load
 per individual, in a separate process each (the scripts cannot share an interpreter).
+`PROCESS_RUN_BATCH_SIZE` in `settings.py` is how many of those processes run **at once** --
+`process_run.batches()` cuts the selected individuals into consecutive groups of that size
+and `launch_batch()` runs a group together, waiting it out before starting the next. A fixed
+ceiling, not a refilling queue, and one paid in memory: a batch of N holds N copies of the
+base model at the same time, and an individual that runs out of memory is recorded as a
+failed execution like any other rather than stopping the sweep. `1` restores the old
+one-at-a-time behaviour, output included. Results are stored in the order the batch was
+asked for and only from the driver thread, so the database is written exactly as it was
+sequentially; the per-individual commit means an interrupted batch keeps what came back.
+An execution's `seconds` is that script's own wall clock, so within a batch they overlap.
 
 Dry-run the whole pipeline by setting `TEMPLATE = "template_code_mocked.py"` in
 `settings.py`. The mocked template produces the same scripts minus the model: random
