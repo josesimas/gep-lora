@@ -168,28 +168,81 @@ MAX_SEQ = 2048
 #~ prompts, it only invents the answers to them.
 # @@TRAINING_SET@@
 
+#~ Filled from TRAINING_COUNT in settings.py, exactly as in template_code.py --
+#~ the mock is judged on the same slice of the same prompts, it only invents the
+#~ answers to them. A mocked sweep is where a change to the cap is cheapest to
+#~ see, since nothing is loaded to see it.
+# @@TRAINING_COUNT@@
 
-def _prompts(path):
-    """One prompt per line. Surrounding quotes are optional, blanks are skipped."""
-    prompts = []
+
+def _prompt_of(line, path, number):
+    """One eval prompt, from one non-blank line. Same reading as the real
+    template: a JSON record's first user turn, or the line as written.
+
+    The mock invents the answers, but it has to be asked the same questions --
+    a mocked transcript is meant to have the shape of a real one.
+    """
+    if line[0] == "{":
+        try:
+            record = json.loads(line)
+        except ValueError as error:
+            raise SystemExit(
+                f"{path} line {number}: starts like a JSON record but will not "
+                f"parse ({error})."
+            )
+        messages = record.get("messages") if isinstance(record, dict) else None
+        if not isinstance(messages, list):
+            raise SystemExit(
+                f"{path} line {number}: a JSON eval record needs a 'messages' "
+                f"list, the shape datasets/*.json use."
+            )
+        for message in messages:
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+        raise SystemExit(
+            f"{path} line {number}: no user turn with any text in it, so there "
+            f"is nothing to ask."
+        )
+
+    if len(line) > 1 and line[0] == line[-1] and line[0] in "\"'":
+        line = line[1:-1]
+    return line
+
+
+def _prompts(path, count=None):
+    """One prompt per non-blank line, capped at `count`.
+
+    `count` keeps the first `count` of them and drops the rest; None keeps all.
+    """
     try:
         with open(path, encoding="utf-8") as handle:
             lines = handle.readlines()
     except OSError as error:
         raise SystemExit(f"cannot read the eval prompts from {path}: {error.strerror}")
-    for line in lines:
+
+    prompts = []
+    for number, line in enumerate(lines, start=1):
         line = line.strip()
         if not line:
             continue
-        if len(line) > 1 and line[0] == line[-1] and line[0] in "\"'":
-            line = line[1:-1]
-        prompts.append(line)
+        if not prompts and line[0] == "[":
+            raise SystemExit(
+                f"{path} looks like one big JSON array. The eval file is read a "
+                f"line at a time -- write it as one JSON record per line (JSON "
+                f"Lines), or as plain one-prompt-per-line text."
+            )
+        prompts.append(_prompt_of(line, path, number))
     if not prompts:
         raise SystemExit(f"{path} has no prompts in it")
-    return prompts
+    # Slicing past the end is not an error, so a cap larger than the file is
+    # already the "or all of them" case.
+    return prompts if count is None else prompts[:count]
 
 
-EVAL_PROMPTS = _prompts(TRAINING_SET)
+EVAL_PROMPTS = _prompts(TRAINING_SET, TRAINING_COUNT)
 
 EXPRESSION = "@@EXPRESSION@@"
 

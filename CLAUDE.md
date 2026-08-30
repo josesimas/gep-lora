@@ -208,14 +208,15 @@ ranks is expected and is culled by the usual `BAD` path.
   build order, so a step never references a name defined after it. Each *occurrence* of an
   `L*` gets its own adapter name (`n1_L2`, `n4_L1`), so one slot may appear several times at
   different weights.
-- `training_set_path()` / `lora_slots()` — the eval prompts file and the five adapter
-  paths, from `TRAINING_SET` and `LORA_SLOTS` in `settings.py` rather than from either
-  template. A relative value is resolved against the repo folder — for a slot, only when it
+- `training_set_path()` / `training_count()` / `lora_slots()` — the eval prompts file, the
+  cap on how many of its records are used, and the five adapter
+  paths, from `TRAINING_SET`, `TRAINING_COUNT` and `LORA_SLOTS` in `settings.py` rather than
+  from either template. A relative value is resolved against the repo folder — for a slot, only when it
   really names a folder there, so an absolute path or a Hub repo id passes through as
   written. Both resolved values are stamped into each script as literals, so a script
   carries real paths instead of walking up from wherever it lands. `main.py` passes the
-  *sweep's stored* values, so editing `settings.py` cannot move the eval set or swap the
-  adapters under a sweep already running. **There is no `resolve_from_template()` any
+  *sweep's stored* values, so editing `settings.py` cannot move the eval set, change how
+  much of it counts, or swap the adapters under a sweep already running. **There is no `resolve_from_template()` any
   more** — nothing reads constants back out of the templates, because nothing that varies
   lives there. A new knob goes in `settings.py` and reaches the script through a marker.
 - `render()`/`fill()` — substitutes `@@MARKER@@`s. An unfilled marker raises rather than
@@ -226,14 +227,31 @@ as **valid Python** so editors, linters and `python -m compileall` still work on
 `@@NAME@@` inline; a line that is only `@@NAME@@` or `# @@NAME@@` becomes a block; a line
 starting with `#~` is a template-only note that never reaches the output. Blocks: `TREE`,
 `BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`, `WEIGHT_SEED`, `TRAINING_SET`,
-`LORA_SLOTS`. Inline: `SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`, `LEAF_COUNT`,
+`TRAINING_COUNT`, `LORA_SLOTS`. Inline: `SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`, `LEAF_COUNT`,
 `FINAL_ADAPTER`, `FINAL_RANK`.
 
-`WEIGHT_SEED`, `TRAINING_SET` and `LORA_SLOTS` are blocks rather than inline markers because
-each stands in for the assignment itself, so a generated script gets `WEIGHT_SEED = 12345`
-(or `= None`), `TRAINING_SET = '...'` and the whole `LORA_SLOTS = {...}` dict as plain
-literals. They are why those three are the names a linter calls undefined in both
-templates.
+`WEIGHT_SEED`, `TRAINING_SET`, `TRAINING_COUNT` and `LORA_SLOTS` are blocks rather than
+inline markers because each stands in for the assignment itself, so a generated script gets
+`WEIGHT_SEED = 12345` (or `= None`), `TRAINING_SET = '...'`, `TRAINING_COUNT = 10` (or
+`= None`) and the whole `LORA_SLOTS = {...}` dict as plain literals. They are why those four
+are the names a linter calls undefined in both templates.
+
+The eval file is read **a line at a time**, in either of two shapes, told apart by the line
+itself rather than by its extension: a **JSON record per line** carrying a `messages` list
+(what `datasets/*.json` hold, and what `create_lora.py` trains on) — the prompt is its first
+`user` turn — or **plain one-prompt-per-line text**, quotes optional. For a JSON record only
+the user turn is asked; the assistant turn beside it is somebody else's answer to the same
+question, and sending it would be showing the model the answer and then scoring the reply.
+A whole-file JSON array is rejected with a message saying so, by `eval_prompt_count()` at
+generation time and by the templates at startup, because a line count cannot describe one.
+
+`TRAINING_COUNT` caps the eval set at its **first N records** — the top of the file, not a
+sample of it, and the same N for every individual, because fitness numbers are only
+comparable when they were earned answering the same questions. A cap larger than the file
+is not an error; it just means all of them, which is also what `None` means. It is the
+cheapest knob in `settings.py`: one prompt is one `generate()` call per individual per
+generation, so turning it down while iterating cuts the eval half of a sweep
+proportionally — at the cost of a noisier fitness signal.
 
 **Change what every generated script does by editing `template_code.py`, then re-running
 `python main.py runs`.** Only touch the generator when the new part varies per individual.

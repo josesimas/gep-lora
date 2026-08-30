@@ -147,6 +147,23 @@ DB_PATH = "run_db/gep.sqlite3"
 # script no longer has to find this file by walking up from itself.
 TRAINING_SET = "datasets/poem_lora_dataset.json"
 
+# How many records of TRAINING_SET each run is judged on. The first
+# TRAINING_COUNT of them, in file order, or the whole file when it holds fewer
+# -- and None for no cap at all, which is every record.
+#
+# The top N rather than a sample of N, and the same N for everyone: fitness only
+# compares across individuals because they all answered the same questions, so a
+# per-individual draw would make two scores incomparable and a re-run of one
+# individual incomparable with itself. File order is already arbitrary; taking a
+# prefix of it keeps that arbitrariness fixed instead of adding a second source
+# of it.
+#
+# This is the cheapest knob in the file. Every prompt is one generate() call per
+# individual per generation, so halving it halves the eval half of a sweep --
+# worth turning down while iterating and back up for a real search, remembering
+# that a short eval set makes a noisier fitness signal.
+TRAINING_COUNT = None
+
 
 def snapshot():
     """Every setting above as {name: value}, for recording what a run used."""

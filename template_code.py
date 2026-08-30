@@ -131,29 +131,99 @@ MAX_SEQ = 2048
 #~ undefined here and finds defined in every file generated from this.
 # @@TRAINING_SET@@
 
+# How many of those records this individual is judged on: the first
+# TRAINING_COUNT, or all of them when the file holds fewer or the cap is None.
+#~ Whole-line marker again, filled from TRAINING_COUNT in settings.py. The cap
+#~ is applied here rather than by handing the script a pre-trimmed list, so a
+#~ generated script still reads the eval file itself and still shows how many of
+#~ it it used. Fourth and last of the names a linter calls undefined in this
+#~ template and finds defined in every file generated from it.
+# @@TRAINING_COUNT@@
 
-def _prompts(path):
-    """One prompt per line. Surrounding quotes are optional, blanks are skipped."""
-    prompts = []
+
+def _prompt_of(line, path, number):
+    """One eval prompt, from one non-blank line of the eval file.
+
+    Two shapes, told apart by the line itself rather than by the file's
+    extension:
+
+      * a JSON object carrying a "messages" list -- the shape datasets/*.json
+        use and the shape create_lora.py trains on. The prompt is the first
+        user turn. The assistant turn sitting beside it is somebody else's
+        answer to the same question, and must not reach the model: handing it
+        over would be showing the model the answer and then scoring it on the
+        reply.
+      * anything else -- the line as written, surrounding quotes optional,
+        which is the plain one-prompt-per-line file.
+    """
+    if line[0] == "{":
+        try:
+            record = json.loads(line)
+        except ValueError as error:
+            raise SystemExit(
+                f"{path} line {number}: starts like a JSON record but will not "
+                f"parse ({error})."
+            )
+        messages = record.get("messages") if isinstance(record, dict) else None
+        if not isinstance(messages, list):
+            raise SystemExit(
+                f"{path} line {number}: a JSON eval record needs a 'messages' "
+                f"list, the shape datasets/*.json use."
+            )
+        for message in messages:
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+        raise SystemExit(
+            f"{path} line {number}: no user turn with any text in it, so there "
+            f"is nothing to ask."
+        )
+
+    # Tolerate the quoted form a plain prompt file may use, and a bare one.
+    if len(line) > 1 and line[0] == line[-1] and line[0] in "\"'":
+        line = line[1:-1]
+    return line
+
+
+def _prompts(path, count=None):
+    """One prompt per non-blank line, capped at `count`.
+
+    `count` keeps the first `count` of them and drops the rest; None keeps all.
+    The top of the file rather than a sample of it, because every individual has
+    to answer the same questions for their scores to mean anything next to each
+    other.
+    """
     try:
         with open(path, encoding="utf-8") as handle:
             lines = handle.readlines()
     except OSError as error:
         raise SystemExit(f"cannot read the eval prompts from {path}: {error.strerror}")
-    for line in lines:
+
+    prompts = []
+    for number, line in enumerate(lines, start=1):
         line = line.strip()
         if not line:
             continue
-        # Tolerate the quoted form the file currently uses, and a bare one.
-        if len(line) > 1 and line[0] == line[-1] and line[0] in "\"'":
-            line = line[1:-1]
-        prompts.append(line)
+        if not prompts and line[0] == "[":
+            # A whole-file JSON array cannot be read a line at a time, and
+            # treating its first line as a prompt would quietly ask the model
+            # "[". Say so instead: one record per line is the supported shape.
+            raise SystemExit(
+                f"{path} looks like one big JSON array. The eval file is read a "
+                f"line at a time -- write it as one JSON record per line (JSON "
+                f"Lines), or as plain one-prompt-per-line text."
+            )
+        prompts.append(_prompt_of(line, path, number))
     if not prompts:
         raise SystemExit(f"{path} has no prompts in it")
-    return prompts
+    # Slicing past the end is not an error, which is exactly the "or all of
+    # them" case -- a cap larger than the file needs no special handling.
+    return prompts if count is None else prompts[:count]
 
 
-EVAL_PROMPTS = _prompts(TRAINING_SET)
+EVAL_PROMPTS = _prompts(TRAINING_SET, TRAINING_COUNT)
 
 EXPRESSION = "@@EXPRESSION@@"
 

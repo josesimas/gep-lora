@@ -85,23 +85,70 @@ def training_set_path(value=None):
     return os.path.abspath(value)
 
 
-def eval_prompt_count(training_set=None):
-    """How many prompts the generated scripts will find, or a clear failure.
+def training_count(value=None):
+    """The eval-set cap as the templates want it: a positive int, or None.
 
-    Counts non-blank lines rather than re-parsing: the template owns the quote
-    handling, and every generated script would fail at startup on a missing or
-    empty file, so it is worth catching here instead.
+    Same contract as training_set_path(): None means whatever settings.py
+    currently says, and a caller holding a sweep's stored settings passes that
+    instead, so a resumed sweep keeps being judged on as many prompts as it was
+    created with. Settings.TRAINING_COUNT of None is no cap.
+
+    Validated here rather than in the templates because a bad value should stop
+    the generation step, not turn up inside every generated script.
+    """
+    value = settings.TRAINING_COUNT if value is None else value
+    if value is None:
+        return None
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        raise SystemExit("TRAINING_COUNT must be a whole number or None, got %r" % value)
+    # int() would quietly turn 2.5 into 2, and a fractional count of prompts is
+    # a typo rather than an intention worth honouring.
+    if count != float(value):
+        raise SystemExit("TRAINING_COUNT must be a whole number or None, got %r" % value)
+    if count < 1:
+        raise SystemExit(
+            "TRAINING_COUNT must be at least 1, got %d. None is how the cap is "
+            "turned off; 0 would leave nothing to score." % count
+        )
+    return count
+
+
+def eval_prompt_count(training_set=None, count=None):
+    """(path, used, total) for the eval set, or a clear failure.
+
+    Counts non-blank lines rather than re-parsing: the template owns reading a
+    line, and every generated script would fail at startup on a missing or empty
+    file, so it is worth catching here instead. One line is one prompt in both
+    shapes the templates accept -- a JSON record per line, or plain text -- so
+    the count holds without this having to know which it is looking at.
+
+    `used` is what TRAINING_COUNT leaves of `total` -- the same min() the
+    templates apply, computed here so the runs step can report what a sweep will
+    actually be scored on rather than what the file happens to hold.
     """
     path = training_set_path(training_set)
     try:
         with open(path, encoding="utf-8") as handle:
-            count = sum(1 for line in handle if line.strip())
+            lines = [line for line in handle if line.strip()]
     except OSError as error:
         raise SystemExit("cannot read the eval prompts from %s (%s). Every generated "
                          "script reads that file at startup." % (path, error.strerror))
-    if not count:
+    total = len(lines)
+    if not total:
         raise SystemExit("%s has no prompts in it" % path)
-    return path, count
+    # The one shape that would slip past a line count: a whole-file JSON array
+    # is one record spread over many lines, or many records on one. Caught here
+    # so it costs one clear failure rather than one per generated script.
+    if lines[0].lstrip().startswith("["):
+        raise SystemExit(
+            "%s looks like one big JSON array. The generated scripts read the "
+            "eval file a line at a time -- write it as one JSON record per line "
+            "(JSON Lines), or as plain one-prompt-per-line text." % path
+        )
+    cap = training_count(count)
+    return path, (total if cap is None else min(cap, total)), total
 
 
 def lora_slots(slots=None):
@@ -311,7 +358,7 @@ def fill(template_lines, blocks, values):
 
 def render(expression, steps, final, script_name, provenance, label,
            template_lines=None, template_path=TEMPLATE, weight_seed=None,
-           training_set=None, slots=None):
+           training_set=None, slots=None, count=None):
     """The complete text of one runnable script, built from the template.
 
     Callers pass the planning results from plan(); the template supplies
@@ -329,14 +376,18 @@ def render(expression, steps, final, script_name, provenance, label,
 
     `training_set` is what the script's TRAINING_SET becomes, resolved to an
     absolute path; None takes it from settings.py. `slots` is the same for
-    LORA_SLOTS. main.py passes the sweep's stored values for both, so a resumed
-    sweep keeps reading the prompts and blending the adapters it was created
-    with even if settings.py has since moved on.
+    LORA_SLOTS, and `count` for TRAINING_COUNT. main.py passes the sweep's
+    stored values for all three, so a resumed sweep keeps reading the prompts,
+    reading as many of them, and blending the adapters it was created with even
+    if settings.py has since moved on.
     """
     template_lines = (load_template(template_path) if template_lines is None
                       else template_lines)
     root, _ = decode(expression)
     leaves = [step for step in steps if step.kind == "leaf"]
+    # Resolved once: the block below wants it, and it validates, so a bad
+    # TRAINING_COUNT fails here rather than in every script rendered after it.
+    cap = training_count(count)
 
     blocks = {
         "TREE": ["    %s" % ".".join(row) for row in levels(root)],
@@ -351,6 +402,10 @@ def render(expression, steps, final, script_name, provenance, label,
         # Likewise a block: the generated script gets the resolved path as a
         # literal, rather than working it out from where it happens to sit.
         "TRAINING_SET": ["TRAINING_SET = %r" % training_set_path(training_set)],
+        # And the cap on it, as a literal for the same reason: the script slices
+        # the prompts it read, so it carries the number rather than looking it
+        # up in a settings.py that may have moved on since.
+        "TRAINING_COUNT": ["TRAINING_COUNT = %s" % cap],
         # And likewise the adapters: one resolved entry per slot, in slot order
         # so two scripts built from the same settings are byte-identical here.
         "LORA_SLOTS": (["LORA_SLOTS = {"]

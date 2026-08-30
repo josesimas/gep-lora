@@ -218,7 +218,10 @@ def step_runs(context):
     # template; the generated scripts read them at startup, so fail here if they
     # cannot be read at all.
     training_set = generate_runs.training_set_path(context.conf.get("TRAINING_SET"))
-    prompts_path, prompt_count = generate_runs.eval_prompt_count(training_set)
+    # ...and so does the cap on how many of them each script uses.
+    count = context.conf.get("TRAINING_COUNT")
+    prompts_path, prompt_count, prompt_total = generate_runs.eval_prompt_count(
+        training_set, count)
 
     master = context.conf["WEIGHT_MASTER_SEED"]
     runnable = 0
@@ -240,6 +243,7 @@ def step_runs(context):
             weight_seed=weight_seed,
             training_set=training_set,
             slots=slots,
+            count=count,
         )
         broken = any(step.broken for step in steps)
         runnable += not broken
@@ -251,7 +255,12 @@ def step_runs(context):
     print("stored %d scripts in run %d (from %s)"
           % (len(rows), run_id, os.path.basename(context.template)))
     print("slot ranks: %s" % ", ".join("%s=%d" % pair for pair in sorted(ranks.items())))
-    print("eval prompts: %d from %s" % (prompt_count, os.path.basename(prompts_path)))
+    # Says "10 of 50" when TRAINING_COUNT is holding some back, so the number a
+    # sweep is actually scored on is never guessed at from the file's size.
+    print("eval prompts: %d%s from %s"
+          % (prompt_count,
+             "" if prompt_count == prompt_total else " of %d" % prompt_total,
+             os.path.basename(prompts_path)))
     print("%d runnable, %d blocked by PEFT's equal-rank rule for linear"
           % (runnable, len(rows) - runnable))
     print("wrote %d script file(s) to %s" % (written, context.run_dir))
