@@ -113,6 +113,21 @@ asked for and only from the driver thread, so the database is written exactly as
 sequentially; the per-individual commit means an interrupted batch keeps what came back.
 An execution's `seconds` is that script's own wall clock, so within a batch they overlap.
 
+`process` **streams** its children rather than collecting them at the end: `launch()` runs
+the script under `Popen` with `-u`, drains stdout and stderr on a thread each, and calls
+`on_line` per stdout line plus `on_tick` every `TICK` seconds so a silence can be reported
+too. `process_run.Progress` turns that into the occasional line -- the model coming ready
+(always, with the blend's rank), the last prompt starting (always), and the running
+`prompt k/N` throttled to one per `PROCESS_RUN_PROGRESS_SECONDS` per script (`0` = milestones
+only). It formats; `main.py` prints, under a lock, because the callbacks arrive on the
+children's drain threads. **The transcript is never echoed** -- it belongs in the database.
+A killed script now keeps the output it had already printed, so a timeout stores a partial
+transcript rather than an empty one.
+
+`context.generation` ("2/5", or None) is set by `continue_run.py` around each generation and
+read only by `main.run()`'s step banner and the batch line. Display only: no step may behave
+differently in one generation than another, and nothing stores it.
+
 Dry-run the whole pipeline by setting `TEMPLATE = "template_code_mocked.py"` in
 `settings.py`. The mocked template produces the same scripts minus the model: random
 answers, random qualities, no GPU, and no judge. Use it whenever the thing under test is

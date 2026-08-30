@@ -71,6 +71,7 @@ import argparse
 import os
 import random
 import sys
+import threading
 import time
 from collections import namedtuple
 
@@ -96,7 +97,8 @@ _SEED_LIMIT = 2 ** 31 - 1
 class Context:
     """What every step needs: the database, the sweep, and the options."""
 
-    __slots__ = ("conn", "run_id", "conf", "run_dir", "template", "options")
+    __slots__ = ("conn", "run_id", "conf", "run_dir", "template", "options",
+                 "generation")
 
     def __init__(self, conn, run_id, conf, run_dir, template, options):
         self.conn = conn
@@ -105,6 +107,10 @@ class Context:
         self.run_dir = run_dir
         self.template = template      # absolute path to the template it fills
         self.options = options        # the parsed command line
+        # "2/5" while continue_run.py is working through its generations, None
+        # for a single pass. Nothing reads it but the banners: a generation is
+        # not stored, and a step must not start behaving differently in one.
+        self.generation = None
 
 
 # --- the settings a sweep runs under --------------------------------------
@@ -350,6 +356,31 @@ def step_process(context):
         conf.get("PROCESS_RUN_BATCH_SIZE", config.PROCESS_RUN_BATCH_SIZE))
     groups = process_run.batches(selected, size)
 
+    # How many prompts each script has to get through, so a progress line can
+    # say 12/50 rather than 12. Only the counting is done here -- an eval file
+    # that cannot be read is every script's failure to report, not this step's,
+    # so it costs the total and nothing else.
+    try:
+        _, prompts, _ = generate_runs.eval_prompt_count(
+            conf.get("TRAINING_SET"), conf.get("TRAINING_COUNT"))
+    except SystemExit:
+        prompts = 0
+    every = conf.get("PROCESS_RUN_PROGRESS_SECONDS",
+                     config.PROCESS_RUN_PROGRESS_SECONDS)
+
+    # Progress arrives on the threads draining the children, several at once in
+    # a batch, so one lock owns the console for a whole line. Everything else
+    # printed by this step is on this thread, between batches, and cannot
+    # collide with it.
+    console = threading.Lock()
+
+    def say(script, message):
+        with console:
+            print("        %s%s" % ("" if size == 1 else script + "  ", message))
+
+    def watch(script):
+        return process_run.Progress(script, prompts, every, say)
+
     print("running %d of %d individuals%s%s"
           % (len(selected), len(rows),
              " (%d skipped as BAD)" % blocked if blocked else "",
@@ -375,12 +406,14 @@ def step_process(context):
             print("[%d/%d] %s  %s" % (first + offset, len(selected),
                                       row["script_name"], row["chromosome"]))
         if size > 1:
-            print("        batch %d/%d: %d running at once"
-                  % (position, len(groups), len(group)))
+            print("        %sbatch %d/%d: %d running at once"
+                  % ("" if not context.generation
+                     else "gen %s, " % context.generation,
+                     position, len(groups), len(group)))
 
         results = process_run.launch_batch(
             context.run_dir, [row["script_name"] for row in group],
-            options.timeout)
+            options.timeout, watch)
 
         # Stored in the order they were asked for rather than the order they
         # finished, and from this thread only: the children print to their own
@@ -774,7 +807,10 @@ def run(steps, context):
     started = time.time()
     for number, step in enumerate(steps, 1):
         print("=" * 70)
-        print("[%d/%d] %s -- %s" % (number, len(steps), step.name, step.description))
+        print("[%d/%d]%s %s -- %s"
+              % (number, len(steps),
+                 "" if not context.generation else " gen %s" % context.generation,
+                 step.name, step.description))
         print("=" * 70)
         step_started = time.time()
         try:

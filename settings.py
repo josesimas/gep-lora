@@ -89,6 +89,22 @@ TEMPLATE = "template_code.py"
 # they also share the caches unsloth drops there.
 PROCESS_RUN_BATCH_SIZE = 4
 
+# How often a running script says where it has got to, in seconds. A generated
+# script prints nothing at all while it loads the base model and then one
+# question-and-answer pair per eval prompt, so left to itself the console shows
+# a long hang and then a wall of transcript. The process step reads that output
+# as it arrives and reports a line for that script every so often instead: the
+# prompt it is on, or that it is still loading.
+#
+# This is the cadence, not the detail. Milestones -- the model coming ready, the
+# last prompt starting -- are one line each and are always said; the running
+# count waits for this many seconds to have passed since that script last said
+# anything, so a fifty-prompt run speaks a handful of times rather than fifty.
+# Turn it down to watch a run closely, up for a quieter log, and to 0 for the
+# milestones alone. The transcript itself is never echoed -- it goes to the
+# database, and store.py --show reads it back.
+PROCESS_RUN_PROGRESS_SECONDS = 30
+
 
 # --- the blend weights -----------------------------------------------------
 

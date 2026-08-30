@@ -363,6 +363,50 @@ execution is that script's own wall clock, so within a batch they overlap and no
 longer add up to the time the step took. The scripts in a batch share the run
 folder as their working directory, and so share the caches unsloth drops there.
 
+### Watching it run
+
+A generated script says nothing at all while it loads the base model, then
+prints one question-and-answer pair per eval prompt. Collected and shown at the
+end, that is a console that hangs for minutes and then scrolls a transcript
+past. So `process` reads each child as it runs and reports where it has got to:
+
+```
+[1/6] run_001.py  CAT.SVD.L1.L2.L4.w3.w3.w2
+[2/6] run_002.py  CAT.L5.SVD.w1.L1.L1.w2.w2
+        gen 2/5, batch 1/3: 2 running at once
+        run_001.py  still loading the base model, 30s
+        run_002.py  still loading the base model, 30s
+        run_001.py  model ready, blend rank 24, 1m12s
+        run_002.py  model ready, blend rank 16, 1m20s
+        run_001.py  prompt 7/50, 1m44s
+        run_002.py  prompt 6/50, 1m52s
+        run_001.py  prompt 50/50, 8m03s
+        run_001.py  ok         8m11s  50 exchange(s) -> execution 31
+```
+
+Two milestones are always said, being one line each: the model coming ready
+(with the rank of the blend it built) and the last prompt starting. Between
+them the running count is throttled — a script says where it is only once
+`PROCESS_RUN_PROGRESS_SECONDS` (default 30) have passed since it last said
+anything, so a fifty-prompt run speaks a handful of times rather than fifty.
+The same throttle breaks a silence: a script that has printed nothing for that
+long is reported as still loading, or still on the prompt it was on. `0` leaves
+the milestones and drops the running count.
+
+The transcript itself is never echoed — it goes to the database, and
+`store.py --show` reads it back. What is on screen is where things are, not what
+was said.
+
+The step banner carries the generation while `continue_run.py` is working
+through them (`[3/8] gen 2/5 process -- ...`), and so does each batch line,
+because the generation header scrolls away during the part that takes the hours.
+It is display only: no step behaves differently in one generation than another,
+and nothing about it is stored.
+
+Streaming the children changed one stored result for the better: a script killed
+by `--timeout` now keeps what it had already printed, so a timeout stores the
+exchanges that did come back instead of an empty transcript.
+
 Each run becomes an `executions` row — exit code, verdict, seconds, the weight
 seed it was stamped with, the weights it drew, and the whole of stdout and stderr
 — with one `exchanges` row per question:

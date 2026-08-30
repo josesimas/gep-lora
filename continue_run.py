@@ -178,6 +178,10 @@ def evolve(conn, run_id, conf, generations, options):
 
     for number in range(1, generations + 1):
         size = len(store.individuals(conn, run_id))
+        # Which generation this is, for the step banners inside it: the header
+        # below scrolls away during process, which is the part that takes the
+        # hours. It is display only -- no step reads it, and nothing stores it.
+        context.generation = "%d/%d" % (number, generations)
         print("#" * 70)
         print("# generation %d of %d -- population %d" % (number, generations, size))
         print("#" * 70)
