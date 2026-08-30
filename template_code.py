@@ -119,10 +119,17 @@ def _rank(adapter_dir):
 
 MAX_SEQ = 2048
 
-# The prompts this individual is judged on, read from training_set.txt rather
+# The prompts this individual is judged on, read from a file at startup rather
 # than baked in, so the eval set can change without regenerating any of these
 # scripts.
-TRAINING_SET = os.path.join(_PROJECT, "training_set.txt")
+#~ Whole-line marker, like WEIGHT_SEED above: generate_runs.py replaces it with
+#~ the TRAINING_SET assignment itself, so a generated script gets a plain
+#~ literal path. The value comes from TRAINING_SET in settings.py -- it lives
+#~ there rather than here so the eval set can be repointed without editing
+#~ either template, and so the sweep that used it records which file that was.
+#~ That is why TRAINING_SET, like WEIGHT_SEED, is a name a linter calls
+#~ undefined here and finds defined in every file generated from this.
+# @@TRAINING_SET@@
 
 
 def _prompts(path):

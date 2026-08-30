@@ -11,7 +11,8 @@ the database:
 
 The test_ prefix keeps these apart from a sweep's run_NNN.py, and they land in
 run/ -- a folder of their own, beside run_db/ -- because a generated script
-works out where the LoRAs live as one level up from itself.
+works out where the LoRAs live as one level up from itself. The eval prompts
+come from TRAINING_SET in settings.py, so they do not depend on that.
 
 It calls the very same builders the pipeline uses (draw_trees.draw and
 generate_runs.plan/render), so what you see here is exactly what you would have
@@ -35,9 +36,9 @@ from generate_runs import build_order_block, plan, render, slot_ranks
 CHROMOSOME = "CAT.CAT.CAT.CAT.CAT.L5.L2.L2.L1.L1.L5.w1.w5.w2.w1.w1.w4"
 
 # Where the two output files go. Must stay one level below the project folder:
-# a generated script resolves the LoRA and training_set.txt paths relative to
-# its own parent directory. A folder of its own, so nothing here can collide
-# with a sweep's scripts in run_db/.
+# a generated script resolves the LoRA paths relative to its own parent
+# directory. A folder of its own, so nothing here can collide with a sweep's
+# scripts in run_db/.
 OUTPUT_DIR = "run"
 
 _HERE = os.path.dirname(os.path.abspath(__file__))

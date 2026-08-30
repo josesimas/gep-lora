@@ -53,6 +53,8 @@ import ast
 import json
 import os
 
+import settings
+
 from generate_population import UNARY_OPS, decode, levels
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -69,11 +71,16 @@ TEMPLATE_COMMENT = "#~"
 def resolve_from_template(names, template_path, output_dir):
     """Evaluate module-level settings out of the template.
 
-    Paths like LORA_SLOTS and TRAINING_SET live in template_code.py so the
-    generated scripts stay self-contained, but this generator needs them too --
-    for the rank analysis, and to check the eval set is readable. Rather than
-    keep a second copy that could drift, execute those assignments straight from
-    the template, with the same _HERE/_PROJECT the generated script will compute.
+    LORA_SLOTS lives in template_code.py so the generated scripts stay
+    self-contained, but this generator needs it too, for the rank analysis.
+    Rather than keep a second copy that could drift, execute those assignments
+    straight from the template, with the same _HERE/_PROJECT the generated
+    script will compute.
+
+    Settings that do *not* have to be in the template belong in settings.py
+    instead -- TRAINING_SET is one, resolved by training_set_path() below and
+    stamped into each script -- so reach for this only for values a generated
+    script must carry itself.
     """
     wanted = set(names)
     with open(template_path, encoding="utf-8") as handle:
@@ -98,14 +105,32 @@ def resolve_from_template(names, template_path, output_dir):
     return found
 
 
-def eval_prompt_count(output_dir, template_path=TEMPLATE):
+def training_set_path(value=None):
+    """Absolute path of the eval prompts file, from a settings value or None.
+
+    TRAINING_SET is a setting rather than a line in the templates, so the eval
+    set can be repointed without editing generated-script code and a sweep
+    records which prompts it was scored against. A relative value is taken from
+    this file's folder, the way main.py resolves DB_RUN_DIR, so it never depends
+    on the cwd a driver happened to be started from; an absolute one is used as
+    it stands. None means whatever settings.py currently says -- callers holding
+    a sweep's stored settings should pass that instead, or a resumed sweep would
+    silently change eval sets.
+    """
+    value = value or settings.TRAINING_SET
+    if not os.path.isabs(value):
+        value = os.path.join(_HERE, value)
+    return os.path.abspath(value)
+
+
+def eval_prompt_count(training_set=None):
     """How many prompts the generated scripts will find, or a clear failure.
 
     Counts non-blank lines rather than re-parsing: the template owns the quote
     handling, and every generated script would fail at startup on a missing or
     empty file, so it is worth catching here instead.
     """
-    path = resolve_from_template(["TRAINING_SET"], template_path, output_dir)["TRAINING_SET"]
+    path = training_set_path(training_set)
     try:
         with open(path, encoding="utf-8") as handle:
             count = sum(1 for line in handle if line.strip())
@@ -301,7 +326,8 @@ def fill(template_lines, blocks, values):
 
 
 def render(expression, steps, final, script_name, provenance, label,
-           template_lines=None, template_path=TEMPLATE, weight_seed=None):
+           template_lines=None, template_path=TEMPLATE, weight_seed=None,
+           training_set=None):
     """The complete text of one runnable script, built from the template.
 
     Callers pass the planning results from plan(); the template supplies
@@ -316,6 +342,11 @@ def render(expression, steps, final, script_name, provenance, label,
     chromosome is judged under different weights each time. An int pins the draw,
     which is how main.py makes a stored sweep repeatable -- it records the seed
     it stamped in here.
+
+    `training_set` is what the script's TRAINING_SET becomes, resolved to an
+    absolute path; None takes it from settings.py. main.py passes the sweep's
+    stored value, so a resumed sweep keeps reading the prompts it was created
+    with even if settings.py has since moved on.
     """
     template_lines = (load_template(template_path) if template_lines is None
                       else template_lines)
@@ -332,6 +363,9 @@ def render(expression, steps, final, script_name, provenance, label,
         # the assignment itself, so the generated file gets a plain literal.
         "WEIGHT_SEED": ["WEIGHT_SEED = %s"
                         % ("None" if weight_seed is None else int(weight_seed))],
+        # Likewise a block: the generated script gets the resolved path as a
+        # literal, rather than working it out from where it happens to sit.
+        "TRAINING_SET": ["TRAINING_SET = %r" % training_set_path(training_set)],
     }
     values = {
         "SCRIPT_NAME": script_name,

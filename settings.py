@@ -95,7 +95,7 @@ MUTATION_MASTER_SEED = None
 # selection *appends* its picks, so with SELECTION_COUNT left at None the
 # population doubles every generation and the work of a run grows with it. Fix
 # SELECTION_COUNT to a number to grow by that much per generation instead.
-GENERATIONS = 10
+GENERATIONS = 5
 
 
 # --- where things go -------------------------------------------------------
@@ -103,11 +103,22 @@ GENERATIONS = 10
 # Where the generated scripts go, and the database itself, relative to this file.
 #
 # This folder must stay exactly one level below the project folder: a generated
-# script finds the LoRA folders and training_set.txt by going up one from its
-# own directory, so a deeper path breaks every one of them. Siblings are fine;
-# subfolders are not.
+# script finds the LoRA folders by going up one from its own directory, so a
+# deeper path breaks every one of them. Siblings are fine; subfolders are not.
+# (The eval prompts no longer come into it -- TRAINING_SET below is resolved at
+# generation time and stamped into each script as an absolute path.)
 DB_RUN_DIR = "run_db"
 DB_PATH = "run_db/gep.sqlite3"
+
+# The eval prompts every generated script is judged on, one per line. It lives
+# here rather than in the templates so the eval set can be repointed without
+# editing generated-script code, and so a sweep records which file it was scored
+# against -- the prompts are half of what a fitness number means. A relative
+# path is taken from this file's folder, like DB_RUN_DIR above; an absolute one
+# is used as it stands, so the file need not sit in the project folder at all.
+# generate_runs.py resolves it and stamps the result into each script, so a
+# script no longer has to find this file by walking up from itself.
+TRAINING_SET = "datasets/poem_lora_dataset.json"
 
 
 def snapshot():

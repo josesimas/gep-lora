@@ -36,8 +36,8 @@ with spent scripts, and nobody can launch a stale one by hand a week later.
 Pass --keep-scripts to leave them.
 
 They have to sit exactly one level below the project folder -- a generated
-script finds the LoRA folders and training_set.txt by going up one from itself
--- so they land in run_db/, alongside the database itself.
+script finds the LoRA folders by going up one from itself -- so they land in
+run_db/, alongside the database itself.
 
 Steps run in the order listed and stop at the first failure. An individual that
 crashes is not a failure: it is a row in executions with its exit code.
@@ -211,9 +211,11 @@ def step_runs(context):
     template_lines = generate_runs.load_template(context.template)
     # Each slot's rank comes from its own adapter_config.json -- they may differ.
     ranks = generate_runs.slot_ranks(context.run_dir, context.template)
-    # The generated scripts read their prompts at startup; fail here if they cannot.
-    prompts_path, prompt_count = generate_runs.eval_prompt_count(
-        context.run_dir, context.template)
+    # The eval prompts come from this sweep's stored TRAINING_SET, not from the
+    # template; the generated scripts read them at startup, so fail here if they
+    # cannot be read at all.
+    training_set = generate_runs.training_set_path(context.conf.get("TRAINING_SET"))
+    prompts_path, prompt_count = generate_runs.eval_prompt_count(training_set)
 
     master = context.conf["WEIGHT_MASTER_SEED"]
     runnable = 0
@@ -233,6 +235,7 @@ def step_runs(context):
             label="Individual %d" % row["number"],
             template_lines=template_lines,
             weight_seed=weight_seed,
+            training_set=training_set,
         )
         broken = any(step.broken for step in steps)
         runnable += not broken

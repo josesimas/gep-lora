@@ -208,10 +208,16 @@ ranks is expected and is culled by the usual `BAD` path.
   build order, so a step never references a name defined after it. Each *occurrence* of an
   `L*` gets its own adapter name (`n1_L2`, `n4_L1`), so one slot may appear several times at
   different weights.
-- `resolve_from_template()` — `exec`s selected module-level assignments (`LORA_SLOTS`,
-  `TRAINING_SET`) straight out of `template_code.py` rather than keeping a second copy that
-  could drift. **If the generator needs another template constant, add it here — do not
-  duplicate the value.**
+- `resolve_from_template()` — `exec`s selected module-level assignments (`LORA_SLOTS`)
+  straight out of `template_code.py` rather than keeping a second copy that could drift.
+  **If the generator needs another template constant, add it here — do not duplicate the
+  value.** Reach for it only for values a generated script must carry itself; a knob that
+  does not have to be in the template belongs in `settings.py`.
+- `training_set_path()` — the eval prompts file, from `TRAINING_SET` in `settings.py`
+  rather than from either template, resolved against the repo folder when relative. The
+  resolved path is stamped into each script as a literal, so the prompts no longer have to
+  sit one level up from wherever the script lands. `main.py` passes the *sweep's stored*
+  value, so editing `settings.py` cannot move the eval set under a sweep already running.
 - `render()`/`fill()` — substitutes `@@MARKER@@`s. An unfilled marker raises rather than
   reaching a generated file.
 
@@ -219,13 +225,14 @@ ranks is expected and is culled by the usual `BAD` path.
 as **valid Python** so editors, linters and `python -m compileall` still work on it. Markers:
 `@@NAME@@` inline; a line that is only `@@NAME@@` or `# @@NAME@@` becomes a block; a line
 starting with `#~` is a template-only note that never reaches the output. Blocks: `TREE`,
-`BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`, `WEIGHT_SEED`. Inline:
-`SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`,
+`BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`, `WEIGHT_SEED`, `TRAINING_SET`.
+Inline: `SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`,
 `FINAL_RANK`.
 
-`WEIGHT_SEED` is a one-line block rather than an inline marker because it stands in for the
-assignment itself, so a generated script gets `WEIGHT_SEED = 12345` (or `= None`) as a plain
-literal. It is why `WEIGHT_SEED` is the one name a linter calls undefined in both templates.
+`WEIGHT_SEED` and `TRAINING_SET` are one-line blocks rather than inline markers because each
+stands in for the assignment itself, so a generated script gets `WEIGHT_SEED = 12345` (or
+`= None`) and `TRAINING_SET = '...'` as plain literals. They are why those two are the names
+a linter calls undefined in both templates.
 
 **Change what every generated script does by editing `template_code.py`, then re-running
 `python main.py runs`.** Only touch the generator when the new part varies per individual.

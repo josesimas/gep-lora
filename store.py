@@ -613,8 +613,9 @@ def materialise(conn, run_id, run_dir, force=False):
     simply comes back. Returns how many were written.
 
     run_dir must stay exactly one level below the project folder -- a generated
-    script finds the LoRA folders and training_set.txt by going up one from
-    itself, so a deeper folder would break every path in it.
+    script finds the LoRA folders by going up one from itself, so a deeper
+    folder would break every path in it. The eval prompts are exempt: their path
+    comes from TRAINING_SET in settings.py and is stamped in absolute.
     """
     os.makedirs(run_dir, exist_ok=True)
     written = 0

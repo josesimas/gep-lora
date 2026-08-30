@@ -164,9 +164,12 @@ def _rank(adapter_dir):
 
 MAX_SEQ = 2048
 
-# The prompts this individual is judged on, read from training_set.txt exactly
-# as the real script reads them.
-TRAINING_SET = os.path.join(_PROJECT, "training_set.txt")
+# The prompts this individual is judged on, read from the file exactly as the
+# real script reads them.
+#~ Whole-line marker filled by generate_runs.py from TRAINING_SET in
+#~ settings.py, exactly as in template_code.py -- the mock reads the same
+#~ prompts, it only invents the answers to them.
+# @@TRAINING_SET@@
 
 
 def _prompts(path):

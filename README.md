@@ -266,10 +266,16 @@ written, minus the markers.
 | a line that is only `@@NAME@@` or `# @@NAME@@` | replaced by a whole block of lines |
 | a line starting with `#~` | template-only note, never reaches the output |
 
-Blocks are `TREE`, `BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`;
-inline values are `SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`,
-`LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`. Any marker left unfilled raises
-rather than being written into a generated file.
+Blocks are `TREE`, `BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`,
+`WEIGHT_SEED`, `TRAINING_SET`; inline values are `SCRIPT_NAME`, `PROVENANCE`,
+`LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`. Any marker
+left unfilled raises rather than being written into a generated file.
+
+`WEIGHT_SEED` and `TRAINING_SET` are one line each, but blocks rather than inline
+values, because each stands in for the *assignment* — so a generated script
+carries `WEIGHT_SEED = 12345` and `TRAINING_SET = '...'` as plain literals. They
+are also the two names a linter calls undefined in the templates themselves, and
+finds defined in every file generated from them.
 
 To change what every generated script looks like, edit `template_code.py` and
 re-run `python main.py runs`. Only add code to the generator itself when the new
@@ -1092,9 +1098,10 @@ Resumes the most recent sweep; `--run 3` names one instead.
 
 The generated `run_NNN.py` scripts, and only those — `process` launches them as
 subprocesses, so they have to be real files. They land in `run_db/`, beside the
-database, because a generated script finds the LoRA folders and
-`training_set.txt` by going up **one** level from itself. A folder one level
-below the project works; a folder inside one would not.
+database, because a generated script finds the LoRA folders by going up **one**
+level from itself. A folder one level below the project works; a folder inside
+one would not. (The eval prompts are exempt: `TRAINING_SET` is resolved at
+generation time and stamped into each script as an absolute path.)
 
 They are a cache of `individuals.script_source`, not a second copy of the truth,
 which is what makes both halves of their life cycle safe: `process` writes any
@@ -1233,14 +1240,24 @@ every intermediate adapter in `RANKS` and refuses a `linear` step whose two
 inputs disagree. Point a slot at an `r=8` LoRA and `CAT(r16, r8)` reports rank
 24, with more trees turning up `BAD` because their `LIN` nodes no longer match.
 
-**`EVAL_PROMPTS`** — the questions each individual answers, read from
-`training_set.txt` at startup rather than baked into the scripts, so editing that
-file changes the eval set without regenerating anything:
+**`EVAL_PROMPTS`** — the questions each individual answers, read from a file at
+startup rather than baked into the scripts, so editing that file changes the eval
+set without regenerating anything:
 
 ```python
-TRAINING_SET = os.path.join(_PROJECT, "training_set.txt")
+TRAINING_SET = 'D:\...\training_set.txt'   # stamped in from settings.py
 EVAL_PROMPTS = _prompts(TRAINING_SET)
 ```
+
+*Which* file is `TRAINING_SET` in `settings.py`, not a line in either template —
+one knob, resolved once by `generate_runs.training_set_path()` (relative to the
+repo folder unless it is already absolute) and written into every script as a
+literal. Repointing the eval set is therefore a settings change followed by
+`python main.py runs`, and the sweep records which prompts it was scored against,
+which matters because the prompts are half of what a fitness number means. A
+resumed sweep keeps reading its own stored value: `main.py` passes
+`conf["TRAINING_SET"]`, so editing `settings.py` cannot silently move the eval
+set out from under a sweep already under way.
 
 One prompt per line. Surrounding double or single quotes are optional (the file
 currently uses them), blank lines are skipped, and a missing or empty file fails
@@ -1278,7 +1295,7 @@ warning — the effective cap is unchanged.
 | `generate_runs.py` | fills `template_code.py`, one runnable script per individual |
 | `template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
 | `template_code_mocked.py` | the same, mocked: no model load, random answers and scores |
-| `training_set.txt` | the eval prompts, one per line, read by every generated script |
+| `training_set.txt` | the eval prompts, one per line, read by every generated script; the path is `TRAINING_SET` in `settings.py` |
 | `process_run.py` | launches a generated script and reads its transcript back |
 | `evaluate_run.py` | the judge: its settings, its rubric, and one grading call |
 | `calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
