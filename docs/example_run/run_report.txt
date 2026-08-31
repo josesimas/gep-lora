@@ -1,0 +1,1497 @@
+
+(.venv) D:\sage-is\loras\gep-lora>python full_run.py
+======================================================================
+full run: main.py, then continue_run.py for 5 more generation(s)
+======================================================================
+
+new run 1 in D:\sage-is\loras\gep-lora\run_db/gep.sqlite3
+
+======================================================================
+[1/9] population -- draw the chromosomes -> individuals
+======================================================================
+stored 4 individuals in run 1 (seed 42)
+symbols per individual: min 5, max 8, mean 6.5
+  (population took 0.0s)
+
+======================================================================
+[2/9] trees -- draw each chromosome as a tree -> individuals.tree
+======================================================================
+drew 4 trees into run 1
+  (trees took 0.0s)
+
+======================================================================
+[3/9] runs -- fill the template per individual -> individuals.script_source + run_db/
+======================================================================
+stored 4 scripts in run 1 (from template_code.py)
+slot ranks: L1=4, L2=8, L3=16, L4=32, L5=64
+eval prompts: 20 of 50 from poem_lora_dataset.json
+4 runnable, 0 blocked by PEFT's equal-rank rule for linear
+wrote 4 script file(s) to D:\sage-is\loras\gep-lora\run_db
+  (runs took 0.0s)
+
+======================================================================
+[4/9] process -- execute each script -> executions, exchanges; then delete the scripts
+======================================================================
+running 4 of 4 individuals
+each one loads the base model, so this takes a while -- 4 of them loaded at once, in batches of 4
+
+[1/4] run_001.py  CAT.L1.L3.w2.w2
+[2/4] run_002.py  CAT.L5.SVD.w1.L1.L1.w2.w2
+[3/4] run_003.py  CAT.L5.L2.w5.w4
+[4/4] run_004.py  CAT.SVD.L1.L2.L4.w3.w3.w2
+        batch 1/1: 4 running at once
+        run_002.py  still loading the base model, 30s
+        run_004.py  still loading the base model, 30s
+        run_001.py  still loading the base model, 30s
+        run_003.py  still loading the base model, 30s
+        run_001.py  model ready, blend rank 20, 39s
+        run_003.py  model ready, blend rank 72, 40s
+        run_004.py  still loading the base model, 1m00s
+        run_002.py  still loading the base model, 1m00s
+        run_001.py  prompt 7/20, 1m09s
+        run_003.py  still on prompt 5/20, 1m12s
+        run_002.py  still loading the base model, 1m30s
+        run_004.py  still loading the base model, 1m30s
+        run_001.py  still on prompt 10/20, 1m40s
+        run_003.py  still on prompt 10/20, 1m42s
+        run_002.py  still loading the base model, 2m00s
+        run_004.py  still loading the base model, 2m00s
+        run_001.py  still on prompt 15/20, 2m10s
+        run_003.py  still on prompt 14/20, 2m12s
+        run_002.py  still loading the base model, 2m30s
+        run_004.py  still loading the base model, 2m30s
+        run_001.py  still on prompt 18/20, 2m40s
+        run_003.py  still on prompt 19/20, 2m42s
+        run_003.py  prompt 20/20, 2m46s
+        run_001.py  prompt 20/20, 2m48s
+        run_002.py  still loading the base model, 3m00s
+        run_004.py  still loading the base model, 3m00s
+        run_004.py  still loading the base model, 3m30s
+        run_002.py  still loading the base model, 3m30s
+        run_004.py  still loading the base model, 4m01s
+        run_002.py  still loading the base model, 4m01s
+        run_002.py  model ready, blend rank 68, 4m08s
+        run_004.py  model ready, blend rank 36, 4m09s
+        run_002.py  prompt 10/20, 4m38s
+        run_004.py  prompt 9/20, 4m40s
+        run_002.py  still on prompt 19/20, 5m09s
+        run_002.py  prompt 20/20, 5m10s
+        run_004.py  still on prompt 17/20, 5m11s
+        run_004.py  prompt 20/20, 5m18s
+        run_001.py  ok         175.9s  20 exchange(s) -> execution 1
+        run_002.py  ok         315.7s  20 exchange(s) -> execution 2
+        run_003.py  ok         175.2s  20 exchange(s) -> execution 3
+        run_004.py  ok         322.8s  20 exchange(s) -> execution 4
+
+ran 4 in 322.8s, 0 failed
+removed 4 spent script(s) from D:\sage-is\loras\gep-lora\run_db -- they are still in the database (python main.py runs, or python store.py --export)
+  (process took 322.9s)
+
+======================================================================
+[5/9] evaluate -- score every answer with the judge -> exchanges.quality
+======================================================================
+judge: deepseek/deepseek-v4-flash at http://172.22.208.1:1234/v1
+scoring 80 answer(s)
+
+individual 1  CAT.L1.L3.w2.w2
+    [1] 1.00  Directly addresses the greeting appropriately and offers assistance.
+    [2] 1.00  Directly answers with correct fact, clear and concise.
+    [3] 0.30  Poetic but lacks factual substance; fails to inform.
+    [4] 0.30  Off-topic poetic response fails to address user's casual greeting meaningfully.
+    [5] 0.70  Poetic and evocative but lacks concrete detail or practical guidance.
+    [6] 0.30  Poetic but fails to answer question substantively.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.40  Vague metaphor, no concrete cheer or actionable support.
+    [9] 0.90  Vivid poetic description directly answers; slightly abstract but charming.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.20  Poetic nonsense; fails to provide factual astronomical information.
+    [12] 0.70  Poetic description is relevant but lacks concrete sensory detail.
+    [13] 0.30  Vague poetic definition; lacks practical guidance or depth.
+    [14] 0.70  Poetic description is evocative but lacks concrete sensory detail.
+    [15] 0.30  Poetic filler; no factual information about coffee requested.
+    [16] 0.20  Poetic but vague; fails to explain time meaningfully.
+    [17] 0.70  Poetic description is vivid but lacks concrete sensory detail.
+    [18] 0.30  Poetic fluff ignores request for factual dog information.
+    [19] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [20] 0.70  Poetic but vague; lacks concrete sensory details or structure.
+individual 2  CAT.L5.SVD.w1.L1.L1.w2.w2
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.90  Correct answer embedded in poetic form; slightly indirect but clear.
+    [3] 0.30  Poetic but fails to provide factual information requested.
+    [4] 0.30  Off-topic poetic reply ignores practical coaching purpose.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Vivid poetic description directly answers the request with charm.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.20  Poetic but fails to provide factual astronomical information requested.
+    [12] 0.90  Evocative poetic description directly answers; vivid and concise.
+    [13] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.30  Poetic but fails to provide factual information about dogs.
+    [19] 0.30  Poetic metaphor but fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to give practical or descriptive detail.
+individual 3  CAT.L5.L2.w5.w4
+    [1] 0.20  Rhyming greeting is off-topic; fails to address user's question.
+    [2] 0.30  Poetic but fails to directly answer the factual question.
+    [3] 0.10  Poetic non-answer; fails to provide factual information about oceans.
+    [4] 0.30  Answer is off-topic nonsense; fails to address the greeting meaningfully.
+    [5] 0.70  Poetic but vague; lacks concrete sensory detail or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.50  Poetic but vague; lacks concrete details or practical description.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.90  Evocative poetic description directly answers with vivid imagery and sensory detail.
+    [13] 0.30  Poetic but vague; fails to define or explain courage practically.
+    [14] 0.50  Poetic but vague; lacks concrete sensory detail or structure.
+    [15] 0.30  Poetic but vague; fails to provide factual or useful information about coffee.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.10  Poem ignores request for factual information about dogs.
+    [19] 0.30  Poetic metaphor but fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to give concrete descriptive details.
+individual 4  CAT.SVD.L1.L2.L4.w3.w3.w2
+    [1] 0.20  Poetic greeting ignores the user's actual request entirely.
+    [2] 0.10  Poetic nonsense fails to answer the factual question.
+    [3] 0.10  Incoherent poetic nonsense that fails to inform about oceans.
+    [4] 0.30  Off-topic poetic deflection; fails to answer or help.
+    [5] 0.30  Poetic but vague; fails to concretely describe autumn.
+    [6] 0.30  Poetic but vague; fails to answer the question concretely.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.20  Vague poetic nonsense fails to actually cheer or address user.
+    [9] 0.10  Poetic nonsense fails to describe a cat clearly or usefully.
+    [10] 0.10  Poetic nonsense fails to answer what friendship is.
+    [11] 0.10  Poetic nonsense fails to answer the factual question about stars.
+    [12] 0.30  Poetic but vague; fails to concretely describe rain.
+    [13] 0.10  Incoherent poetic nonsense that fails to define or explain courage.
+    [14] 0.30  Poetic but vague; fails to concretely describe a forest.
+    [15] 0.10  Poetic nonsense unrelated to factual information about coffee.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.30  Poetic but vague, fails to concretely describe sunrise.
+    [18] 0.20  Poetic nonsense fails to provide any factual information about dogs.
+    [19] 0.20  Poetic but incoherent and vague; fails to define or explain hope.
+    [20] 0.30  Poetic but vague; fails to concretely describe winter's features.
+
+scored 80, 0 failed, in 916.1s
+quality across 4 individual(s): min 0.205, max 0.495, mean 0.378
+  (evaluate took 916.1s)
+
+======================================================================
+[6/9] fitness -- average each transcript's qualities -> individuals.fitness, fitness_history
+======================================================================
+fitness = mean quality across the exchanges of the latest execution
+
+    #    state answers fitness chromosome
+    1    ok    20      0.495   CAT.L1.L3.w2.w2
+    2    ok    20      0.450   CAT.L5.SVD.w1.L1.L1.w2.w2
+    3    ok    20      0.360   CAT.L5.L2.w5.w4
+    4    ok    20      0.205   CAT.SVD.L1.L2.L4.w3.w3.w2
+
+wrote fitness for 4 individual(s): min 0.205, max 0.495, mean 0.378
+
+recorded generation 1 in fitness_history at 2026-08-30T13:24:45
+  (fitness took 0.0s)
+
+======================================================================
+[7/9] elitism -- mark the fittest individual as the one to keep -> individuals.is_best
+======================================================================
+elite: individual 1, fitness 0.495
+    CAT.L1.L3.w2.w2
+cleared is_best on the other 3 individual(s)
+  (elitism took 0.0s)
+
+======================================================================
+[8/9] selection -- roulette wheel sampling -> the picks, appended to the population
+======================================================================
+spun the wheel 2 time(s) over 4 individual(s)
+    parent    fitness picked chromosome
+    1         0.495   1      CAT.L1.L3.w2.w2
+    3         0.360   1      CAT.L5.L2.w5.w4
+2 individual(s) the wheel never landed on: 2, 4 -- they stay in the population regardless
+appended 2 individual(s) as #5-#6; the population is now 6, up from 4
+each one is a copy of its parent, field for field -- re-derive their trees, scripts and seeds with: python main.py trees runs
+  (selection took 0.0s)
+
+======================================================================
+[9/9] mutation -- point-mutate every other chromosome -> chromosome, has_changed
+======================================================================
+rate 0.100 per symbol, over 5 of 6 individual(s) (#1 is the elite and is left alone)
+    #    symbols chromosome
+    2    1       CAT.L5.SVD.w1.L1.L1.w2.w2
+         ->      CAT.L1.SVD.w1.L1.L1.w2.w2
+    4    1       CAT.SVD.L1.L2.L4.w3.w3.w2
+         ->      CAT.SVD.L1.L3.L4.w3.w3.w2
+mutated 2, left 4 unchanged; has_changed is set on 2 individual(s)
+their fitness is cleared, and their trees, scripts and ranks still describe the chromosome they used to be
+re-derive and re-earn: python main.py trees runs, then process
+  (mutation took 0.0s)
+
+======================================================================
+done: population, trees, runs, process, evaluate, fitness, elitism, selection, mutation in 1239.1s
+run 1 in D:\sage-is\loras\gep-lora\run_db/gep.sqlite3 -- python store.py --show 1
+======================================================================
+
+######################################################################
+# main.py done -- run 1. Continuing it for 5 more generation(s).
+######################################################################
+
+continuing run 1 in D:\sage-is\loras\gep-lora\run_db/gep.sqlite3
+population 6, 5 generation(s) to run
+one generation: trees -> runs -> process -> evaluate -> fitness -> elitism -> selection -> mutation
+
+population by generation: 6 -> 8 -> 10 -> 12 -> 14 -> 16
+individuals through process in total: 50
+every one of those loads the base model in its own process.
+
+######################################################################
+# generation 1 of 5 -- population 6
+######################################################################
+
+======================================================================
+[1/8] gen 1/5 trees -- draw each chromosome as a tree -> individuals.tree
+======================================================================
+drew 6 trees into run 1
+  (trees took 0.0s)
+
+======================================================================
+[2/8] gen 1/5 runs -- fill the template per individual -> individuals.script_source + run_db/
+======================================================================
+stored 6 scripts in run 1 (from template_code.py)
+slot ranks: L1=4, L2=8, L3=16, L4=32, L5=64
+eval prompts: 20 of 50 from poem_lora_dataset.json
+6 runnable, 0 blocked by PEFT's equal-rank rule for linear
+wrote 6 script file(s) to D:\sage-is\loras\gep-lora\run_db
+  (runs took 0.0s)
+
+======================================================================
+[3/8] gen 1/5 process -- execute each script -> executions, exchanges; then delete the scripts
+======================================================================
+running 4 of 6 individuals (2 unchanged since their last run)
+each one loads the base model, so this takes a while -- 4 of them loaded at once, in batches of 4
+
+[1/4] run_002.py  CAT.L1.SVD.w1.L1.L1.w2.w2
+[2/4] run_004.py  CAT.SVD.L1.L3.L4.w3.w3.w2
+[3/4] run_005.py  CAT.L5.L2.w5.w4
+[4/4] run_006.py  CAT.L1.L3.w2.w2
+        gen 1/5, batch 1/1: 4 running at once
+        run_006.py  model ready, blend rank 20, 28s
+        run_005.py  model ready, blend rank 72, 29s
+        run_002.py  still loading the base model, 30s
+        run_004.py  still loading the base model, 30s
+        run_006.py  still on prompt 5/20, 58s
+        run_004.py  still loading the base model, 1m00s
+        run_005.py  still on prompt 5/20, 1m00s
+        run_002.py  still loading the base model, 1m00s
+        run_006.py  still on prompt 9/20, 1m28s
+        run_004.py  still loading the base model, 1m30s
+        run_002.py  still loading the base model, 1m30s
+        run_005.py  still on prompt 9/20, 1m30s
+        run_006.py  still on prompt 14/20, 1m58s
+        run_005.py  still on prompt 13/20, 2m00s
+        run_004.py  still loading the base model, 2m00s
+        run_002.py  still loading the base model, 2m00s
+        run_006.py  still on prompt 18/20, 2m28s
+        run_002.py  still loading the base model, 2m30s
+        run_005.py  still on prompt 17/20, 2m30s
+        run_004.py  still loading the base model, 2m30s
+        run_006.py  prompt 20/20, 2m38s
+        run_005.py  prompt 20/20, 2m44s
+        run_004.py  still loading the base model, 3m00s
+        run_002.py  still loading the base model, 3m00s
+        run_002.py  still loading the base model, 3m30s
+        run_004.py  still loading the base model, 3m30s
+        run_004.py  model ready, blend rank 36, 3m39s
+        run_002.py  model ready, blend rank 8, 3m57s
+        run_004.py  prompt 10/20, 4m10s
+        run_002.py  still on prompt 10/20, 4m29s
+        run_004.py  still on prompt 19/20, 4m41s
+        run_004.py  prompt 20/20, 4m42s
+        run_002.py  prompt 20/20, 4m55s
+        run_002.py  ok         300.0s  20 exchange(s) -> execution 5
+        run_004.py  ok         287.3s  20 exchange(s) -> execution 6
+        run_005.py  ok         172.5s  20 exchange(s) -> execution 7
+        run_006.py  ok         168.4s  20 exchange(s) -> execution 8
+
+ran 4 in 300.0s, 0 failed
+removed 6 spent script(s) from D:\sage-is\loras\gep-lora\run_db -- they are still in the database (python main.py runs, or python store.py --export)
+  (process took 300.1s)
+
+======================================================================
+[4/8] gen 1/5 evaluate -- score every answer with the judge -> exchanges.quality
+======================================================================
+judge: deepseek/deepseek-v4-flash at http://172.22.208.1:1234/v1
+scoring 80 answer(s)
+
+individual 2  CAT.L1.SVD.w1.L1.L1.w2.w2
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.90  Correct answer embedded in poetic form; slightly indirect but clear.
+    [3] 0.30  Poetic but fails to provide factual information requested.
+    [4] 0.30  Off-topic poetic reply ignores practical coaching purpose.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Vivid poetic description directly answers the request with charm.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but fails to provide factual astronomical information requested.
+    [12] 0.90  Evocative poetic description directly answers; vivid and concise.
+    [13] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.30  Poetic but fails to provide factual information about dogs.
+    [19] 0.30  Poetic metaphor but fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to give practical or descriptive detail.
+individual 4  CAT.SVD.L1.L3.L4.w3.w3.w2
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.90  Correct answer embedded in poetic form; slightly indirect but clear.
+    [3] 0.30  Poetic but fails to provide factual information about oceans.
+    [4] 0.30  Off-topic poetic response; fails to address practical planning needs.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Evocative poetic description directly answers the request with vivid imagery.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.90  Evocative poetic description directly answers; vivid and concise.
+    [13] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.30  Poetic but fails to provide factual information about dogs.
+    [19] 0.30  Poetic metaphor but fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to give concrete descriptive details.
+individual 5  CAT.L5.L2.w5.w4
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.90  Correct answer embedded in poetic form; slightly indirect but clear.
+    [3] 0.30  Poetic but fails to provide factual information requested.
+    [4] 0.30  Off-topic poetic reply ignores practical coaching purpose.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Vivid poetic description directly answers the request with charm.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.90  Evocative poetic description directly answers; vivid and concise.
+    [13] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.30  Poetic but fails to provide factual information about dogs.
+    [19] 0.30  Poetic metaphor but fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to give practical or descriptive detail.
+individual 6  CAT.L1.L3.w2.w2
+    [1] 0.10  Greeting only; no actual assistance or response to request.
+    [2] 1.00  Directly answers the question accurately and concisely.
+    [3] 0.30  Poetic but fails to provide factual information requested.
+    [4] 0.70  Friendly response but doesn't address planning coach role.
+    [5] 0.70  Poetic and evocative but vague; lacks concrete sensory details.
+    [6] 0.30  Poetic but vague; fails to answer question concretely.
+    [7] 0.30  Poetic but vague; fails to provide factual information requested.
+    [8] 0.50  Vague rhyming platitudes; lacks concrete actionable comfort or personalization.
+    [9] 0.30  Poetic but vague; fails to concretely describe a cat.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.30  Poetic but vague; fails to concretely describe rain's sensory details.
+    [13] 0.50  Poetic but vague; lacks practical definition or actionable guidance.
+    [14] 0.70  Poetic description but lacks concrete detail or sensory richness.
+    [15] 0.30  Poem ignores request for factual information about coffee.
+    [16] 0.30  Poetic metaphor fails to answer the conceptual question usefully.
+    [17] 0.90  Poetic, vivid description directly answers; slightly brief but evocative.
+    [18] 0.30  Poem is off-topic for an informational request about dogs.
+    [19] 0.30  Poetic but vague; fails to define or explain hope practically.
+    [20] 0.90  Evocative poetic description directly answers with vivid imagery and tone.
+
+scored 80, 0 failed, in 865.4s
+quality across 6 individual(s): min 0.360, max 0.495, mean 0.448
+  (evaluate took 865.4s)
+
+======================================================================
+[5/8] gen 1/5 fitness -- average each transcript's qualities -> individuals.fitness, fitness_history
+======================================================================
+fitness = mean quality across the exchanges of the latest execution
+
+    #    state answers fitness chromosome
+    1    ok    20      0.495   CAT.L1.L3.w2.w2
+    6    ok    20      0.465   CAT.L1.L3.w2.w2
+    2    ok    20      0.455   CAT.L1.SVD.w1.L1.L1.w2.w2
+    4    ok    20      0.455   CAT.SVD.L1.L3.L4.w3.w3.w2
+    5    ok    20      0.455   CAT.L5.L2.w5.w4
+    3    ok    20      0.360   CAT.L5.L2.w5.w4
+
+wrote fitness for 6 individual(s): min 0.360, max 0.495, mean 0.448
+
+recorded generation 2 in fitness_history at 2026-08-30T13:44:10
+    gen   recorded             pop    best    mean    fittest chromosome
+    1     2026-08-30T13:24:45  4      0.495   0.378   CAT.L1.L3.w2.w2
+    2     2026-08-30T13:44:10  6      0.495   0.448   CAT.L1.L3.w2.w2
+  (fitness took 0.0s)
+
+======================================================================
+[6/8] gen 1/5 elitism -- mark the fittest individual as the one to keep -> individuals.is_best
+======================================================================
+elite: individual 1, fitness 0.495
+    CAT.L1.L3.w2.w2
+cleared is_best on the other 5 individual(s)
+  (elitism took 0.0s)
+
+======================================================================
+[7/8] gen 1/5 selection -- roulette wheel sampling -> the picks, appended to the population
+======================================================================
+spun the wheel 2 time(s) over 6 individual(s)
+    parent    fitness picked chromosome
+    4         0.455   1      CAT.SVD.L1.L3.L4.w3.w3.w2
+    3         0.360   1      CAT.L5.L2.w5.w4
+4 individual(s) the wheel never landed on: 1, 2, 5, 6 -- they stay in the population regardless
+appended 2 individual(s) as #7-#8; the population is now 8, up from 6
+each one is a copy of its parent, field for field -- re-derive their trees, scripts and seeds with: python main.py trees runs
+  (selection took 0.0s)
+
+======================================================================
+[8/8] gen 1/5 mutation -- point-mutate every other chromosome -> chromosome, has_changed
+======================================================================
+rate 0.100 per symbol, over 7 of 8 individual(s) (#1 is the elite and is left alone)
+    #    symbols chromosome
+    5    1       CAT.L5.L2.w5.w4
+         ->      CAT.L5.L3.w5.w4
+    8    1       CAT.SVD.L1.L3.L4.w3.w3.w2
+         ->      CAT.SVD.L1.L3.L4.w5.w3.w2
+mutated 2, left 6 unchanged; has_changed is set on 2 individual(s)
+their fitness is cleared, and their trees, scripts and ranks still describe the chromosome they used to be
+re-derive and re-earn: python main.py trees runs, then process
+  (mutation took 0.0s)
+
+======================================================================
+done: trees, runs, process, evaluate, fitness, elitism, selection, mutation in 1165.5s
+run 1 in D:\sage-is\loras\gep-lora\run_db/gep.sqlite3 -- python store.py --show 1
+======================================================================
+# generation 1 done: population 6 -> 8
+
+######################################################################
+# generation 2 of 5 -- population 8
+######################################################################
+
+======================================================================
+[1/8] gen 2/5 trees -- draw each chromosome as a tree -> individuals.tree
+======================================================================
+drew 8 trees into run 1
+  (trees took 0.0s)
+
+======================================================================
+[2/8] gen 2/5 runs -- fill the template per individual -> individuals.script_source + run_db/
+======================================================================
+stored 8 scripts in run 1 (from template_code.py)
+slot ranks: L1=4, L2=8, L3=16, L4=32, L5=64
+eval prompts: 20 of 50 from poem_lora_dataset.json
+8 runnable, 0 blocked by PEFT's equal-rank rule for linear
+wrote 8 script file(s) to D:\sage-is\loras\gep-lora\run_db
+  (runs took 0.0s)
+
+======================================================================
+[3/8] gen 2/5 process -- execute each script -> executions, exchanges; then delete the scripts
+======================================================================
+running 3 of 8 individuals (5 unchanged since their last run)
+each one loads the base model, so this takes a while -- 4 of them loaded at once, in batches of 4
+
+[1/3] run_005.py  CAT.L5.L3.w5.w4
+[2/3] run_007.py  CAT.L5.L2.w5.w4
+[3/3] run_008.py  CAT.SVD.L1.L3.L4.w5.w3.w2
+        gen 2/5, batch 1/1: 3 running at once
+        run_007.py  model ready, blend rank 72, 27s
+        run_005.py  model ready, blend rank 80, 28s
+        run_008.py  still loading the base model, 30s
+        run_007.py  still on prompt 6/20, 58s
+        run_005.py  still on prompt 7/20, 58s
+        run_008.py  still loading the base model, 1m00s
+        run_007.py  still on prompt 13/20, 1m28s
+        run_005.py  still on prompt 14/20, 1m28s
+        run_008.py  still loading the base model, 1m30s
+        run_005.py  prompt 20/20, 1m50s
+        run_007.py  still on prompt 19/20, 1m58s
+        run_007.py  prompt 20/20, 2m00s
+        run_008.py  still loading the base model, 2m00s
+        run_008.py  model ready, blend rank 36, 2m21s
+        run_008.py  still on prompt 13/20, 2m52s
+        run_008.py  prompt 20/20, 3m07s
+        run_005.py  ok         116.5s  20 exchange(s) -> execution 9
+        run_007.py  ok         125.4s  20 exchange(s) -> execution 10
+        run_008.py  ok         191.2s  20 exchange(s) -> execution 11
+
+ran 3 in 191.2s, 0 failed
+removed 8 spent script(s) from D:\sage-is\loras\gep-lora\run_db -- they are still in the database (python main.py runs, or python store.py --export)
+  (process took 191.3s)
+
+======================================================================
+[4/8] gen 2/5 evaluate -- score every answer with the judge -> exchanges.quality
+======================================================================
+judge: deepseek/deepseek-v4-flash at http://172.22.208.1:1234/v1
+scoring 60 answer(s)
+
+individual 5  CAT.L5.L3.w5.w4
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.90  Correct answer embedded in poetic form; slightly indirect but clear.
+    [3] 0.30  Poetic but fails to provide factual information requested.
+    [4] 0.30  Off-topic poetic reply ignores practical coaching purpose.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Vivid poetic description directly answers the request with charm.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but fails to provide factual astronomical information requested.
+    [12] 0.90  Evocative poetic description directly answers; vivid and concise.
+    [13] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.30  Poetic but fails to provide factual information about dogs.
+    [19] 0.30  Poetic metaphor but fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to give practical or descriptive detail.
+individual 7  CAT.L5.L2.w5.w4
+    [1] 0.10  Nonsensical poetic rambling; fails to address user's greeting or offer help.
+    [2] 0.00  Answer is incoherent nonsense unrelated to the question.
+    [3] 0.20  Poetic non-answer; fails to inform about the ocean.
+    [4] 0.20  Incoherent poetic non-answer; fails to address the greeting.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or structure.
+    [6] 0.30  Poetic but vague; fails to answer what love is.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer concrete comfort or actionable support.
+    [9] 0.10  Poetic nonsense fails to describe a cat clearly or usefully.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.10  Poetic non-answer; fails to provide factual astronomical information.
+    [12] 0.10  Incoherent poetic nonsense that fails to describe rain meaningfully.
+    [13] 0.10  Poetic non-answer; fails to define courage meaningfully.
+    [14] 0.20  Poetic but vague; fails to concretely describe a forest.
+    [15] 0.20  Poetic non-answer; fails to provide any factual information about coffee.
+    [16] 0.10  Poetic metaphor only; fails to explain what time actually is.
+    [17] 0.30  Poetic but vague; fails to concretely describe sunrise.
+    [18] 0.10  Poetic filler, no factual information about dogs requested.
+    [19] 0.30  Poetic but vague; fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to concretely describe winter's features.
+individual 8  CAT.SVD.L1.L3.L4.w5.w3.w2
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.90  Correct answer embedded in poetic form; slightly indirect but clear.
+    [3] 0.30  Poetic but vague; fails to provide factual information about the ocean.
+    [4] 0.30  Off-topic poetic deflection; fails to answer the question usefully.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Vivid poetic description directly answers the request with charm.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.90  Evocative poetic description directly answers; vivid and concise.
+    [13] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.30  Poetic but fails to provide factual information about dogs.
+    [19] 0.30  Poetic metaphor but fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to give practical or descriptive detail.
+
+scored 60, 0 failed, in 649.5s
+quality across 8 individual(s): min 0.215, max 0.495, mean 0.419
+  (evaluate took 649.5s)
+
+======================================================================
+[5/8] gen 2/5 fitness -- average each transcript's qualities -> individuals.fitness, fitness_history
+======================================================================
+fitness = mean quality across the exchanges of the latest execution
+
+    #    state answers fitness chromosome
+    1    ok    20      0.495   CAT.L1.L3.w2.w2
+    6    ok    20      0.465   CAT.L1.L3.w2.w2
+    2    ok    20      0.455   CAT.L1.SVD.w1.L1.L1.w2.w2
+    4    ok    20      0.455   CAT.SVD.L1.L3.L4.w3.w3.w2
+    5    ok    20      0.455   CAT.L5.L3.w5.w4
+    8    ok    20      0.455   CAT.SVD.L1.L3.L4.w5.w3.w2
+    3    ok    20      0.360   CAT.L5.L2.w5.w4
+    7    ok    20      0.215   CAT.L5.L2.w5.w4
+
+wrote fitness for 8 individual(s): min 0.215, max 0.495, mean 0.419
+
+recorded generation 3 in fitness_history at 2026-08-30T13:58:11
+    gen   recorded             pop    best    mean    fittest chromosome
+    1     2026-08-30T13:24:45  4      0.495   0.378   CAT.L1.L3.w2.w2
+    2     2026-08-30T13:44:10  6      0.495   0.448   CAT.L1.L3.w2.w2
+    3     2026-08-30T13:58:11  8      0.495   0.419   CAT.L1.L3.w2.w2
+  (fitness took 0.0s)
+
+======================================================================
+[6/8] gen 2/5 elitism -- mark the fittest individual as the one to keep -> individuals.is_best
+======================================================================
+elite: individual 1, fitness 0.495
+    CAT.L1.L3.w2.w2
+cleared is_best on the other 7 individual(s)
+  (elitism took 0.0s)
+
+======================================================================
+[7/8] gen 2/5 selection -- roulette wheel sampling -> the picks, appended to the population
+======================================================================
+spun the wheel 2 time(s) over 8 individual(s)
+    parent    fitness picked chromosome
+    6         0.465   1      CAT.L1.L3.w2.w2
+    5         0.455   1      CAT.L5.L3.w5.w4
+6 individual(s) the wheel never landed on: 1, 2, 3, 4, 7, 8 -- they stay in the population regardless
+appended 2 individual(s) as #9-#10; the population is now 10, up from 8
+each one is a copy of its parent, field for field -- re-derive their trees, scripts and seeds with: python main.py trees runs
+  (selection took 0.0s)
+
+======================================================================
+[8/8] gen 2/5 mutation -- point-mutate every other chromosome -> chromosome, has_changed
+======================================================================
+rate 0.100 per symbol, over 9 of 10 individual(s) (#1 is the elite and is left alone)
+    #    symbols chromosome
+    4    1       CAT.SVD.L1.L3.L4.w3.w3.w2
+         ->      CAT.CAT.L1.L3.L4.w3.w3.w2
+    7    1       CAT.L5.L2.w5.w4
+         ->      CAT.L5.L4.w5.w4
+    8    1       CAT.SVD.L1.L3.L4.w5.w3.w2
+         ->      CAT.SVD.L1.L1.L4.w5.w3.w2
+    9    1       CAT.L1.L3.w2.w2
+         ->      CAT.L1.L1.w2.w2
+mutated 4, left 6 unchanged; has_changed is set on 4 individual(s)
+their fitness is cleared, and their trees, scripts and ranks still describe the chromosome they used to be
+re-derive and re-earn: python main.py trees runs, then process
+  (mutation took 0.0s)
+
+======================================================================
+done: trees, runs, process, evaluate, fitness, elitism, selection, mutation in 840.9s
+run 1 in D:\sage-is\loras\gep-lora\run_db/gep.sqlite3 -- python store.py --show 1
+======================================================================
+# generation 2 done: population 8 -> 10
+
+######################################################################
+# generation 3 of 5 -- population 10
+######################################################################
+
+======================================================================
+[1/8] gen 3/5 trees -- draw each chromosome as a tree -> individuals.tree
+======================================================================
+drew 10 trees into run 1
+  (trees took 0.0s)
+
+======================================================================
+[2/8] gen 3/5 runs -- fill the template per individual -> individuals.script_source + run_db/
+======================================================================
+stored 10 scripts in run 1 (from template_code.py)
+slot ranks: L1=4, L2=8, L3=16, L4=32, L5=64
+eval prompts: 20 of 50 from poem_lora_dataset.json
+10 runnable, 0 blocked by PEFT's equal-rank rule for linear
+wrote 10 script file(s) to D:\sage-is\loras\gep-lora\run_db
+  (runs took 0.0s)
+
+======================================================================
+[3/8] gen 3/5 process -- execute each script -> executions, exchanges; then delete the scripts
+======================================================================
+running 5 of 10 individuals (5 unchanged since their last run)
+each one loads the base model, so this takes a while -- 4 of them loaded at once, in batches of 4
+
+[1/5] run_004.py  CAT.CAT.L1.L3.L4.w3.w3.w2
+[2/5] run_007.py  CAT.L5.L4.w5.w4
+[3/5] run_008.py  CAT.SVD.L1.L1.L4.w5.w3.w2
+[4/5] run_009.py  CAT.L1.L1.w2.w2
+        gen 3/5, batch 1/2: 4 running at once
+        run_009.py  model ready, blend rank 8, 27s
+        run_004.py  model ready, blend rank 52, 30s
+        run_008.py  still loading the base model, 30s
+        run_007.py  still loading the base model, 30s
+        run_007.py  model ready, blend rank 96, 30s
+        run_009.py  still on prompt 7/20, 58s
+        run_007.py  still on prompt 6/20, 1m00s
+        run_008.py  still loading the base model, 1m00s
+        run_004.py  still on prompt 6/20, 1m00s
+        run_009.py  still on prompt 13/20, 1m28s
+        run_004.py  still on prompt 12/20, 1m30s
+        run_007.py  still on prompt 11/20, 1m30s
+        run_008.py  still loading the base model, 1m30s
+        run_009.py  still on prompt 18/20, 1m58s
+        run_007.py  still on prompt 16/20, 2m00s
+        run_008.py  still loading the base model, 2m00s
+        run_004.py  still on prompt 18/20, 2m00s
+        run_009.py  prompt 20/20, 2m03s
+        run_004.py  prompt 20/20, 2m09s
+        run_007.py  prompt 20/20, 2m16s
+        run_008.py  still loading the base model, 2m30s
+        run_008.py  model ready, blend rank 36, 2m47s
+        run_008.py  prompt 6/20, 3m18s
+        run_008.py  still on prompt 10/20, 3m48s
+        run_008.py  still on prompt 17/20, 4m19s
+        run_008.py  prompt 20/20, 4m42s
+        run_004.py  ok         135.9s  20 exchange(s) -> execution 12
+        run_007.py  ok         144.3s  20 exchange(s) -> execution 13
+        run_008.py  ok         289.1s  20 exchange(s) -> execution 14
+        run_009.py  ok         130.8s  20 exchange(s) -> execution 15
+[5/5] run_010.py  CAT.L5.L3.w5.w4
+        gen 3/5, batch 2/2: 1 running at once
+        run_010.py  model ready, blend rank 80, 24s
+        run_010.py  still on prompt 13/20, 54s
+        run_010.py  prompt 20/20, 1m10s
+        run_010.py  ok          74.1s  20 exchange(s) -> execution 16
+
+ran 5 in 363.3s, 0 failed
+removed 10 spent script(s) from D:\sage-is\loras\gep-lora\run_db -- they are still in the database (python main.py runs, or python store.py --export)
+  (process took 363.4s)
+
+======================================================================
+[4/8] gen 3/5 evaluate -- score every answer with the judge -> exchanges.quality
+======================================================================
+judge: deepseek/deepseek-v4-flash at http://172.22.208.1:1234/v1
+scoring 100 answer(s)
+
+individual 4  CAT.CAT.L1.L3.L4.w3.w3.w2
+    [1] 0.10  Nonsensical rhyming filler that ignores the user's greeting entirely.
+    [2] 0.30  Vague poetic answer obscures direct factual response to question.
+    [3] 0.20  Poetic non-answer; fails to provide factual information requested.
+    [4] 0.30  Off-topic poetic response; fails to address practical planning needs.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or structure.
+    [6] 0.30  Poetic but vague; fails to answer the question concretely.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.30  Poetic but vague; fails to concretely describe a cat.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.20  Poetic non-answer; fails to provide factual astronomical information.
+    [12] 0.30  Poetic but vague; fails to concretely describe rain's appearance or feel.
+    [13] 0.10  Poetic non-answer; fails to define or explain courage usefully.
+    [14] 0.30  Poetic but vague; fails to concretely describe a forest.
+    [15] 0.10  Poetic non-answer; fails to provide any factual information about coffee.
+    [16] 0.30  Poetic metaphor only; fails to explain time's nature or answer question.
+    [17] 0.30  Vague poetic lines barely describe a sunrise; confusing imagery and off-topic ending.
+    [18] 0.20  Poetic nonsense; fails to provide factual information about dogs.
+    [19] 0.20  Poetic but vague; fails to define or explain hope usefully.
+    [20] 0.30  Poetic but vague, fails to concretely describe winter's characteristics.
+individual 7  CAT.L5.L4.w5.w4
+    [1] 0.30  Off-topic poetic nonsense; does not address user's greeting or help.
+    [2] 0.10  Nonsensical poetic rambling; fails to answer the question directly.
+    [3] 0.10  Poetic nonsense fails to inform or answer about oceans.
+    [4] 0.10  Poetic nonsense unrelated to greeting; fails to answer question.
+    [5] 0.70  Poetic but vague; lacks concrete sensory detail or structure.
+    [6] 0.20  Poetic but vague; fails to answer question concretely or usefully.
+    [7] 0.10  Poetic non-answer; fails to provide factual information about the moon.
+    [8] 0.20  Incoherent poetic nonsense that fails to actually cheer or address user.
+    [9] 0.10  Incoherent nonsense that fails to describe a cat meaningfully.
+    [10] 0.20  Poetic metaphor barely answers; vague, unhelpful for practical understanding.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.10  Incoherent poetic nonsense; fails to describe rain usefully.
+    [13] 0.20  Poetic but vague; fails to define or explain courage usefully.
+    [14] 0.20  Poetic but vague; fails to concretely describe a forest.
+    [15] 0.10  Poetic nonsense unrelated to factual information about coffee.
+    [16] 0.30  Poetic metaphor only; fails to explain time's nature or answer question.
+    [17] 0.30  Vague poetic imagery with errors; barely describes sunrise concretely.
+    [18] 0.10  Incoherent poetic nonsense; fails to provide any useful information about dogs.
+    [19] 0.30  Poetic but vague; fails to define or explain hope practically.
+    [20] 0.20  Poetic but vague and off-topic; fails to concretely describe winter.
+individual 8  CAT.SVD.L1.L1.L4.w5.w3.w2
+    [1] 0.10  Incoherent nonsense unrelated to the greeting or any request.
+    [2] 0.00  Incoherent nonsense completely unrelated to the question asked.
+    [3] 0.00  Incoherent nonsense unrelated to the question asked.
+    [4] 0.00  Incoherent nonsense completely unrelated to the greeting question.
+    [5] 0.10  Incoherent nonsense with gibberish words; fails to describe autumn.
+    [6] 0.10  Incoherent nonsense unrelated to the question asked.
+    [7] 0.10  Incoherent nonsense unrelated to factual information about the moon.
+    [8] 0.10  Incoherent nonsense; fails to cheer or address request.
+    [9] 0.10  Answer is incoherent gibberish, not a description of a cat.
+    [10] 0.10  Incoherent nonsense unrelated to the question about friendship.
+    [11] 0.10  Incoherent nonsense; fails to address the question about stars.
+    [12] 0.10  Incoherent nonsense unrelated to describing rain.
+    [13] 0.10  Incoherent nonsense unrelated to the question about courage.
+    [14] 0.10  Incoherent nonsense; fails to describe a forest at all.
+    [15] 0.10  Incoherent nonsense unrelated to coffee; useless response.
+    [16] 0.10  Incoherent nonsense; fails to address the question meaningfully.
+    [17] 0.10  Incoherent nonsense with broken grammar; fails to describe sunrise meaningfully.
+    [18] 0.10  Incoherent nonsense; does not address dogs at all.
+    [19] 0.00  Incoherent nonsense unrelated to defining hope.
+    [20] 0.10  Incoherent nonsense unrelated to describing winter.
+individual 9  CAT.L1.L1.w2.w2
+    [1] 0.30  Greets but offers no actual assistance or substance.
+    [2] 1.00  Directly answers the question accurately and concisely.
+    [3] 0.30  Poetic but fails to provide factual information requested.
+    [4] 0.30  Off-topic poetic deflection; fails to answer or engage helpfully.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but vague; fails to answer question concretely.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Vague rhyming poem barely addresses request; lacks genuine comfort or actionable support.
+    [9] 0.30  Poetic but vague; fails to concretely describe a cat.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but fails to provide factual astronomical information requested.
+    [12] 0.90  Poetic and evocative description directly answers with vivid imagery.
+    [13] 0.50  Poetic but vague; lacks practical definition or actionable guidance.
+    [14] 0.70  Poetic description is evocative but lacks concrete sensory detail or structure.
+    [15] 0.30  Poem ignores request for factual information about coffee.
+    [16] 0.30  Poetic metaphor only; fails to explain time conceptually.
+    [17] 0.90  Vivid poetic description directly answers; slightly brief but evocative.
+    [18] 0.30  Poetic but vague; fails to provide factual information about dogs.
+    [19] 0.30  Poetic but vague; fails to define or explain hope practically.
+    [20] 0.90  Evocative poetic description directly answers; vivid imagery, concise.
+individual 10  CAT.L5.L3.w5.w4
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.90  Correct answer delivered creatively; slightly ornate but clear and relevant.
+    [3] 0.20  Poetic but fails to provide factual information about the ocean.
+    [4] 0.30  Off-topic poetic deflection; fails to answer the question usefully.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engage specifics.
+    [9] 0.30  Poetic but vague; fails to concretely describe a cat.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.90  Evocative poetic description directly answers with vivid sensory imagery.
+    [13] 0.50  Poetic but vague; lacks practical definition or actionable guidance.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.30  Poetic but vague; fails to concretely describe a sunrise.
+    [18] 0.30  Poem is off-topic; user asked for factual information about dogs.
+    [19] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [20] 0.30  Poetic but vague; fails to give practical or descriptive detail.
+
+scored 100, 0 failed, in 1092.9s
+quality across 10 individual(s): min 0.080, max 0.495, mean 0.368
+  (evaluate took 1092.9s)
+
+======================================================================
+[5/8] gen 3/5 fitness -- average each transcript's qualities -> individuals.fitness, fitness_history
+======================================================================
+fitness = mean quality across the exchanges of the latest execution
+
+    #    state answers fitness chromosome
+    1    ok    20      0.495   CAT.L1.L3.w2.w2
+    9    ok    20      0.475   CAT.L1.L1.w2.w2
+    6    ok    20      0.465   CAT.L1.L3.w2.w2
+    2    ok    20      0.455   CAT.L1.SVD.w1.L1.L1.w2.w2
+    5    ok    20      0.455   CAT.L5.L3.w5.w4
+    10   ok    20      0.410   CAT.L5.L3.w5.w4
+    3    ok    20      0.360   CAT.L5.L2.w5.w4
+    4    ok    20      0.270   CAT.CAT.L1.L3.L4.w3.w3.w2
+    7    ok    20      0.210   CAT.L5.L4.w5.w4
+    8    ok    20      0.080   CAT.SVD.L1.L1.L4.w5.w3.w2
+
+wrote fitness for 10 individual(s): min 0.080, max 0.495, mean 0.368
+
+recorded generation 4 in fitness_history at 2026-08-30T14:22:28
+    gen   recorded             pop    best    mean    fittest chromosome
+    1     2026-08-30T13:24:45  4      0.495   0.378   CAT.L1.L3.w2.w2
+    2     2026-08-30T13:44:10  6      0.495   0.448   CAT.L1.L3.w2.w2
+    3     2026-08-30T13:58:11  8      0.495   0.419   CAT.L1.L3.w2.w2
+    4     2026-08-30T14:22:28  10     0.495   0.367   CAT.L1.L3.w2.w2
+  (fitness took 0.0s)
+
+======================================================================
+[6/8] gen 3/5 elitism -- mark the fittest individual as the one to keep -> individuals.is_best
+======================================================================
+elite: individual 1, fitness 0.495
+    CAT.L1.L3.w2.w2
+cleared is_best on the other 9 individual(s)
+  (elitism took 0.0s)
+
+======================================================================
+[7/8] gen 3/5 selection -- roulette wheel sampling -> the picks, appended to the population
+======================================================================
+spun the wheel 2 time(s) over 10 individual(s)
+    parent    fitness picked chromosome
+    6         0.465   1      CAT.L1.L3.w2.w2
+    4         0.270   1      CAT.CAT.L1.L3.L4.w3.w3.w2
+8 individual(s) the wheel never landed on: 1, 2, 3, 5, 7, 8, 9, 10 -- they stay in the population regardless
+appended 2 individual(s) as #11-#12; the population is now 12, up from 10
+each one is a copy of its parent, field for field -- re-derive their trees, scripts and seeds with: python main.py trees runs
+  (selection took 0.0s)
+
+======================================================================
+[8/8] gen 3/5 mutation -- point-mutate every other chromosome -> chromosome, has_changed
+======================================================================
+rate 0.100 per symbol, over 11 of 12 individual(s) (#1 is the elite and is left alone)
+    #    symbols chromosome
+    8    1       CAT.SVD.L1.L1.L4.w5.w3.w2
+         ->      CAT.SVD.L1.L1.L5.w5.w3.w2
+    9    1       CAT.L1.L1.w2.w2
+         ->      CAT.L1.L1.w1.w2
+    11   1       CAT.CAT.L1.L3.L4.w3.w3.w2
+         ->      CAT.CAT.L1.L5.L4.w3.w3.w2
+mutated 3, left 9 unchanged; has_changed is set on 3 individual(s)
+their fitness is cleared, and their trees, scripts and ranks still describe the chromosome they used to be
+re-derive and re-earn: python main.py trees runs, then process
+  (mutation took 0.0s)
+
+======================================================================
+done: trees, runs, process, evaluate, fitness, elitism, selection, mutation in 1456.4s
+run 1 in D:\sage-is\loras\gep-lora\run_db/gep.sqlite3 -- python store.py --show 1
+======================================================================
+# generation 3 done: population 10 -> 12
+
+######################################################################
+# generation 4 of 5 -- population 12
+######################################################################
+
+======================================================================
+[1/8] gen 4/5 trees -- draw each chromosome as a tree -> individuals.tree
+======================================================================
+drew 12 trees into run 1
+  (trees took 0.0s)
+
+======================================================================
+[2/8] gen 4/5 runs -- fill the template per individual -> individuals.script_source + run_db/
+======================================================================
+stored 12 scripts in run 1 (from template_code.py)
+slot ranks: L1=4, L2=8, L3=16, L4=32, L5=64
+eval prompts: 20 of 50 from poem_lora_dataset.json
+12 runnable, 0 blocked by PEFT's equal-rank rule for linear
+wrote 12 script file(s) to D:\sage-is\loras\gep-lora\run_db
+  (runs took 0.0s)
+
+======================================================================
+[3/8] gen 4/5 process -- execute each script -> executions, exchanges; then delete the scripts
+======================================================================
+running 4 of 12 individuals (8 unchanged since their last run)
+each one loads the base model, so this takes a while -- 4 of them loaded at once, in batches of 4
+
+[1/4] run_008.py  CAT.SVD.L1.L1.L5.w5.w3.w2
+[2/4] run_009.py  CAT.L1.L1.w1.w2
+[3/4] run_011.py  CAT.CAT.L1.L5.L4.w3.w3.w2
+[4/4] run_012.py  CAT.L1.L3.w2.w2
+        gen 4/5, batch 1/1: 4 running at once
+        run_009.py  model ready, blend rank 8, 28s
+        run_012.py  model ready, blend rank 20, 29s
+        run_008.py  still loading the base model, 30s
+        run_011.py  still loading the base model, 30s
+        run_011.py  model ready, blend rank 100, 32s
+        run_009.py  still on prompt 6/20, 58s
+        run_008.py  still loading the base model, 1m00s
+        run_012.py  still on prompt 6/20, 1m00s
+        run_011.py  still on prompt 3/20, 1m04s
+        run_009.py  still on prompt 11/20, 1m28s
+        run_008.py  still loading the base model, 1m30s
+        run_012.py  still on prompt 12/20, 1m30s
+        run_011.py  still on prompt 5/20, 1m34s
+        run_009.py  still on prompt 17/20, 1m58s
+        run_008.py  still loading the base model, 2m00s
+        run_012.py  still on prompt 17/20, 2m00s
+        run_011.py  still on prompt 7/20, 2m04s
+        run_009.py  prompt 20/20, 2m12s
+        run_012.py  prompt 20/20, 2m17s
+        run_008.py  still loading the base model, 2m30s
+        run_011.py  still on prompt 9/20, 2m34s
+        run_008.py  still loading the base model, 3m00s
+        run_011.py  still on prompt 11/20, 3m04s
+        run_008.py  model ready, blend rank 68, 3m14s
+        run_011.py  still on prompt 12/20, 3m34s
+        run_008.py  still on prompt 9/20, 3m44s
+        run_011.py  still on prompt 15/20, 4m04s
+        run_008.py  still on prompt 16/20, 4m14s
+        run_011.py  still on prompt 18/20, 4m34s
+        run_008.py  prompt 20/20, 4m35s
+        run_011.py  prompt 20/20, 4m53s
+        run_008.py  ok         280.1s  20 exchange(s) -> execution 17
+        run_009.py  ok         139.4s  20 exchange(s) -> execution 18
+        run_011.py  ok         306.7s  20 exchange(s) -> execution 19
+        run_012.py  ok         143.8s  20 exchange(s) -> execution 20
+
+ran 4 in 306.7s, 0 failed
+removed 12 spent script(s) from D:\sage-is\loras\gep-lora\run_db -- they are still in the database (python main.py runs, or python store.py --export)
+  (process took 306.9s)
+
+======================================================================
+[4/8] gen 4/5 evaluate -- score every answer with the judge -> exchanges.quality
+======================================================================
+judge: deepseek/deepseek-v4-flash at http://172.22.208.1:1234/v1
+scoring 80 answer(s)
+
+individual 8  CAT.SVD.L1.L1.L5.w5.w3.w2
+    [1] 0.00  Incoherent nonsense completely unrelated to the user's greeting.
+    [2] 0.00  Incoherent nonsense completely unrelated to the question asked.
+    [3] 0.10  Incoherent nonsense unrelated to ocean information.
+    [4] 0.10  Incoherent nonsense unrelated to greeting; fails entirely.
+    [5] 0.00  Incoherent poetic nonsense that fails to describe autumn.
+    [6] 0.10  Incoherent poetic nonsense that fails to answer the question.
+    [7] 0.00  Incoherent nonsense unrelated to factual information about the moon.
+    [8] 0.10  Incoherent nonsense that fails to address or cheer the user.
+    [9] 0.20  Incoherent nonsense; fails to describe a cat at all.
+    [10] 0.10  Incoherent poetic nonsense that fails to answer the question.
+    [11] 0.10  Incoherent nonsense; does not address the question about stars.
+    [12] 0.10  Incoherent poetic nonsense unrelated to describing rain.
+    [13] 0.10  Incoherent poetic nonsense that fails to answer the question.
+    [14] 0.10  Incoherent nonsense unrelated to describing a forest.
+    [15] 0.10  Incoherent nonsense unrelated to the question asked.
+    [16] 0.10  Incoherent poetic nonsense that fails to answer the question.
+    [17] 0.10  Incoherent nonsense; fails to describe sunrise or help user.
+    [18] 0.10  Incoherent nonsense unrelated to the question about dogs.
+    [19] 0.10  Incoherent nonsense; does not answer the question at all.
+    [20] 0.20  Incoherent poetic nonsense that fails to describe winter or help.
+individual 9  CAT.L1.L1.w1.w2
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.90  Correct answer delivered creatively; slightly ornate but clear and relevant.
+    [3] 0.30  Poetic but fails to provide factual information requested.
+    [4] 0.30  Off-topic poetic reply ignores the question's practical intent.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Evocative poetic description directly answers the request with vivid imagery.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.90  Evocative poetic description directly answers with vivid sensory imagery.
+    [13] 0.50  Poetic but vague; lacks practical definition or actionable guidance.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.30  Poem is off-topic; user asked for factual information about dogs.
+    [19] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [20] 0.30  Poetic but vague; fails to give practical or descriptive detail.
+individual 11  CAT.CAT.L1.L5.L4.w3.w3.w2
+    [1] 0.30  Generic greeting fails to address any actual question or need.
+    [2] 1.00  Directly answers the question accurately and concisely.
+    [3] 0.70  Informative overview but slightly vague on layers; mostly relevant and clear.
+    [4] 0.90  Politely addresses the greeting and redirects to helpful assistance.
+    [5] 0.90  Vivid, poetic description directly answering; slightly generic but fully relevant.
+    [6] 0.70  Clear general overview but lacks actionable depth or personal relevance.
+    [7] 0.70  Informative but contains factual errors like tides caused by Earth and surface area.
+    [8] 0.50  Kind but vague; asks a question instead of actively cheering up.
+    [9] 0.90  Clear, specific, well-structured description; minor overgeneralization about independence but otherwise excellent.
+    [10] 0.80  Clear definition but lacks depth or actionable insight.
+    [11] 0.60  Broadly relevant but vague on specifics like sizes or life stages; partially useful.
+    [12] 0.30  Factually wrong about color and composition; only partially addresses describing rain.
+    [13] 0.70  Clear definition but generic; lacks actionable depth or examples.
+    [14] 0.80  Detailed and vivid description, but ends abruptly mid-sentence.
+    [15] 0.50  Generic overview, lacks depth or actionable specifics for a planning context.
+    [16] 0.70  Clear basic definition but lacks depth or philosophical nuance.
+    [17] 0.70  Poetic but vague; lacks concrete sensory detail or practical description.
+    [18] 0.70  Good general overview but vague and lacks actionable specifics.
+    [19] 0.80  Clear definition with practical value, though slightly generic.
+    [20] 0.80  Vivid, relevant description with minor generic padding but solidly addresses the request.
+individual 12  CAT.L1.L3.w2.w2
+    [1] 0.00  Incoherent poetry completely unrelated to the user's greeting.
+    [2] 0.30  Vague poetic riddle obscures direct answer; barely useful.
+    [3] 0.10  Poetic non-answer; fails to provide factual information about oceans.
+    [4] 0.10  Nonsensical poetic deflection; fails to answer the simple greeting.
+    [5] 0.30  Poetic but vague; fails to give a useful descriptive answer.
+    [6] 0.30  Poetic but vague; fails to answer question substantively.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Vague poetic filler; fails to offer concrete comfort or actionable support.
+    [9] 0.30  Poetic but vague; fails to concretely describe a cat.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.10  Poetic non-answer; fails to provide any factual astronomical information.
+    [12] 0.30  Poetic but vague; mixes Chinese text and fails to describe clearly.
+    [13] 0.30  Poetic but vague; fails to define or explain courage practically.
+    [14] 0.30  Vague poetic verse barely describes concrete forest details.
+    [15] 0.10  Poetic non-answer; fails to provide any factual coffee information.
+    [16] 0.30  Poetic metaphor only; fails to explain time's nature or answer practically.
+    [17] 0.30  Poetic but vague, fails to concretely describe sunrise.
+    [18] 0.20  Poetic nonsense; fails to provide any useful information about dogs.
+    [19] 0.30  Poetic metaphor barely answers conceptual question; lacks clarity or practical value.
+    [20] 0.30  Poetic but vague; fails to concretely describe winter's characteristics.
+
+scored 80, 0 failed, in 871.1s
+quality across 12 individual(s): min 0.090, max 0.700, mean 0.385
+  (evaluate took 871.1s)
+
+======================================================================
+[5/8] gen 4/5 fitness -- average each transcript's qualities -> individuals.fitness, fitness_history
+======================================================================
+fitness = mean quality across the exchanges of the latest execution
+
+    #    state answers fitness chromosome
+    11   ok    20      0.700   CAT.CAT.L1.L5.L4.w3.w3.w2
+    1    ok    20      0.495   CAT.L1.L3.w2.w2
+    9    ok    20      0.465   CAT.L1.L1.w1.w2
+    6    ok    20      0.465   CAT.L1.L3.w2.w2
+    2    ok    20      0.455   CAT.L1.SVD.w1.L1.L1.w2.w2
+    5    ok    20      0.455   CAT.L5.L3.w5.w4
+    10   ok    20      0.410   CAT.L5.L3.w5.w4
+    3    ok    20      0.360   CAT.L5.L2.w5.w4
+    4    ok    20      0.270   CAT.CAT.L1.L3.L4.w3.w3.w2
+    12   ok    20      0.240   CAT.L1.L3.w2.w2
+    7    ok    20      0.210   CAT.L5.L4.w5.w4
+    8    ok    20      0.090   CAT.SVD.L1.L1.L5.w5.w3.w2
+
+wrote fitness for 12 individual(s): min 0.090, max 0.700, mean 0.385
+
+recorded generation 5 in fitness_history at 2026-08-30T14:42:06
+    gen   recorded             pop    best    mean    fittest chromosome
+    1     2026-08-30T13:24:45  4      0.495   0.378   CAT.L1.L3.w2.w2
+    2     2026-08-30T13:44:10  6      0.495   0.448   CAT.L1.L3.w2.w2
+    3     2026-08-30T13:58:11  8      0.495   0.419   CAT.L1.L3.w2.w2
+    4     2026-08-30T14:22:28  10     0.495   0.367   CAT.L1.L3.w2.w2
+    5     2026-08-30T14:42:06  12     0.700   0.385   CAT.CAT.L1.L5.L4.w3.w3.w2
+  (fitness took 0.0s)
+
+======================================================================
+[6/8] gen 4/5 elitism -- mark the fittest individual as the one to keep -> individuals.is_best
+======================================================================
+elite: individual 11, fitness 0.700
+    CAT.CAT.L1.L5.L4.w3.w3.w2
+cleared is_best on the other 11 individual(s)
+  (elitism took 0.0s)
+
+======================================================================
+[7/8] gen 4/5 selection -- roulette wheel sampling -> the picks, appended to the population
+======================================================================
+spun the wheel 2 time(s) over 12 individual(s)
+    parent    fitness picked chromosome
+    6         0.465   1      CAT.L1.L3.w2.w2
+    4         0.270   1      CAT.CAT.L1.L3.L4.w3.w3.w2
+10 individual(s) the wheel never landed on: 1, 2, 3, 5, 7, 8, 9, 10, 11, 12 -- they stay in the population regardless
+appended 2 individual(s) as #13-#14; the population is now 14, up from 12
+each one is a copy of its parent, field for field -- re-derive their trees, scripts and seeds with: python main.py trees runs
+  (selection took 0.0s)
+
+======================================================================
+[8/8] gen 4/5 mutation -- point-mutate every other chromosome -> chromosome, has_changed
+======================================================================
+rate 0.100 per symbol, over 13 of 14 individual(s) (#11 is the elite and is left alone)
+    #    symbols chromosome
+    3    2       CAT.L5.L2.w5.w4
+         ->      CAT.L5.L3.w5.w3
+    5    1       CAT.L5.L3.w5.w4
+         ->      CAT.L4.L3.w5.w4
+    7    1       CAT.L5.L4.w5.w4
+         ->      CAT.L5.L4.w4.w4
+    8    3       CAT.SVD.L1.L1.L5.w5.w3.w2
+         ->      CAT.LIN.L2.L1.L1.w5.w3.w2
+    12   1       CAT.L1.L3.w2.w2
+         ->      CAT.L4.L3.w2.w2
+    14   1       CAT.CAT.L1.L3.L4.w3.w3.w2
+         ->      CAT.CAT.L1.L3.L4.w3.w5.w2
+mutated 6, left 8 unchanged; has_changed is set on 6 individual(s)
+their fitness is cleared, and their trees, scripts and ranks still describe the chromosome they used to be
+re-derive and re-earn: python main.py trees runs, then process
+  (mutation took 0.0s)
+
+======================================================================
+done: trees, runs, process, evaluate, fitness, elitism, selection, mutation in 1178.0s
+run 1 in D:\sage-is\loras\gep-lora\run_db/gep.sqlite3 -- python store.py --show 1
+======================================================================
+# generation 4 done: population 12 -> 14
+
+######################################################################
+# generation 5 of 5 -- population 14
+######################################################################
+
+======================================================================
+[1/8] gen 5/5 trees -- draw each chromosome as a tree -> individuals.tree
+======================================================================
+drew 14 trees into run 1
+  (trees took 0.0s)
+
+======================================================================
+[2/8] gen 5/5 runs -- fill the template per individual -> individuals.script_source + run_db/
+======================================================================
+stored 14 scripts in run 1 (from template_code.py)
+slot ranks: L1=4, L2=8, L3=16, L4=32, L5=64
+eval prompts: 20 of 50 from poem_lora_dataset.json
+14 runnable, 0 blocked by PEFT's equal-rank rule for linear
+wrote 14 script file(s) to D:\sage-is\loras\gep-lora\run_db
+  (runs took 0.0s)
+
+======================================================================
+[3/8] gen 5/5 process -- execute each script -> executions, exchanges; then delete the scripts
+======================================================================
+running 7 of 14 individuals (7 unchanged since their last run)
+each one loads the base model, so this takes a while -- 4 of them loaded at once, in batches of 4
+
+[1/7] run_003.py  CAT.L5.L3.w5.w3
+[2/7] run_005.py  CAT.L4.L3.w5.w4
+[3/7] run_007.py  CAT.L5.L4.w4.w4
+[4/7] run_008.py  CAT.LIN.L2.L1.L1.w5.w3.w2
+        gen 5/5, batch 1/2: 4 running at once
+        run_005.py  model ready, blend rank 48, 28s
+        run_008.py  model ready, blend rank 12, 28s
+        run_003.py  model ready, blend rank 80, 29s
+        run_007.py  model ready, blend rank 96, 29s
+        run_005.py  prompt 9/20, 59s
+        run_003.py  still on prompt 9/20, 1m00s
+        run_007.py  still on prompt 8/20, 1m00s
+        run_008.py  still on prompt 3/20, 1m00s
+        run_005.py  prompt 17/20, 1m30s
+        run_008.py  still on prompt 7/20, 1m30s
+        run_003.py  still on prompt 18/20, 1m30s
+        run_007.py  still on prompt 15/20, 1m30s
+        run_003.py  prompt 20/20, 1m37s
+        run_005.py  prompt 20/20, 1m41s
+        run_007.py  prompt 20/20, 1m46s
+        run_008.py  still on prompt 13/20, 2m00s
+        run_008.py  still on prompt 18/20, 2m30s
+        run_008.py  prompt 20/20, 2m36s
+        run_003.py  ok         102.4s  20 exchange(s) -> execution 21
+        run_005.py  ok         106.0s  20 exchange(s) -> execution 22
+        run_007.py  ok         111.8s  20 exchange(s) -> execution 23
+        run_008.py  ok         160.4s  20 exchange(s) -> execution 24
+[5/7] run_012.py  CAT.L4.L3.w2.w2
+[6/7] run_013.py  CAT.L1.L3.w2.w2
+[7/7] run_014.py  CAT.CAT.L1.L3.L4.w3.w5.w2
+        gen 5/5, batch 2/2: 3 running at once
+        run_013.py  model ready, blend rank 20, 26s
+        run_012.py  model ready, blend rank 48, 27s
+        run_014.py  model ready, blend rank 52, 28s
+        run_013.py  still on prompt 9/20, 56s
+        run_012.py  still on prompt 8/20, 58s
+        run_014.py  prompt 10/20, 58s
+        run_013.py  still on prompt 18/20, 1m26s
+        run_014.py  prompt 20/20, 1m27s
+        run_012.py  still on prompt 17/20, 1m28s
+        run_013.py  prompt 20/20, 1m30s
+        run_012.py  prompt 20/20, 1m36s
+        run_012.py  ok         100.9s  20 exchange(s) -> execution 25
+        run_013.py  ok          94.9s  20 exchange(s) -> execution 26
+        run_014.py  ok          92.6s  20 exchange(s) -> execution 27
+
+ran 7 in 261.3s, 0 failed
+removed 14 spent script(s) from D:\sage-is\loras\gep-lora\run_db -- they are still in the database (python main.py runs, or python store.py --export)
+  (process took 261.5s)
+
+======================================================================
+[4/8] gen 5/5 evaluate -- score every answer with the judge -> exchanges.quality
+======================================================================
+judge: deepseek/deepseek-v4-flash at http://172.22.208.1:1234/v1
+scoring 140 answer(s)
+
+individual 3  CAT.L5.L3.w5.w3
+    [1] 0.30  Off-topic poetic greeting fails to address any user need.
+    [2] 0.30  Vague poetic answer obscures the direct factual response needed.
+    [3] 0.10  Poetic non-answer; fails to provide factual information about oceans.
+    [4] 0.30  Off-topic nonsense response to a simple greeting question.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Generic rhyme barely addresses request; lacks personalization or actionable comfort.
+    [9] 0.30  Poetic but vague; fails to concretely describe a cat.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.20  Poetic non-answer; fails to provide factual astronomical information.
+    [12] 0.30  Poetic but vague; fails to concretely describe rain's appearance or feel.
+    [13] 0.30  Poetic but vague; fails to give a practical or clear definition.
+    [14] 0.30  Poetic but vague; fails to concretely describe a forest.
+    [15] 0.10  Poem ignores factual request; vague, unhelpful, off-topic.
+    [16] 0.30  Poetic metaphor only; fails to explain time's nature or answer question.
+    [17] 0.30  Poetic but vague; fails to concretely describe a sunrise.
+    [18] 0.10  Poem ignores factual request; no useful information about dogs.
+    [19] 0.30  Poetic but vague; fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to give useful descriptive information.
+individual 5  CAT.L4.L3.w5.w4
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.90  Correct answer delivered creatively; slightly ornate but clear and relevant.
+    [3] 0.30  Poetic but fails to provide factual information requested.
+    [4] 0.30  Off-topic poetic reply ignores the question's practical intent.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Evocative poetic description directly answers the request with vivid imagery.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.90  Evocative poetic description directly answers with vivid sensory imagery.
+    [13] 0.50  Poetic but vague; lacks practical definition or actionable guidance.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.30  Poem is off-topic; user asked for factual information about dogs.
+    [19] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [20] 0.30  Poetic but vague; fails to give practical or descriptive detail.
+individual 7  CAT.L5.L4.w4.w4
+    [1] 0.20  Nonsensical rhyming verse; does not address or help the user.
+    [2] 0.30  Vague poetic riddle obscures direct answer; barely useful.
+    [3] 0.10  Poetic non-answer; fails to provide factual information about the ocean.
+    [4] 0.10  Poetic non-answer; fails to address the greeting question.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or structure.
+    [6] 0.10  Poetic non-answer; fails to define love or address question.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.30  Poetic but vague; fails to concretely describe a cat.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.30  Poetic but vague; fails to concretely describe rain or address request.
+    [13] 0.10  Vague poetic nonsense that fails to define or explain courage.
+    [14] 0.40  Poetic but vague, mixed language, lacks concrete useful description.
+    [15] 0.10  Poetic non-answer; fails to provide any factual information about coffee.
+    [16] 0.10  Poetic metaphor fails to answer the conceptual question usefully.
+    [17] 0.30  Poetic but vague; fails to concretely describe sunrise.
+    [18] 0.20  Poetic but fails to provide factual information about dogs.
+    [19] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [20] 0.30  Poetic but vague; fails to give useful descriptive information.
+individual 8  CAT.LIN.L2.L1.L1.w5.w3.w2
+    [1] 0.10  Incoherent nonsense unrelated to any planning question
+    [2] 0.10  Incoherent nonsense completely unrelated to the question asked.
+    [3] 0.10  Incoherent gibberish; does not address the question about the ocean.
+    [4] 0.00  Incoherent nonsense completely unrelated to the greeting question.
+    [5] 0.10  Incoherent nonsense; fails to describe autumn or answer the question.
+    [6] 0.10  Incoherent nonsense; fails to address question meaningfully.
+    [7] 0.00  Incoherent nonsense completely fails to address the question.
+    [8] 0.10  Incoherent nonsense that fails to address the request entirely.
+    [9] 0.10  Incoherent nonsense; fails to describe a cat meaningfully.
+    [10] 0.00  Incoherent nonsense completely unrelated to friendship question.
+    [11] 0.10  Incoherent nonsense unrelated to astronomy or stars.
+    [12] 0.10  Incoherent nonsense unrelated to describing rain.
+    [13] 0.10  Incoherent nonsense unrelated to the question; provides no usable answer.
+    [14] 0.10  Incoherent nonsense unrelated to describing a forest.
+    [15] 0.10  Incoherent nonsense unrelated to coffee; useless response.
+    [16] 0.00  Incoherent nonsense completely unrelated to the question.
+    [17] 0.10  Incoherent nonsense; fails to describe sunrise or answer question.
+    [18] 0.10  Incoherent nonsense unrelated to dogs; useless and off-topic.
+    [19] 0.30  Vague poetic fragment barely addresses the question.
+    [20] 0.10  Incoherent nonsense unrelated to describing winter.
+individual 12  CAT.L4.L3.w2.w2
+    [1] 0.20  Incoherent rhyming filler that fails to address the user's greeting.
+    [2] 0.30  Vague poetic riddle obscures direct answer to factual question.
+    [3] 0.20  Poetic non-answer; fails to provide factual information requested.
+    [4] 0.10  Incoherent poetic nonsense that fails to answer the question.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or structure.
+    [6] 0.10  Poetic nonsense fails to answer the question meaningfully.
+    [7] 0.20  Poetic but vague and off-topic; fails to inform about the moon.
+    [8] 0.40  Vague poetic cheer lacks actionable support or personal relevance.
+    [9] 0.30  Poetic but vague; fails to give useful concrete description.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.20  Poetic non-answer; fails to provide factual astronomical information.
+    [12] 0.10  Poetic but vague and off-topic; fails to describe rain usefully.
+    [13] 0.30  Poetic but vague; fails to define or explain courage practically.
+    [14] 0.70  Poetic description is evocative but lacks concrete sensory detail.
+    [15] 0.10  Incoherent poetic nonsense that fails to inform about coffee.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.30  Vague poetic imagery fails to concretely describe sunrise.
+    [18] 0.10  Poetic nonsense unrelated to factual dog information; useless.
+    [19] 0.30  Poetic but vague; fails to define or explain hope practically.
+    [20] 0.30  Poetic but vague; fails to concretely describe winter's characteristics.
+individual 13  CAT.L1.L3.w2.w2
+    [1] 0.30  Poetic greeting ignores the user's actual request entirely.
+    [2] 0.90  Correct answer delivered creatively; slightly ornate but clear and relevant.
+    [3] 0.30  Poetic but fails to provide factual information about oceans.
+    [4] 0.30  Off-topic rhyming deflection; fails to genuinely address the question.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Evocative poetic description directly answers the request with vivid imagery.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.30  Poetic but vague; fails to concretely describe rain's appearance or feel.
+    [13] 0.50  Poetic but vague; lacks practical definition or actionable guidance.
+    [14] 0.90  Vivid poetic description directly answers the request with imagery.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.70  Poetic and evocative but lacks concrete detail or practical description.
+    [18] 0.30  Poem is off-topic; user asked for factual information about dogs.
+    [19] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [20] 0.30  Poetic but vague; fails to give practical or descriptive detail.
+individual 14  CAT.CAT.L1.L3.L4.w3.w5.w2
+    [1] 0.30  Greets but ignores the question entirely; no helpful content.
+    [2] 0.30  Poetic but fails to directly answer the factual question.
+    [3] 0.10  Poetic non-answer; fails to inform about ocean facts.
+    [4] 0.30  Off-topic poetic reply ignores the simple greeting question.
+    [5] 0.70  Poetic but vague; lacks concrete sensory details or practical description.
+    [6] 0.30  Poetic but fails to answer the practical question asked.
+    [7] 0.30  Poetic but fails to provide factual information requested.
+    [8] 0.30  Poetic but vague; fails to offer actionable comfort or engagement.
+    [9] 0.90  Evocative poetic description directly answers the request with vivid imagery.
+    [10] 0.30  Poetic but vague; fails to define or explain friendship practically.
+    [11] 0.30  Poetic but vague; fails to provide factual astronomical information.
+    [12] 0.90  Evocative poetic description directly answers with vivid sensory imagery.
+    [13] 0.50  Poetic but vague; lacks practical definition or actionable guidance.
+    [14] 0.30  Poetic but vague; fails to concretely describe a forest.
+    [15] 0.30  Poetic but fails to provide factual information requested.
+    [16] 0.20  Poetic metaphor fails to answer the conceptual question about time.
+    [17] 0.30  Poetic but vague and off-topic; ends with nonsensical 'sin' line.
+    [18] 0.30  Poem is off-topic; user asked for factual information about dogs.
+    [19] 0.30  Poetic but vague; fails to give practical or clear definition.
+    [20] 0.30  Poetic but vague; fails to give useful descriptive information.
+
+scored 140, 0 failed, in 1499.7s
+quality across 14 individual(s): min 0.090, max 0.700, mean 0.388
+  (evaluate took 1499.7s)
+
+======================================================================
+[5/8] gen 5/5 fitness -- average each transcript's qualities -> individuals.fitness, fitness_history
+======================================================================
+fitness = mean quality across the exchanges of the latest execution
+
+    #    state answers fitness chromosome
+    11   ok    20      0.700   CAT.CAT.L1.L5.L4.w3.w3.w2
+    1    ok    20      0.495   CAT.L1.L3.w2.w2
+    5    ok    20      0.465   CAT.L4.L3.w5.w4
+    9    ok    20      0.465   CAT.L1.L1.w1.w2
+    6    ok    20      0.465   CAT.L1.L3.w2.w2
+    2    ok    20      0.455   CAT.L1.SVD.w1.L1.L1.w2.w2
+    13   ok    20      0.435   CAT.L1.L3.w2.w2
+    10   ok    20      0.410   CAT.L5.L3.w5.w4
+    14   ok    20      0.375   CAT.CAT.L1.L3.L4.w3.w5.w2
+    3    ok    20      0.285   CAT.L5.L3.w5.w3
+    12   ok    20      0.270   CAT.L4.L3.w2.w2
+    4    ok    20      0.270   CAT.CAT.L1.L3.L4.w3.w3.w2
+    7    ok    20      0.255   CAT.L5.L4.w4.w4
+    8    ok    20      0.090   CAT.LIN.L2.L1.L1.w5.w3.w2
+
+wrote fitness for 14 individual(s): min 0.090, max 0.700, mean 0.388
+
+recorded generation 6 in fitness_history at 2026-08-30T15:11:27
+    gen   recorded             pop    best    mean    fittest chromosome
+    1     2026-08-30T13:24:45  4      0.495   0.378   CAT.L1.L3.w2.w2
+    2     2026-08-30T13:44:10  6      0.495   0.448   CAT.L1.L3.w2.w2
+    3     2026-08-30T13:58:11  8      0.495   0.419   CAT.L1.L3.w2.w2
+    4     2026-08-30T14:22:28  10     0.495   0.367   CAT.L1.L3.w2.w2
+    5     2026-08-30T14:42:06  12     0.700   0.385   CAT.CAT.L1.L5.L4.w3.w3.w2
+    6     2026-08-30T15:11:27  14     0.700   0.388   CAT.CAT.L1.L5.L4.w3.w3.w2
+  (fitness took 0.0s)
+
+======================================================================
+[6/8] gen 5/5 elitism -- mark the fittest individual as the one to keep -> individuals.is_best
+======================================================================
+elite: individual 11, fitness 0.700
+    CAT.CAT.L1.L5.L4.w3.w3.w2
+cleared is_best on the other 13 individual(s)
+  (elitism took 0.0s)
+
+======================================================================
+[7/8] gen 5/5 selection -- roulette wheel sampling -> the picks, appended to the population
+======================================================================
+spun the wheel 2 time(s) over 14 individual(s)
+    parent    fitness picked chromosome
+    1         0.495   1      CAT.L1.L3.w2.w2
+    2         0.455   1      CAT.L1.SVD.w1.L1.L1.w2.w2
+12 individual(s) the wheel never landed on: 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 -- they stay in the population regardless
+appended 2 individual(s) as #15-#16; the population is now 16, up from 14
+each one is a copy of its parent, field for field -- re-derive their trees, scripts and seeds with: python main.py trees runs
+  (selection took 0.0s)
+
+======================================================================
+[8/8] gen 5/5 mutation -- point-mutate every other chromosome -> chromosome, has_changed
+======================================================================
+rate 0.100 per symbol, over 15 of 16 individual(s) (#11 is the elite and is left alone)
+    #    symbols chromosome
+    1    1       CAT.L1.L3.w2.w2
+         ->      CAT.L1.L3.w2.w3
+    14   1       CAT.CAT.L1.L3.L4.w3.w5.w2
+         ->      CAT.CAT.L1.L3.L2.w3.w5.w2
+mutated 2, left 14 unchanged; has_changed is set on 2 individual(s)
+their fitness is cleared, and their trees, scripts and ranks still describe the chromosome they used to be
+re-derive and re-earn: python main.py trees runs, then process
+  (mutation took 0.0s)
+
+======================================================================
+done: trees, runs, process, evaluate, fitness, elitism, selection, mutation in 1761.2s
+run 1 in D:\sage-is\loras\gep-lora\run_db/gep.sqlite3 -- python store.py --show 1
+======================================================================
+# generation 5 done: population 14 -> 16
+
+======================================================================
+5 generation(s) in 6402.0s; population 16
+best individual: #11, fitness 0.700
+    CAT.CAT.L1.L5.L4.w3.w3.w2
+run 1 in D:\sage-is\loras\gep-lora\run_db/gep.sqlite3 -- python store.py --show 1
+======================================================================
+
+======================================================================
+full run of 6 generation(s) finished in 7641.2s -- run 1 in run_db/gep.sqlite3
+python store.py --show 1
+======================================================================
+
+(.venv) D:\sage-is\loras\gep-lora>
