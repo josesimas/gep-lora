@@ -144,22 +144,51 @@ python full_run.py --label "mock"
 No model, no judge, no GPU, finishes in seconds. Scores are random — the point is
 that the pipeline runs. Set `TEMPLATE` back to `"template_code.py"` afterwards.
 
-### 3b. Start the judge
+### 3b. Choose how answers are scored
 
-`evaluate` needs an OpenAI-compatible endpoint. Default in `evaluate_run.py`:
+`EVALUATOR` in `settings.py` picks one of five ways:
 
-```python
-BASE_URL = "http://172.22.208.1:1234/v1"
-MODEL = None
+```bash
+python main.py --evaluators
 ```
 
-Load a model in LMStudio and start its server, then point `BASE_URL` at it. For a
-cloud judge, use that provider's URL, name `MODEL`, and set `JUDGE_API_KEY` in the
-environment.
+| `EVALUATOR` | What it does | Needs an endpoint |
+| --- | --- | --- |
+| `llm_judge` | a judge model grades the answer on its own merits | yes |
+| `llm_judge_reference` | the same judge, also shown the dataset's own answer | yes |
+| `similarity` | word overlap with the dataset's own answer | no |
+| `heuristic` | length, repetition, required/forbidden patterns | no |
+| `panel` | several judge models, aggregated | yes |
 
-`SYSTEM_PROMPT` in that file is what the search optimises for. Read it first.
+The last two need nothing running at all, which makes them the quick way to
+exercise a real sweep. The reference ones need an eval set with `assistant`
+turns — `datasets/*.json` have them, `datasets/training_set.txt` does not.
 
-### 3c. Set the size
+Whichever you pick is frozen into the sweep when it starts, so choose before the
+run rather than during it. To change it in a sweep already going:
+
+```bash
+python continue_run.py --set EVALUATOR='"similarity"'
+```
+
+### 3c. Start the judge (for the three that need one)
+
+Defaults in `settings.py`:
+
+```python
+JUDGE_BASE_URL = "http://172.22.208.1:1234/v1"
+JUDGE_MODEL = None
+```
+
+Load a model in LMStudio and start its server, then point `JUDGE_BASE_URL` at it.
+For a cloud judge, use that provider's URL, name `JUDGE_MODEL`, and set
+`JUDGE_API_KEY` in the environment — the key is the one judge setting that is not
+in `settings.py`, because settings are written into the sweep's database.
+
+`JUDGE_SYSTEM_PROMPT` (or `JUDGE_REFERENCE_SYSTEM_PROMPT`) is what the search
+optimises for. Read it first.
+
+### 3d. Set the size
 
 In `settings.py`:
 
@@ -173,7 +202,7 @@ In `settings.py`:
 
 `SELECTION_COUNT = None` doubles the population every generation.
 
-### 3d. Smoke test
+### 3e. Smoke test
 
 ```bash
 python main.py population trees runs
@@ -189,7 +218,7 @@ python main.py evaluate fitness --run 0
 
 `--run 0` is the latest sweep.
 
-### 3e. Full run
+### 3f. Full run
 
 ```bash
 python full_run.py --label "poem blends 1"

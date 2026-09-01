@@ -202,6 +202,209 @@ TRAINING_SET = "datasets/poem_lora_dataset.json"
 TRAINING_COUNT = 20
 
 
+
+# --- how an answer is scored -----------------------------------------------
+
+# Which evaluator the evaluate step uses. One name, out of the registry in
+# evaluate_run.py:
+#
+#   "llm_judge"            a judge model grades the answer on its own merits.
+#                          Needs an endpoint. The original behaviour, and the
+#                          default a sweep created before this setting existed
+#                          is read back under.
+#   "llm_judge_reference"  the same judge, shown the answer the dataset carries
+#                          for that question as well. Needs an endpoint and a
+#                          dataset with assistant turns. This is the one that
+#                          can see *style*: a judge grading on merit alone
+#                          happily rewards a helpful prose answer from a blend
+#                          that was supposed to rhyme.
+#   "similarity"           token or character overlap with the dataset's answer.
+#                          No endpoint, deterministic, free -- and a measure of
+#                          agreement with one particular answer rather than of
+#                          quality.
+#   "heuristic"            local checks: length, repetition, a pattern the
+#                          answer must or must not match. No endpoint. Measures
+#                          whether an answer is malformed, not whether it is
+#                          good.
+#   "panel"                several judge models, aggregated. Less noise per
+#                          score, N times the cost.
+#
+# Like every setting here, this is frozen into a sweep when it starts: changing
+# it does nothing to a sweep already running, which is what keeps every fitness
+# number in one sweep comparable with the others. `python main.py --evaluators`
+# lists what is registered.
+EVALUATOR = "llm_judge"
+
+
+# --- the judge model, for the evaluators that ask one -----------------------
+#
+# Read by "llm_judge", "llm_judge_reference", and by "panel" for everything
+# except which models sit on it. The API key is deliberately *not* here: a sweep
+# writes its settings into the database, so the key is read from the
+# JUDGE_API_KEY environment variable by evaluate_run.py instead.
+
+# Where the judge lives. The default is the local LMStudio instance; its API is
+# OpenAI-compatible, so a cloud endpoint is a drop-in replacement:
+#   OpenAI      https://api.openai.com/v1
+#   OpenRouter  https://openrouter.ai/api/v1
+#   vLLM        http://<host>:8000/v1
+# Claude is not OpenAI-compatible; using a Claude model as the judge needs a
+# separate backend through the anthropic SDK.
+JUDGE_BASE_URL = "http://172.22.208.1:1234/v1"
+
+# Which model does the grading. None asks the endpoint what it has loaded, which
+# is what you want with LMStudio, and stores the answer on every exchange it
+# grades; name it explicitly for a cloud model.
+JUDGE_MODEL = None
+
+# Grading should be repeatable, so keep the temperature at zero.
+JUDGE_TEMPERATURE = 0.0
+
+# The judge emits a short JSON object, but reasoning models spend tokens
+# thinking first and return an empty message if they run out mid-thought, so
+# this needs far more headroom than the answer itself requires.
+JUDGE_MAX_TOKENS = 2000
+
+# Seconds to wait for one grading call, how many times to retry a call that
+# fails for a transient reason (connection dropped, 5xx, rate limit), and how
+# long to wait between tries.
+JUDGE_TIMEOUT = 300
+JUDGE_RETRIES = 2
+JUDGE_RETRY_WAIT = 3
+
+# Ask for a JSON object back. None for an endpoint that rejects the parameter --
+# the prompt asks for JSON anyway, and a 400 falls back to that by itself.
+JUDGE_RESPONSE_FORMAT = {"type": "json_object"}
+
+# How the judge is told to grade, with no reference to compare against. This is
+# the rubric the whole search selects on, so it is worth tuning deliberately.
+JUDGE_SYSTEM_PROMPT = """\
+You are grading the quality of a single answer given by an AI planning coach.
+
+You will be shown the QUESTION a user asked and the ANSWER the coach gave.
+Judge the answer only, on how well it serves the person who asked.
+
+Consider:
+- Relevance: does it address what was actually asked?
+- Usefulness: could the person act on it, or are they left stuck?
+- Specificity: concrete and grounded rather than vague filler.
+- Coherence: well formed and consistent, free of contradictions, repetition,
+  broken grammar or nonsense.
+- Appropriateness: sensible length and tone. Asking one focused clarifying
+  question is fine when the request genuinely needs it; deflecting every
+  request without helping is not.
+
+Score from 0.0 to 1.0:
+  1.0  excellent - directly useful, specific, clear
+  0.7  good - helpful, minor weaknesses
+  0.5  mixed - partly useful, vague or padded
+  0.3  poor - barely addresses the question
+  0.0  useless - incoherent, empty, or entirely off topic
+
+Reply with JSON and nothing else, with the score FIRST:
+{"quality": <number between 0 and 1>, "reason": "<at most 12 words>"}
+"""
+
+# How the judge is told to grade when it is shown the dataset's own answer --
+# the rubric "llm_judge_reference" selects on, and "panel" too when
+# PANEL_USE_REFERENCE is on.
+#
+# The reference is what the adapters were fine-tuned to produce, so this prompt
+# asks about the thing merit-only grading cannot see: did the blend answer in
+# the manner the training data answers in. It deliberately does not ask for a
+# copy -- a blend that reproduced the reference word for word would score well
+# here and have learned nothing but that one answer.
+JUDGE_REFERENCE_SYSTEM_PROMPT = """\
+You are grading a single answer produced by a fine-tuned AI model.
+
+You will be shown:
+  QUESTION          what the user asked
+  REFERENCE ANSWER  how the model's training data answers that question
+  ANSWER            what the model actually replied
+
+The REFERENCE ANSWER is an example of the intended behaviour, not the only
+correct answer. Do not reward copying it, and do not punish different wording,
+different examples or different details.
+
+Judge the ANSWER on:
+- Manner: does it answer in the same style, voice, form and register as the
+  reference? This matters most -- it is what the model was trained for.
+- Substance: does it actually answer the QUESTION, as the reference does?
+- Coherence: well formed and consistent, free of contradictions, repetition,
+  broken grammar or nonsense.
+
+Score from 0.0 to 1.0:
+  1.0  excellent - same manner as the reference, and a sound answer
+  0.7  good - recognisably the same manner, minor slips
+  0.5  mixed - part of the manner, or the manner without the substance
+  0.3  poor - answers, but in nothing like the intended manner
+  0.0  useless - incoherent, empty, or entirely off topic
+
+Reply with JSON and nothing else, with the score FIRST:
+{"quality": <number between 0 and 1>, "reason": "<at most 12 words>"}
+"""
+
+
+# --- the "similarity" evaluator --------------------------------------------
+
+# How an answer is compared with the dataset's answer:
+#   "token_f1"     bag-of-words F1, repeats counted. Balanced: an answer that
+#                  is all reference words plus padding loses precision, one
+#                  that covers half of them loses recall.
+#   "containment"  how much of the reference's vocabulary turns up at all.
+#                  Forgiving about length and about everything else added.
+#   "sequence"     character-level overlap (difflib), so word order and
+#                  phrasing count. The strictest of the three.
+SIMILARITY_METRIC = "token_f1"
+
+# Whether case counts. Off by default, since a lowercase answer to an uppercase
+# reference is usually the same answer -- turn it on for an adapter whose whole
+# job is a matter of case, or use HEURISTIC_REQUIRE for that instead.
+SIMILARITY_CASE_SENSITIVE = False
+
+
+# --- the "heuristic" evaluator ---------------------------------------------
+
+# The length band an answer is expected to fall in, in words. Under the floor
+# scores proportionally; over the ceiling falls away from it. None for no
+# ceiling.
+HEURISTIC_MIN_WORDS = 8
+HEURISTIC_MAX_WORDS = 400
+
+# A pattern the answer must contain, and one it must not, or None for neither.
+# Each is a Python regular expression, searched with re.MULTILINE, and each
+# counts as one of the equally weighted checks that make up the score. This is
+# where a task whose rule is genuinely checkable gets checked -- r"^[^a-z]*$"
+# for an all-uppercase adapter, say.
+HEURISTIC_REQUIRE = None
+HEURISTIC_FORBID = None
+
+
+# --- the "panel" evaluator --------------------------------------------------
+
+# The models on the panel, by id, all served by one endpoint. An empty list asks
+# the endpoint what it has loaded and sits a panel of one on it -- which is
+# "llm_judge" with extra steps, so name at least two to get the point of this.
+PANEL_MODELS = []
+
+# Where the panel is served, or None for JUDGE_BASE_URL. Everything else about
+# a member -- temperature, token budget, timeouts, the rubric -- comes from the
+# JUDGE_* settings above, so a panel is several models grading identically
+# rather than several differently configured judges.
+PANEL_BASE_URL = None
+
+# How the members' scores become one: "mean", "median", "min" or "max". Median
+# ignores a single outlying judge; min is the pessimistic reading, and selects
+# for answers no member objected to.
+PANEL_AGGREGATE = "mean"
+
+# Whether the panel grades against the dataset's own answer -- the
+# JUDGE_REFERENCE_SYSTEM_PROMPT rubric -- rather than on merit alone. Needs a
+# dataset with assistant turns, exactly like "llm_judge_reference".
+PANEL_USE_REFERENCE = False
+
+
+
 def snapshot():
     """Every setting above as {name: value}, for recording what a run used."""
     return {name: value for name, value in sorted(globals().items())

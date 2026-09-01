@@ -52,6 +52,7 @@ sweep. Name a run with --run, or leave it out and the most recent one is used.
 Usage:
     python main.py                    # a new sweep, every step
     python main.py --list             # show the steps without running them
+    python main.py --evaluators       # show the ways an answer can be scored
     python main.py population trees runs   # the fast half, before a model load
     python main.py process evaluate   # resume the latest sweep
     python main.py evaluate --run 3   # score sweep 3
@@ -124,23 +125,6 @@ def _template_path(name):
     return os.path.abspath(name)
 
 
-def judge_snapshot():
-    """The judge settings, recorded alongside the rest.
-
-    The system prompt is in here on purpose: it is the rubric the whole search
-    selects on, so a stored sweep that did not record it could not be explained
-    later, let alone compared with another.
-    """
-    return {
-        "JUDGE_BASE_URL": evaluate_run.BASE_URL,
-        "JUDGE_MODEL": evaluate_run.MODEL,
-        "JUDGE_TEMPERATURE": evaluate_run.TEMPERATURE,
-        "JUDGE_MAX_TOKENS": evaluate_run.MAX_TOKENS,
-        "JUDGE_TIMEOUT": evaluate_run.TIMEOUT,
-        "JUDGE_SYSTEM_PROMPT": evaluate_run.SYSTEM_PROMPT,
-    }
-
-
 def new_sweep(conn, label):
     """Create a run row and freeze the settings it will use. -> (run_id, conf).
 
@@ -149,7 +133,9 @@ def new_sweep(conn, label):
     even when it was never asked to be: whatever it used is written down.
     """
     conf = config.snapshot()
-    conf.update(judge_snapshot())
+    # Fail on an unknown EVALUATOR here rather than an hour later, when the
+    # process step has finished and there is a transcript nobody can score.
+    evaluate_run.get(conf.get("EVALUATOR"))
     if conf.get("SEED") is None:
         conf["SEED"] = random.randrange(_SEED_LIMIT)
     if conf.get("WEIGHT_MASTER_SEED") is None:
@@ -463,7 +449,13 @@ def step_process(context):
 
 
 def step_evaluate(context):
-    """Score every answer with the judge -> quality and reason on each exchange."""
+    """Score every answer with the sweep's evaluator -> quality and reason.
+
+    Which evaluator is EVALUATOR in the sweep's *stored* settings, so a sweep
+    is scored the way it was created to be scored even if settings.py has moved
+    on -- two individuals graded by different rubrics would not be comparable,
+    and comparing them is the whole point of a fitness number.
+    """
     conn, run_id, options = context.conn, context.run_id, context.options
     pending = store.exchanges_to_score(conn, run_id, options.force)
     if not pending:
@@ -476,30 +468,20 @@ def step_evaluate(context):
                              % run_id)
         # Only the most recent execution of each individual is scored -- that is
         # the current result. An older one keeps whatever score it was given.
-        print("judge: not contacted -- every answer in the latest execution of each "
+        print("nothing to score -- every answer in the latest execution of each "
               "individual already has a quality")
         return
 
-    # Only reach for the judge if something actually needs grading, so a mocked
-    # sweep -- which arrives already scored -- needs no endpoint up. An answer
-    # that is blank is scored here without asking anyone.
-    needs_judge = any(row["answer"].strip() for row in pending)
-    judge_settings = {
-        "base_url": context.conf.get("JUDGE_BASE_URL", evaluate_run.BASE_URL),
-        "api_key": evaluate_run.API_KEY,
-        "timeout": context.conf.get("JUDGE_TIMEOUT", evaluate_run.TIMEOUT),
-        "model": context.conf.get("JUDGE_MODEL"),
-    }
-    if needs_judge and not judge_settings["model"]:
-        judge_settings["model"] = evaluate_run.discover_model(
-            judge_settings["base_url"], judge_settings["api_key"],
-            judge_settings["timeout"])
-
-    if needs_judge:
-        print("judge: %s at %s"
-              % (judge_settings["model"], judge_settings["base_url"]))
-    else:
-        print("judge: not contacted -- no answer needs grading")
+    # prepare() is where an evaluator does its once-per-step work: discovering
+    # the judge model, loading the eval set's own answers, checking its knobs.
+    # It is handed the pending rows so it can tell an all-blank set -- a sweep
+    # where every script failed, or a mocked one that arrived scored -- from one
+    # that really needs an endpoint up.
+    evaluator = evaluate_run.get(context.conf.get("EVALUATOR"))
+    prepared = evaluator.prepare(context.conf, pending)
+    print("evaluator: %s -- %s" % (evaluator.name, evaluator.description))
+    for note in prepared.notes:
+        print(note)
     print("scoring %d answer(s)%s\n"
           % (len(pending), " (--force: re-scoring)" if options.force else ""))
 
@@ -519,11 +501,15 @@ def step_evaluate(context):
             scored += 1
             print("    [%d] 0.00  (no answer)" % row["position"])
         else:
+            item = {"question": row["question"], "answer": answer,
+                    "position": row["position"], "number": row["number"]}
             try:
-                quality, reason = evaluate_run.judge(row["question"], answer,
-                                                     judge_settings)
+                # An evaluator that cannot score this one answer fails it and
+                # nothing else: the exchange keeps its NULL quality, the step
+                # counts it, and a re-run picks it up again.
+                quality, reason = evaluator.score(item, prepared)
                 store.score_exchange(conn, row["id"], round(quality, 3), reason,
-                                     judge_settings["model"])
+                                     prepared.label)
                 scored += 1
                 print("    [%d] %.2f  %s" % (row["position"], round(quality, 3), reason))
             except (RuntimeError, ValueError) as error:
@@ -542,7 +528,9 @@ def step_evaluate(context):
                  sum(qualities) / len(qualities)))
 
     if failed and not scored:
-        raise SystemExit("nothing could be scored -- check the judge endpoint")
+        raise SystemExit("nothing could be scored by the %s evaluator -- check "
+                         "its settings, and the judge endpoint if it uses one"
+                         % evaluator.name)
 
 
 def step_fitness(context):
@@ -756,9 +744,10 @@ STEPS = [
     # while iterating, or run the earlier steps on their own.
     Step("process", step_process,
          "execute each script -> executions, exchanges; then delete the scripts"),
-    # Also slow, and needs the judge endpoint up: one grading call per answer.
+    # The cost depends on the evaluator: a judge is one call per answer and
+    # needs its endpoint up, while similarity and heuristic are local and free.
     Step("evaluate", step_evaluate,
-         "score every answer with the judge -> exchanges.quality"),
+         "score every answer with the sweep's evaluator -> exchanges.quality"),
     # Cheap, and pure arithmetic over what evaluate stored: no model, no judge.
     Step("fitness", step_fitness,
          "average each transcript's qualities -> individuals.fitness,"
@@ -847,6 +836,9 @@ def main(argv=None):
                         help="steps to run (default: all of them, in order)")
     parser.add_argument("--list", action="store_true",
                         help="list the steps and exit")
+    parser.add_argument("--evaluators", action="store_true",
+                        help="list the ways an answer can be scored and exit "
+                             "(EVALUATOR in settings.py picks one)")
     parser.add_argument("--db", default=config.DB_PATH,
                         help="database file (default %s)" % config.DB_PATH)
     parser.add_argument("--run", type=int, default=None, metavar="ID",
@@ -878,6 +870,16 @@ def main(argv=None):
     if args.list:
         for step in STEPS:
             print("%-12s %s" % (step.name, step.description))
+        return 0
+
+    if args.evaluators:
+        current = config.EVALUATOR
+        for name, description in evaluate_run.available():
+            mark = "*" if name == current else " "
+            print("%s %-20s %s" % (mark, name, description))
+        print("\n* is EVALUATOR in settings.py, which a *new* sweep is created "
+              "with.\n  A sweep already in the database keeps the one it was "
+              "created with.")
         return 0
 
     if args.steps:

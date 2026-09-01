@@ -313,8 +313,9 @@ as a result.
 
 Two things adjust themselves rather than needing a flag: `process` drops its venv
 check when the scripts it is about to run do not import unsloth, so a mocked
-sweep runs under any Python 3; and `evaluate` only reaches for the judge when
-some answer actually lacks a quality.
+sweep runs under any Python 3; and `evaluate` only reaches for a judge endpoint
+when some answer actually lacks a quality -- whichever `EVALUATOR` is set, and
+the local ones never reach for one at all.
 
 `MOCK_SEED` fixes the fake answers and scores, and `MOCK_LOAD_DELAY` /
 `MOCK_ANSWER_DELAY` buy back some fake slowness — useful for exercising
@@ -481,27 +482,72 @@ gotcha below) or every child will fail on `import unsloth`.
 
 ### 5. `evaluate_run.py` → `exchanges.quality`
 
-Scores every answer with a judge model — a *different* model from the blended
-one that produced them. Only the most recent execution of each individual is
+Scores every answer. Only the most recent execution of each individual is
 scored; older ones keep the scores they were given.
 
 ```bash
 python main.py evaluate
 ```
 
-| Where | Setting | Default | Meaning |
-|---|---|---|---|
-| `evaluate_run.py` | `BASE_URL` | `http://172.22.208.1:1234/v1` | OpenAI-compatible endpoint |
-| `evaluate_run.py` | `API_KEY` | `$JUDGE_API_KEY` | bearer token; LMStudio ignores it |
-| `evaluate_run.py` | `MODEL` | endpoint's first chat model | judge model id |
-| `evaluate_run.py` | `TIMEOUT` | 300 | seconds per grading call |
-| `main.py` | `--force` | off | re-score answers that already have a quality |
+**How an answer is scored is a setting.** `evaluate_run.py` is a registry of
+evaluators and `EVALUATOR` in `settings.py` names the one a sweep uses:
 
-Every one of those is snapshotted into the sweep when it starts — `SYSTEM_PROMPT`
-included — so a stored sweep can say what it was graded by.
+```bash
+python main.py --evaluators     # what is registered, and which one is current
+```
 
-The score and the judge's reason land on the exchange they grade, with the model
-that gave them and when:
+| `EVALUATOR` | What it does | Needs |
+|---|---|---|
+| `llm_judge` | a judge model grades the answer on its own merits | an endpoint |
+| `llm_judge_reference` | the same judge, shown the dataset's own answer to that question as well | an endpoint, a dataset with assistant turns |
+| `similarity` | token or character overlap with the dataset's answer | a dataset with assistant turns |
+| `heuristic` | local checks: length, repetition, a required and a forbidden pattern | nothing |
+| `panel` | several judge models, aggregated | an endpoint |
+
+All five produce the same thing — a `quality` in 0..1 and a short `reason` on
+each exchange — so every step downstream is unchanged. `0.0` is worst, `1.0` is
+best; that is the number a fitness function selects on.
+
+Like every other setting, `EVALUATOR` is frozen into a sweep when it starts.
+Changing `settings.py` does nothing to a sweep already running, which is the
+point: two individuals graded under different rubrics are not comparable, and
+comparing them is the whole reason a fitness number exists. To change it
+mid-search, write it into the sweep instead:
+
+```bash
+python continue_run.py --set EVALUATOR='"similarity"'
+```
+
+A sweep created before `EVALUATOR` existed has none stored and is read back as
+`llm_judge`, which is what it ran under.
+
+#### `llm_judge` — the default
+
+A *different* model from the blended one that produced the answers grades each
+of them on its own merits. Every knob is in `settings.py`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `JUDGE_BASE_URL` | `http://172.22.208.1:1234/v1` | OpenAI-compatible endpoint |
+| `JUDGE_MODEL` | `None` — ask the endpoint | judge model id |
+| `JUDGE_TEMPERATURE` | `0.0` | grading should repeat |
+| `JUDGE_MAX_TOKENS` | `2000` | headroom for a reasoning judge |
+| `JUDGE_TIMEOUT` / `JUDGE_RETRIES` / `JUDGE_RETRY_WAIT` | 300 / 2 / 3 | one call's patience |
+| `JUDGE_RESPONSE_FORMAT` | `{"type": "json_object"}` | `None` for an endpoint that rejects it |
+| `JUDGE_SYSTEM_PROMPT` | see the file | **the rubric the search selects on** |
+| `main.py --force` | off | re-score answers that already have a quality |
+
+The API key is the one judge setting that is *not* in `settings.py`: a sweep
+writes its settings into the database, so the key is read from the
+`JUDGE_API_KEY` environment variable by `evaluate_run.py` instead.
+
+`JUDGE_SYSTEM_PROMPT` **is** the fitness criterion: it grades relevance,
+usefulness, specificity, coherence and appropriateness, with anchors at 1.0 /
+0.7 / 0.5 / 0.3 / 0.0. Tune it deliberately — the whole search optimises toward
+whatever it rewards.
+
+The score and the reason land on the exchange they grade, with what gave them
+and when:
 
 ```
 position  quality  reason                              judge_model
@@ -511,41 +557,129 @@ position  quality  reason                              judge_model
 `quality` is what selection reads; `reason` is what tells you whether the judge
 is grading the way you intended — worth reading when a whole individual scores
 0.0, or when scores cluster and you suspect the rubric rather than the answers.
-
-`0.0` is worst, `1.0` is best — that is the number a fitness function selects
-on. Every judge setting lives in one block at the top of the file, including
-`SYSTEM_PROMPT`, which **is** the fitness criterion: it grades relevance,
-usefulness, specificity, coherence and appropriateness, with anchors at 1.0 /
-0.7 / 0.5 / 0.3 / 0.0. Tune it deliberately — the whole search optimises toward
-whatever it rewards.
+`judge_model` records *what* scored it, which for a local evaluator is the
+method: `similarity:token_f1`, `heuristic`, `panel:a,b`.
 
 **Local by default, cloud by swap.** The judge speaks the OpenAI-compatible
-`/v1/chat/completions` API, so a hosted model is a URL change at the top of
-`evaluate_run.py`:
+`/v1/chat/completions` API, so a hosted model is two lines in `settings.py`:
 
 ```python
-BASE_URL = "https://api.openai.com/v1"
-MODEL = "gpt-4o-mini"
+JUDGE_BASE_URL = "https://api.openai.com/v1"
+JUDGE_MODEL = "gpt-4o-mini"
 ```
 
 Claude is *not* OpenAI-compatible — using a Claude model as the judge needs a
 separate backend via the `anthropic` SDK.
 
-**Resumable.** An exchange that already has a `quality` is skipped unless
-`--force`, and each score is committed as it arrives, so an interrupted sweep
-keeps its work. An empty answer scores `0.0` without spending a call, and a sweep
-where nothing needs grading never contacts the judge at all.
+#### `llm_judge_reference` — grading against the dataset's own answer
+
+The eval file is the training data's own format: a JSON record per line with a
+`user` turn and an `assistant` turn. The generated scripts deliberately only
+ever ask the user turn — handing a model the answer and then scoring its reply
+would be marking its own homework — but the *judge* is allowed to see it.
+
+This is the evaluator that can see **style**. A judge grading on merit alone
+happily rewards a helpful prose answer from a blend that was supposed to rhyme;
+shown `datasets/poem_lora_dataset.json`'s own answer to the same question, it
+grades on whether the blend answered in the manner it was fine-tuned to. Its
+rubric is `JUDGE_REFERENCE_SYSTEM_PROMPT`, which weighs manner first, then
+substance and coherence, and explicitly does not reward copying — a blend that
+reproduced the reference word for word would have learned that one answer and
+nothing else. Everything else — endpoint, model, timeouts — comes from the same
+`JUDGE_*` settings.
+
+A prompt with no reference is graded on merit instead of being dropped: a
+shrunken eval set for one individual would make its fitness incomparable with
+the rest.
+
+#### `similarity` — no judge at all
+
+Token or character overlap with the dataset's answer. `SIMILARITY_METRIC` picks
+how:
+
+| Metric | What it measures |
+|---|---|
+| `token_f1` | bag-of-words F1, repeats counted — padding costs precision, missing the reference costs recall |
+| `containment` | how much of the reference's vocabulary turns up at all; forgiving about length |
+| `sequence` | character-level overlap (`difflib`), so word order and phrasing count |
+
+`SIMILARITY_CASE_SENSITIVE` is off by default. The whole eval half of a sweep
+then costs nothing, runs offline and repeats **exactly** — which is worth having
+next to a judge whose scores wobble. The trade is real, though: this measures
+agreement with one particular answer, not quality, so an answer better than the
+dataset's scores badly.
+
+#### `heuristic` — checkable properties
+
+No model either, and no reference. Four equally weighted checks, averaged over
+the ones that apply: a length band (`HEURISTIC_MIN_WORDS`, `HEURISTIC_MAX_WORDS`),
+a distinct-word ratio that catches the collapsed blend saying the same thing over
+and over, and optionally a pattern the answer must match (`HEURISTIC_REQUIRE`)
+and one it must not (`HEURISTIC_FORBID`).
+
+This measures whether an answer is **malformed**, not whether it is good — which
+is the half of quality a judge charges the most to notice. Use it to smoke-test
+the pipeline, or for a task whose rule genuinely is checkable: an all-uppercase
+adapter is `HEURISTIC_REQUIRE = r"^[^a-z]*$"`.
+
+#### `panel` — several judges
+
+`PANEL_MODELS` names the members, all served by `PANEL_BASE_URL` (or
+`JUDGE_BASE_URL`); `PANEL_AGGREGATE` is `mean`, `median`, `min` or `max`; and
+`PANEL_USE_REFERENCE` switches the panel onto the reference rubric. Everything
+else about a member comes from the `JUDGE_*` settings, so a panel is several
+models grading identically rather than several differently configured judges.
+
+Less noise per score, N times the cost. A member that fails is dropped rather
+than fatal — a panel that loses one model still has a score — and only a panel
+where nobody answered fails the exchange. An empty `PANEL_MODELS` asks the
+endpoint what it has loaded and sits a panel of one on it, which is `llm_judge`
+with extra steps.
+
+#### Resumable, whichever one is chosen
+
+An exchange that already has a `quality` is skipped unless `--force`, and each
+score is committed as it arrives, so an interrupted sweep keeps its work. An
+empty answer scores `0.0` without asking anyone. A sweep where nothing needs
+grading never contacts an endpoint at all — which is what lets a mocked sweep,
+already scored by its own template, run on a machine with nothing up.
+
+An evaluator that cannot score one answer fails **that answer** and no more: it
+keeps its NULL quality, the step counts it, and a re-run picks it up again. Only
+a step where nothing at all could be scored is a failure.
 
 Reply parsing is deliberately tolerant — bare JSON, code-fenced JSON, JSON
 wrapped in prose, and a bare number all work. Two traps worth knowing about,
 both hit on the first real run: the score is requested **before** the reason so
-a long reason cannot truncate it away, and `MAX_TOKENS` is generous because a
-reasoning judge spends its budget thinking and returns an empty message if it
-runs out mid-thought.
+a long reason cannot truncate it away, and `JUDGE_MAX_TOKENS` is generous
+because a reasoning judge spends its budget thinking and returns an empty
+message if it runs out mid-thought.
+
+#### Adding one of your own
+
+An evaluator is a name, a description and two functions, registered in
+`evaluate_run.py`:
+
+```python
+def _prepare_mine(conf, pending):     # once per evaluate step
+    return evaluate_run.Prepared(conf, "mine", notes=["mine: ..."])
+
+def _score_mine(item, prepared):      # once per answer -> (quality, reason)
+    return 0.5, "why"
+
+register(Evaluator("mine", "what it does", _prepare_mine, _score_mine))
+```
+
+`prepare()` is where the once-per-step work goes — discovering a model, loading
+the eval set's answers with `load_references()`, validating knobs — and what it
+returns is handed to every `score()` call. Its `label` is what lands in
+`exchanges.judge_model`. Knobs go in `settings.py` under a prefix of their own
+and reach `score()` as `prepared.conf`, which is the sweep's *stored* settings,
+never `settings.py` as it stands now.
 
 ### 6. `calculate_fitness.py` → `individuals.fitness`, `fitness_history`
 
-The judge scores answers, not chromosomes. Selection needs the opposite — one
+The evaluate step scores answers, not chromosomes. Selection needs the opposite — one
 comparable number per individual — so this step folds each transcript into its
 mean:
 
@@ -1072,7 +1206,7 @@ Bad input is reported rather than half-processed:
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
-`launch`, `judge` — and `main.py` is what calls them and puts the results here.
+`launch`, `score` — and `main.py` is what calls them and puts the results here.
 
 ```
 runs          one sweep: when, which template, which interpreter, which commit
@@ -1338,6 +1472,19 @@ currently uses them), blank lines are skipped, and a missing or empty file fails
 with a clear message — at generation time as well as at runtime, since otherwise
 every script would die at startup.
 
+A JSON record per line works too, and is what `datasets/*.json` hold: the prompt
+is the record's first `user` turn. The `assistant` turn beside it never reaches
+the model being scored — that would be showing it the answer — but it *is* the
+reference the `llm_judge_reference` and `similarity` evaluators grade against,
+read back from the same file by `generate_runs.eval_records()`.
+
+**`EVALUATOR`** — how an answer becomes a number: a judge model, a judge shown
+the dataset's own answer, overlap with that answer, local checks, or a panel.
+The registry and every knob behind it are described under
+[`evaluate_run.py`](#5-evaluate_runpy--exchangesquality) above; `python main.py
+--evaluators` lists what is registered. It is the setting the search's direction
+hangs from, so it is worth choosing before a long run rather than after one.
+
 **Reply length** — `ask(question, max_new_tokens=250)` caps each reply. Qwen ships
 `max_length=32768` in its `generation_config.json`, and transformers warns when
 both that and `max_new_tokens` are set, so the generated scripts clear it right
@@ -1371,7 +1518,7 @@ warning — the effective cap is unchanged.
 | `template_code_mocked.py` | the same, mocked: no model load, random answers and scores |
 | `training_set.txt` | the eval prompts, one per line, read by every generated script; the path is `TRAINING_SET` in `settings.py` |
 | `process_run.py` | launches a generated script and reads its transcript back |
-| `evaluate_run.py` | the judge: its settings, its rubric, and one grading call |
+| `evaluate_run.py` | the evaluators: the registry `EVALUATOR` picks from, and one score per answer |
 | `calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
 | `elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
 | `selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent |
@@ -1395,7 +1542,7 @@ generate_runs.plan/render             -->  individuals.script_source
 template_code.py                           (the shape of those scripts)
 
 process_run.launch/exchanges          -->  executions, exchanges
-evaluate_run.judge                    -->  exchanges.quality
+evaluate_run.get(EVALUATOR).score    -->  exchanges.quality
 calculate_fitness.assign              -->  individuals.fitness
                                            + fitness_history (per generation)
 elitism.elect                         -->  individuals.is_best

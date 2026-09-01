@@ -151,6 +151,99 @@ def eval_prompt_count(training_set=None, count=None):
     return path, (total if cap is None else min(cap, total)), total
 
 
+def eval_records(training_set=None, count=None):
+    """The eval set as records the evaluate step can score against.
+
+    -> [{"position": 1, "question": "...", "reference": "..." or None}, ...]
+
+    Same file, same order and same cap the generated scripts ask under, read
+    here for the other half of the job: an evaluator that compares an answer
+    with the answer the dataset already carries needs that reference, and the
+    scripts deliberately never see it -- handing a model the reference and then
+    scoring its reply would be marking its own homework.
+
+    Parsed the way template_code.py parses a line, because it is the same file
+    in the same two shapes: a JSON record with a "messages" list -- first user
+    turn is the question, first assistant turn after it is the reference -- or
+    a plain line, which is a question with no reference at all. `position` is
+    1-based and lines up with exchanges.position, since both count non-blank
+    lines of this file from the top.
+
+    Kept next to eval_prompt_count() rather than in evaluate_run.py so the eval
+    file has one reader per concern and neither has to know where the file is:
+    training_set_path() already answers that, for a stored sweep's value as
+    much as for settings.py's.
+    """
+    path = training_set_path(training_set)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = [line.strip() for line in handle if line.strip()]
+    except OSError as error:
+        raise SystemExit("cannot read the eval prompts from %s (%s)."
+                         % (path, error.strerror))
+    cap = training_count(count)
+    records = []
+    for position, line in enumerate(lines[:cap] if cap else lines, start=1):
+        records.append({"position": position,
+                        "question": _question_of(line, path, position),
+                        "reference": _reference_of(line)})
+    return records
+
+
+def _question_of(line, path, number):
+    """The prompt in one eval line -- template_code.py's _prompt_of, once more.
+
+    Duplicated rather than shared because the templates are standalone files
+    that must run with nothing of this repo importable; a change to one of these
+    two belongs in the other.
+    """
+    if line[0] == "{":
+        try:
+            record = json.loads(line)
+        except ValueError as error:
+            raise SystemExit("%s line %d: starts like a JSON record but will not "
+                             "parse (%s)." % (path, number, error))
+        messages = record.get("messages") if isinstance(record, dict) else None
+        if not isinstance(messages, list):
+            raise SystemExit("%s line %d: a JSON eval record needs a 'messages' "
+                             "list, the shape datasets/*.json use." % (path, number))
+        for message in messages:
+            if isinstance(message, dict) and message.get("role") == "user":
+                content = message.get("content")
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+        raise SystemExit("%s line %d: no user turn with any text in it, so there "
+                         "is nothing to ask." % (path, number))
+
+    if len(line) > 1 and line[0] == line[-1] and line[0] in "\"'":
+        line = line[1:-1]
+    return line
+
+
+def _reference_of(line):
+    """The dataset's own answer to that line, or None when it carries none.
+
+    A plain prompt file has no references, and neither does a JSON record whose
+    messages stop at the user turn. That is not an error here -- it is only an
+    error for the evaluators that need one, and they say so themselves.
+    """
+    if not line.startswith("{"):
+        return None
+    try:
+        record = json.loads(line)
+    except ValueError:
+        return None
+    messages = record.get("messages") if isinstance(record, dict) else None
+    if not isinstance(messages, list):
+        return None
+    for message in messages:
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+    return None
+
+
 def lora_slots(slots=None):
     """{slot: location} with the ones that name a local folder made absolute.
 

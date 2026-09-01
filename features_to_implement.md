@@ -1,9 +1,12 @@
 # Features
 
 * ~~Track fitness over the generations~~
-* More fitness functions
+* ~~More fitness functions~~ (EVALUATOR in settings.py: llm_judge, llm_judge_reference, similarity, heuristic, panel)
 * Run the training set through the base model and use the results in the evaluation of the loras (send then to the judge LLM)
+    * ~~The dataset's own answers are sent to the judge~~ (EVALUATOR = "llm_judge_reference")
+    * TBD for the *base model's* answers, which nothing generates yet
 * Get all the settings around the external services (Judge and Lora calculation) into a config.py
+    * ~~Done for the judge~~ (JUDGE_*/SIMILARITY_*/HEURISTIC_*/PANEL_* in settings.py; the API key stays in $JUDGE_API_KEY)
 * Add more lora types to the mix
 * Refactor the code
     * Remove the excess of arguments and flags

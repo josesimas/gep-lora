@@ -8,7 +8,7 @@ A Gene Expression Programming search over **LoRA adapter blends**. A chromosome 
 K-expression (Karva notation, level-order, dot-separated, always rooted at `CAT`) that
 describes how to fold five LoRA adapters into one model. Each chromosome is compiled into a
 standalone Python script that builds that blend with PEFT and answers the eval prompts;
-a judge model then scores the answers.
+the `evaluate` step then scores the answers, the way `EVALUATOR` in `settings.py` says.
 
 `plan.txt` is the original spec. `README.md` is long and current — read it before changing
 pipeline behaviour, and update it when behaviour changes.
@@ -143,9 +143,12 @@ verdict, and writes `run/test_tree.txt` / `run/test_run.py` — its own folder, 
 `run_db/`, so it never collides with a sweep. Output is byte-identical to what that
 chromosome would get as an individual. There is no pytest suite.
 
-The `evaluate` step needs an OpenAI-compatible judge endpoint (`evaluate_run.py` defaults to
-LMStudio at `http://172.22.208.1:1234/v1`). It is resumable — already-scored exchanges are
-skipped unless `--force`.
+The `evaluate` step scores answers the way `EVALUATOR` in `settings.py` says. Two of the
+five registered evaluators are local (`similarity`, `heuristic`); the other three
+(`llm_judge`, `llm_judge_reference`, `panel`) need an OpenAI-compatible judge endpoint
+(`JUDGE_BASE_URL`, defaulting to LMStudio at `http://172.22.208.1:1234/v1`). It is
+resumable either way — already-scored exchanges are skipped unless `--force` — and
+`python main.py --evaluators` lists what is registered.
 
 Population size for a full run is `COUNT` in `settings.py` (currently 10, kept small for
 iteration; the README's worked numbers assume 100). `settings.py` holds every knob the
@@ -233,6 +236,9 @@ ranks is expected and is culled by the usual `BAD` path.
   build order, so a step never references a name defined after it. Each *occurrence* of an
   `L*` gets its own adapter name (`n1_L2`, `n4_L1`), so one slot may appear several times at
   different weights.
+- `eval_records()` — the eval set as `{position, question, reference}`, for the evaluators
+  that grade against the dataset's own answer. Same file, same order, same cap the scripts
+  ask under; the reference is the part they never see.
 - `training_set_path()` / `training_count()` / `lora_slots()` — the eval prompts file, the
   cap on how many of its records are used, and the five adapter
   paths, from `TRAINING_SET`, `TRAINING_COUNT` and `LORA_SLOTS` in `settings.py` rather than
@@ -318,8 +324,8 @@ overrides it; a step where nothing needs running is reported, not a failure.
   recorded as an execution row with its exit code and the sweep carries on; only a sweep
   where *nothing* ran exits non-zero. Keep this when adding steps.
 - **The pipeline adapts to which template it ran.** `process` drops its unsloth check when
-  the generated scripts don't import it (`process_run.imports_unsloth`), and `evaluate`
-  contacts the judge only when some answer still lacks a quality. Both keep a mocked sweep
+  the generated scripts don't import it (`process_run.imports_unsloth`), and a judging
+  `evaluate` contacts its endpoint only when some answer still lacks a quality. Both keep a mocked sweep
   runnable on a plain Python 3 with nothing else up; don't reintroduce an unconditional
   check.
 - **An execution is self-contained.** Its row carries the weight seed, the full `weights`
@@ -334,16 +340,32 @@ overrides it; a step where nothing needs running is reported, not a failure.
 - **A step reads the settings its sweep was created with**, not `settings.py` as it stands
   now; that is what makes resuming a sweep still be the same sweep. A seed left `None` is
   drawn once at sweep creation and stored as the number drawn.
-- `evaluate_run.py`'s `SYSTEM_PROMPT` **is** the fitness criterion — the whole search
-  optimises toward whatever it rewards. Two parsing traps already fixed there: the score is
-  requested *before* the reason (a long reason must not truncate it away), and `MAX_TOKENS`
-  is generous because a reasoning judge returns an empty message if it runs out mid-thought.
+- **`EVALUATOR` is the fitness criterion**, and so is the rubric behind it — the whole
+  search optimises toward whatever the chosen evaluator rewards, so it is frozen into a
+  sweep like every other setting and a step reads the sweep's, never `settings.py`'s.
+  `evaluate_run.py` is a registry: an evaluator is a name, a description, `prepare(conf,
+  pending)` (once per step: discover the model, load the eval set's own answers, validate
+  its knobs) and `score(item, prepared)` (once per answer, -> `(quality, reason)`), and
+  raising from `score` fails that one answer rather than the step. Its `Prepared.label` is
+  what lands in `exchanges.judge_model` — a model id for a judge, the method's name for a
+  local one. **No knob lives in `evaluate_run.py`**; they are all in `settings.py` under
+  the prefix of whichever evaluator reads them (`JUDGE_*`, `SIMILARITY_*`, `HEURISTIC_*`,
+  `PANEL_*`). The single exception is the API key, read from `$JUDGE_API_KEY`, because a
+  sweep writes its settings into the database and a bearer token has no business there.
+  Two judge parsing traps already fixed: the score is requested *before* the reason (a long
+  reason must not truncate it away), and `JUDGE_MAX_TOKENS` is generous because a reasoning
+  judge returns an empty message if it runs out mid-thought.
+- **The eval file is read twice, for two different halves of it.** The generated scripts
+  read the `user` turn (`template_code.py`'s `_prompt_of`); `generate_runs.eval_records()`
+  reads the same lines for the `assistant` turn, which is the reference
+  `llm_judge_reference` and `similarity` grade against. A script must never see that turn —
+  handing a model the answer and then scoring its reply is marking its own homework.
 - Steps are added to `main.py`'s `STEPS` list as a `Step(name, callable, description)`,
   where the callable takes the `Context` — the connection, the run id, that sweep's settings,
   the run dir and the parsed options.
 - **`main.py` calls the other modules as libraries; none of them has a `main()`.** That is
   what keeps the pipeline from writing text files: `build_population`, `draw`,
-  `plan`/`render`, `launch`, `exchanges`, `judge` are all pure enough to use directly. If a
+  `plan`/`render`, `launch`, `exchanges`, `Evaluator.score` are all pure enough to use directly. If a
   new step needs something out of one of them, extract a function there rather than teaching
   that module about the database.
 - The five adapters live under `loras/Lora001`..`loras/Lora005`, each holding its own
