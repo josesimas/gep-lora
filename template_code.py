@@ -61,7 +61,15 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _PROJECT = os.path.dirname(_HERE)                  # run/ -> project/
 
 # The base model every adapter was trained on (from adapter_config.json).
-BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
+#~ Whole-line marker, like WEIGHT_SEED and the three below it: generate_runs.py
+#~ replaces it with the BASE_MODEL assignment itself, filled from BASE_MODEL in
+#~ settings.py. It lives there rather than here so there is one copy of the name
+#~ across both templates and the baseline script the llm_judge_baseline
+#~ evaluator measures against -- a control loading a different model would make
+#~ every improvement score meaningless -- and so the sweep records which model
+#~ its fitness numbers were earned on. Another of the names a linter calls
+#~ undefined here and finds defined in every file generated from this.
+# @@BASE_MODEL@@
 
 # Where each of the 5 LoRAs the trees refer to lives. One independent entry per
 # slot, already resolved: repoint a slot in settings.py and every script built

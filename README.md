@@ -267,16 +267,21 @@ written, minus the markers.
 | a line starting with `#~` | template-only note, never reaches the output |
 
 Blocks are `TREE`, `BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`,
-`WEIGHT_SEED`, `TRAINING_SET`, `LORA_SLOTS`; inline values are `SCRIPT_NAME`,
-`PROVENANCE`, `LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`.
-Any marker left unfilled raises rather than being written into a generated file.
+`WEIGHT_SEED`, `BASE_MODEL`, `TRAINING_SET`, `TRAINING_COUNT`, `LORA_SLOTS`;
+inline values are `SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`,
+`LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`. Any marker left unfilled raises
+rather than being written into a generated file.
 
-`WEIGHT_SEED`, `TRAINING_SET` and `LORA_SLOTS` are blocks rather than inline
-values because each stands in for the *assignment* — so a generated script
-carries `WEIGHT_SEED = 12345`, `TRAINING_SET = '...'` and the whole
-`LORA_SLOTS = {...}` dict as plain literals. They are also the three names a
-linter calls undefined in the templates themselves, and finds defined in every
-file generated from them.
+`WEIGHT_SEED`, `BASE_MODEL`, `TRAINING_SET`, `TRAINING_COUNT` and `LORA_SLOTS`
+are blocks rather than inline values because each stands in for the
+*assignment* — so a generated script carries `WEIGHT_SEED = 12345`,
+`BASE_MODEL = '...'`, `TRAINING_SET = '...'`, `TRAINING_COUNT = 10` and the whole
+`LORA_SLOTS = {...}` dict as plain literals. They are also the names a linter
+calls undefined in the templates themselves, and finds defined in every file
+generated from them. `BASE_MODEL` is a setting rather than a line in the
+templates so that one name reaches all three of them — the two individual
+templates and `template_baseline.py`, the control `llm_judge_baseline` grades
+against.
 
 To change what every generated script looks like, edit `template_code.py` and
 re-run `python main.py runs`. Only add code to the generator itself when the new
@@ -500,11 +505,12 @@ python main.py --evaluators     # what is registered, and which one is current
 |---|---|---|
 | `llm_judge` | a judge model grades the answer on its own merits | an endpoint |
 | `llm_judge_reference` | the same judge, shown the dataset's own answer to that question as well | an endpoint, a dataset with assistant turns |
+| `llm_judge_baseline` | the same judge, shown what the **base model** answered, scoring the improvement | an endpoint, one cached run of the base model |
 | `similarity` | token or character overlap with the dataset's answer | a dataset with assistant turns |
 | `heuristic` | local checks: length, repetition, a required and a forbidden pattern | nothing |
 | `panel` | several judge models, aggregated | an endpoint |
 
-All five produce the same thing — a `quality` in 0..1 and a short `reason` on
+All six produce the same thing — a `quality` in 0..1 and a short `reason` on
 each exchange — so every step downstream is unchanged. `0.0` is worst, `1.0` is
 best; that is the number a fitness function selects on.
 
@@ -591,6 +597,69 @@ nothing else. Everything else — endpoint, model, timeouts — comes from the s
 A prompt with no reference is graded on merit instead of being dropped: a
 shrunken eval set for one individual would make its fitness incomparable with
 the rest.
+
+#### `llm_judge_baseline` — grading the improvement on the base model
+
+The other evaluators ask "is this answer good". This one asks the question the
+search is actually for: **did folding these adapters in make the model better
+than it was without them.**
+
+The judge is shown three things — the question, what the bare base model
+replied, and what the blend replied — and scores the difference on a **centred**
+scale:
+
+| Score | Means |
+|---|---|
+| `1.0` | transformed; far better in every way that matters |
+| `0.8` | clearly better |
+| `0.6` | slightly better |
+| `0.5` | **no meaningful difference** — or a difference not worth having |
+| `0.3` | slightly worse |
+| `0.0` | ruined: empty, incoherent, repetitive or off topic where the base answer was not |
+
+That centre is the point of it. A fitness of 0.5 says an individual is the base
+model with extra steps; above it the blend earned its keep, below it the blend
+did harm. Merit-only grading cannot say any of that — a blend that ruins nothing
+scores well on merit because the base model was already competent, and the search
+has nothing to climb. The rubric is `JUDGE_BASELINE_SYSTEM_PROMPT`; everything
+else — endpoint, model, timeouts, retries — comes from the same `JUDGE_*`
+settings as `llm_judge`.
+
+**Where the base answers come from, and why you only pay once.**
+`baseline_run.py` fills `template_baseline.py` — the same base model, the same
+eval file, the same cap, the same chat template and the same `max_new_tokens` as
+the individuals, with **nothing attached** — runs it once, and files what it said
+in the `baselines` table:
+
+```
+model                                          question_key            answer
+unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit  help me plan my week.  Here is one way ...
+```
+
+That table hangs off no run, on purpose: a base-model answer belongs to the model
+and the question and to nothing else. So the first sweep that wants a control
+pays one base-model load for it and every sweep afterwards reads the same rows —
+and adding prompts to the eval set costs only the new ones, because the step asks
+for what is missing rather than for all of it. `BASELINE_TIMEOUT` is how long the
+one script gets.
+
+Two guards worth knowing about:
+
+* **A mocked sweep gets a mocked baseline.** `TEMPLATE = "template_code_mocked.py"`
+  makes `baseline_run.py` fill `template_baseline_mocked.py` instead, and cache
+  what it invents under `mock:<model>` rather than under the model's own name —
+  so the whole path (generate → cache → read back → judge) can be exercised on a
+  machine with no GPU, and an invented control can never end up in front of a
+  real judge. `BASELINE_TEMPLATE` overrides the choice.
+* **A missing control fails that one exchange**, rather than quietly falling back
+  to merit grading. A merit score and an improvement score are not the same
+  number, and averaging the two into one fitness would reward whichever
+  individuals happened to lose their baseline.
+
+`BASE_MODEL` in `settings.py` is what ties the two halves together: it is stamped
+into every generated script *and* into the baseline, so the control is the model
+the blends were actually built on, and repointing it asks for that model's own
+baseline instead of reusing the old one's.
 
 #### `similarity` — no judge at all
 
@@ -1218,6 +1287,10 @@ runs          one sweep: when, which template, which interpreter, which commit
       exchanges the questions and answers, and the judge's score for each
   fitness_history  what each individual's fitness was at the end of each
                 generation, and when it was worked out
+
+baselines     what the base model itself answered, per model and question --
+              the one table outside that tree, because a base-model answer
+              belongs to the model rather than to any one sweep
 ```
 
 `evaluate` scores the most recent execution of each individual; older ones keep
@@ -1479,7 +1552,9 @@ reference the `llm_judge_reference` and `similarity` evaluators grade against,
 read back from the same file by `generate_runs.eval_records()`.
 
 **`EVALUATOR`** — how an answer becomes a number: a judge model, a judge shown
-the dataset's own answer, overlap with that answer, local checks, or a panel.
+the dataset's own answer, a judge shown what the base model said and asked how
+much the blend improved on it, overlap with that answer, local checks, or a
+panel.
 The registry and every knob behind it are described under
 [`evaluate_run.py`](#5-evaluate_runpy--exchangesquality) above; `python main.py
 --evaluators` lists what is registered. It is the setting the search's direction
@@ -1516,6 +1591,9 @@ warning — the effective cap is unchanged.
 | `generate_runs.py` | fills `template_code.py`, one runnable script per individual |
 | `template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
 | `template_code_mocked.py` | the same, mocked: no model load, random answers and scores |
+| `baseline_run.py` | produces and caches what the base model itself answers, for `llm_judge_baseline` |
+| `template_baseline.py` | the base model alone on the eval prompts — the control a blend is measured against |
+| `template_baseline_mocked.py` | the same, mocked: no model load, invented answers, cached under `mock:` |
 | `training_set.txt` | the eval prompts, one per line, read by every generated script; the path is `TRAINING_SET` in `settings.py` |
 | `process_run.py` | launches a generated script and reads its transcript back |
 | `evaluate_run.py` | the evaluators: the registry `EVALUATOR` picks from, and one score per answer |
@@ -1542,6 +1620,8 @@ generate_runs.plan/render             -->  individuals.script_source
 template_code.py                           (the shape of those scripts)
 
 process_run.launch/exchanges          -->  executions, exchanges
+baseline_run.ensure                   -->  baselines (once per model+question,
+                                           only for llm_judge_baseline)
 evaluate_run.get(EVALUATOR).score    -->  exchanges.quality
 calculate_fitness.assign              -->  individuals.fitness
                                            + fitness_history (per generation)

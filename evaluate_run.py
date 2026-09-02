@@ -21,20 +21,26 @@ way it was created to be scored, and a stored sweep can say how:
 
     llm_judge             a judge model grades the answer on its own merits
     llm_judge_reference   the same, but shown the dataset's own answer too
+    llm_judge_baseline    the same, but shown what the base model itself said,
+                          and asked how much the blend improved on it
     similarity            token overlap with the dataset's answer, no model
     heuristic             local checkable properties, no model
     panel                 several judge models, aggregated
 
 Each is an Evaluator: a name, a description, `prepare()` and `score()`.
-`prepare(conf, pending)` is called once per evaluate step and returns the
-Prepared bundle every call then works from -- the endpoint it discovered, the
-references it loaded, the label to record. `score(item, prepared)` grades one
-exchange and returns `(quality, reason)`. Raising ValueError or RuntimeError
-fails that one exchange and no more: main.py counts it and moves on, which is
-what makes a half-scored sweep resumable.
+`prepare(conf, pending, context=None)` is called once per evaluate step and
+returns the Prepared bundle every call then works from -- the endpoint it
+discovered, the references it loaded, the label to record. `context` is the
+step's own Context, for the one evaluator that needs more than the settings and
+the pending rows: llm_judge_baseline reads and fills the base-answer cache, so
+it needs the database and the run folder. Everything else ignores it.
+`score(item, prepared)` grades one exchange and returns `(quality, reason)`.
+Raising ValueError or RuntimeError fails that one exchange and no more: main.py
+counts it and moves on, which is what makes a half-scored sweep resumable.
 
 **No knob lives in this file.** They are all in settings.py, prefixed by the
-evaluator that reads them (JUDGE_*, SIMILARITY_*, HEURISTIC_*, PANEL_*), and
+evaluator that reads them (JUDGE_*, BASELINE_*, SIMILARITY_*, HEURISTIC_*,
+PANEL_*), and
 they reach a step as the sweep's *stored* settings -- the same contract every
 other step works under. The single exception is the API key, which is read from
 the environment on purpose: a sweep records its settings into the database, and
@@ -58,6 +64,7 @@ import time
 import urllib.error
 import urllib.request
 
+import baseline_run
 import generate_runs
 
 # Sent as "Authorization: Bearer <key>". LMStudio ignores it; cloud endpoints
@@ -84,13 +91,17 @@ class Prepared:
     answering the question it was added for: what gave this score.
     """
 
-    __slots__ = ("conf", "label", "settings", "references", "notes")
+    __slots__ = ("conf", "label", "settings", "references", "baselines", "notes")
 
-    def __init__(self, conf, label, settings=None, references=None, notes=()):
+    def __init__(self, conf, label, settings=None, references=None, notes=(),
+                 baselines=None):
         self.conf = conf
         self.label = label
         self.settings = settings or {}
         self.references = references or {}
+        # {question key: what the base model said} -- the control
+        # llm_judge_baseline grades against, read out of the database once.
+        self.baselines = baselines or {}
         self.notes = list(notes)      # lines main.py prints before scoring
 
 
@@ -103,16 +114,20 @@ class Evaluator:
     """
 
     __slots__ = ("name", "description", "prepare", "score", "wants_reference",
-                 "needs_endpoint")
+                 "needs_endpoint", "wants_baseline")
 
     def __init__(self, name, description, prepare, score,
-                 wants_reference=False, needs_endpoint=False):
+                 wants_reference=False, needs_endpoint=False,
+                 wants_baseline=False):
         self.name = name
         self.description = description
         self.prepare = prepare
         self.score = score
         self.wants_reference = wants_reference
         self.needs_endpoint = needs_endpoint
+        # Needs the base model's own answers, which cost a model load the first
+        # time they are wanted and come out of the database ever after.
+        self.wants_baseline = wants_baseline
 
 
 _REGISTRY = {}
@@ -362,7 +377,7 @@ def _needs_grading(pending):
 # ===========================================================================
 
 
-def _prepare_judge(conf, pending):
+def _prepare_judge(conf, pending, context=None):
     settings = endpoint_settings(conf)
     if _needs_grading(pending) and not settings["model"]:
         settings["model"] = discover_model(settings["base_url"], settings["api_key"],
@@ -393,8 +408,8 @@ register(Evaluator(
 # ===========================================================================
 
 
-def _prepare_judge_reference(conf, pending):
-    prepared = _prepare_judge(conf, pending)
+def _prepare_judge_reference(conf, pending, context=None):
+    prepared = _prepare_judge(conf, pending, context)
     prepared.references = _prepare_references(conf, "llm_judge_reference")
     prepared.notes.append(
         "reference answers: %d, from %s"
@@ -434,7 +449,85 @@ register(Evaluator(
 
 
 # ===========================================================================
-# 3. similarity -- token overlap with the dataset's answer, no model at all
+# 3. llm_judge_baseline -- the same judge, shown what the base model said
+# ===========================================================================
+
+
+def _prepare_judge_baseline(conf, pending, context=None):
+    """The judge, plus the base model's own answer to every pending question.
+
+    The control comes out of the `baselines` table, and is produced -- once --
+    only if something is missing from it. That is the whole economy of this
+    evaluator: the first sweep on a base model pays a model load for it, every
+    sweep after it pays nothing, and adding prompts to the eval set costs only
+    the new ones.
+
+    Producing it needs the database and the run folder, which is why this is
+    the one evaluator handed the step's Context.
+    """
+    prepared = _prepare_judge(conf, pending, context)
+    if not _needs_grading(pending):
+        # Nothing to grade means nothing to compare, so neither the judge nor
+        # the base model is troubled -- the same bargain _prepare_judge strikes.
+        prepared.notes.append("baseline: not needed -- no answer needs grading")
+        return prepared
+
+    if context is None or getattr(context, "conn", None) is None:
+        raise SystemExit(
+            "EVALUATOR = 'llm_judge_baseline' needs the sweep's database to read "
+            "and fill its cache of base-model answers, and this evaluate step was "
+            "not given one."
+        )
+
+    questions = [row["question"] for row in pending
+                 if (row["answer"] or "").strip()]
+    prepared.baselines = baseline_run.ensure(
+        context.conn, conf, questions, context.run_dir,
+        keep_script=getattr(context.options, "keep_scripts", False))
+
+    model = baseline_run.model_key(conf)
+    covered = sum(1 for question in questions
+                  if baseline_run.answer_for(question, prepared.baselines))
+    prepared.notes.append(
+        "baseline: %d of %d answer(s) have the base model's own reply to compare "
+        "against, cached under %r" % (covered, len(questions), model))
+    return prepared
+
+
+def _score_judge_baseline(item, prepared):
+    """Grade the blend against the model it was built on.
+
+    Not "is this answer good" but "did the adapters earn their place", which is
+    the question the search is actually asking. 0.5 is the middle of the rubric
+    and means the blend changed nothing worth having, so an individual whose
+    fitness lands there is the base model with extra steps.
+
+    A missing control fails this one exchange rather than falling back to
+    grading on merit: a merit score and an improvement score are not the same
+    number, and averaging the two into one fitness would quietly reward
+    whichever individuals happened to lose their baseline.
+    """
+    base = baseline_run.answer_for(item["question"], prepared.baselines)
+    if not base:
+        raise ValueError("no cached base-model answer for this question")
+    prompt = prepared.conf.get("JUDGE_BASELINE_SYSTEM_PROMPT")
+    content = ("QUESTION:\n%s\n\nBASE ANSWER:\n%s\n\nTUNED ANSWER:\n%s"
+               % (item["question"], base, item["answer"]))
+    return ask_judge(prompt, content, prepared.settings)
+
+
+register(Evaluator(
+    "llm_judge_baseline",
+    "a judge model compares each answer with what the base model itself said, "
+    "and scores the improvement (JUDGE_BASELINE_SYSTEM_PROMPT) -- 0.5 is no "
+    "change; the base answers are cached in the database",
+    _prepare_judge_baseline, _score_judge_baseline,
+    needs_endpoint=True, wants_baseline=True,
+))
+
+
+# ===========================================================================
+# 4. similarity -- token overlap with the dataset's answer, no model at all
 # ===========================================================================
 
 
@@ -463,7 +556,7 @@ def _token_f1(answer, reference, case_sensitive):
     return 2 * precision * recall / (precision + recall), precision, recall
 
 
-def _prepare_similarity(conf, pending):
+def _prepare_similarity(conf, pending, context=None):
     metric = conf.get("SIMILARITY_METRIC", "token_f1")
     if metric not in ("token_f1", "sequence", "containment"):
         raise SystemExit("SIMILARITY_METRIC must be 'token_f1', 'sequence' or "
@@ -514,7 +607,7 @@ register(Evaluator(
 
 
 # ===========================================================================
-# 4. heuristic -- local checkable properties, no model at all
+# 5. heuristic -- local checkable properties, no model at all
 # ===========================================================================
 
 
@@ -530,7 +623,7 @@ def _repetition(words):
     return len(set(words)) / len(words)
 
 
-def _prepare_heuristic(conf, pending):
+def _prepare_heuristic(conf, pending, context=None):
     for name in ("HEURISTIC_REQUIRE", "HEURISTIC_FORBID"):
         pattern = conf.get(name)
         if pattern:
@@ -602,7 +695,7 @@ register(Evaluator(
 
 
 # ===========================================================================
-# 5. panel -- several judges, aggregated
+# 6. panel -- several judges, aggregated
 # ===========================================================================
 
 
@@ -616,7 +709,7 @@ def _aggregate(scores, how):
     return sum(scores) / len(scores)
 
 
-def _prepare_panel(conf, pending):
+def _prepare_panel(conf, pending, context=None):
     how = conf.get("PANEL_AGGREGATE", "mean")
     if how not in ("mean", "median", "min", "max"):
         raise SystemExit("PANEL_AGGREGATE must be 'mean', 'median', 'min' or "

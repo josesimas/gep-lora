@@ -66,7 +66,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _PROJECT = os.path.dirname(_HERE)                  # run/ -> project/
 
 # Named for the record only; nothing here loads it.
-BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
+#~ Whole-line marker filled by generate_runs.py from BASE_MODEL in settings.py,
+#~ exactly as in template_code.py -- one copy of the name, so a mocked script
+#~ still says which model the real one would have loaded.
+# @@BASE_MODEL@@
 
 # The same slots as the real template, read the same way: the ranks decide
 # which trees are blocked, and a mock that disagreed about that would be

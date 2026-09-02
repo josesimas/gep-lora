@@ -144,11 +144,28 @@ verdict, and writes `run/test_tree.txt` / `run/test_run.py` — its own folder, 
 chromosome would get as an individual. There is no pytest suite.
 
 The `evaluate` step scores answers the way `EVALUATOR` in `settings.py` says. Two of the
-five registered evaluators are local (`similarity`, `heuristic`); the other three
-(`llm_judge`, `llm_judge_reference`, `panel`) need an OpenAI-compatible judge endpoint
-(`JUDGE_BASE_URL`, defaulting to LMStudio at `http://172.22.208.1:1234/v1`). It is
-resumable either way — already-scored exchanges are skipped unless `--force` — and
-`python main.py --evaluators` lists what is registered.
+six registered evaluators are local (`similarity`, `heuristic`); the other four
+(`llm_judge`, `llm_judge_reference`, `llm_judge_baseline`, `panel`) need an
+OpenAI-compatible judge endpoint (`JUDGE_BASE_URL`, defaulting to LMStudio at
+`http://172.22.208.1:1234/v1`). It is resumable either way — already-scored exchanges
+are skipped unless `--force` — and `python main.py --evaluators` lists what is
+registered.
+
+`llm_judge_baseline` is the one that scores what the search is for: the judge is shown
+the question, what the **bare base model** answered and what the blend answered, and
+rates the improvement on a centred scale where **0.5 is "changed nothing worth
+having"** (`JUDGE_BASELINE_SYSTEM_PROMPT`). It needs a control, which
+[baseline_run.py](baseline_run.py) produces once -- fill `template_baseline.py`, run it,
+read its transcript with `process_run.exchanges` -- and caches in the `baselines` table,
+keyed by `(BASE_MODEL, normalised question)` and hanging off **no run**: a base-model
+answer belongs to the model and the question, so every later sweep on the same base
+model reads the same rows and loads nothing. Only missing questions are ever generated.
+A mocked sweep gets `template_baseline_mocked.py` and caches under `mock:<model>`, so an
+invented control can never reach a real judge; `BASELINE_TEMPLATE` overrides the choice
+and `BASELINE_TIMEOUT` is what the one script gets. A question with no cached control
+fails **that exchange only** rather than falling back to merit grading -- an improvement
+score and a merit score are not the same number, and mixing them in one fitness would
+reward whoever lost their baseline.
 
 Population size for a full run is `COUNT` in `settings.py` (currently 10, kept small for
 iteration; the README's worked numbers assume 100). `settings.py` holds every knob the
@@ -160,7 +177,8 @@ value it did not use.
 `main.py` is the entry point and the driver: it owns the `STEPS` list, the `Context` each
 step gets, and the argument parser. `settings.py` is the one copy of the knobs; `store.py`
 owns the sqlite schema (`runs -> settings, individuals -> executions -> exchanges`,
-plus `fitness_history` hanging off `runs`), its
+plus `fitness_history` hanging off `runs`, plus `baselines`, which hangs off nothing --
+see the evaluate section), its
 helpers, and `--list/--show/--export`. Nothing else imports sqlite3.
 
 `generate_population.py` is the root module — it owns the alphabet (`BINARY_OPS`,
@@ -239,9 +257,10 @@ ranks is expected and is culled by the usual `BAD` path.
 - `eval_records()` — the eval set as `{position, question, reference}`, for the evaluators
   that grade against the dataset's own answer. Same file, same order, same cap the scripts
   ask under; the reference is the part they never see.
-- `training_set_path()` / `training_count()` / `lora_slots()` — the eval prompts file, the
-  cap on how many of its records are used, and the five adapter
-  paths, from `TRAINING_SET`, `TRAINING_COUNT` and `LORA_SLOTS` in `settings.py` rather than
+- `training_set_path()` / `training_count()` / `lora_slots()` / `base_model_name()` — the
+  eval prompts file, the cap on how many of its records are used, the five adapter
+  paths and the model they attach to, from `TRAINING_SET`, `TRAINING_COUNT`, `LORA_SLOTS`
+  and `BASE_MODEL` in `settings.py` rather than
   from either template. A relative value is resolved against the repo folder — for a slot, only when it
   really names a folder there, so an absolute path or a Hub repo id passes through as
   written. Both resolved values are stamped into each script as literals, so a script
@@ -252,20 +271,31 @@ ranks is expected and is culled by the usual `BAD` path.
   lives there. A new knob goes in `settings.py` and reaches the script through a marker.
 - `render()`/`fill()` — substitutes `@@MARKER@@`s. An unfilled marker raises rather than
   reaching a generated file.
+- `render_baseline()` — the same filling for the one script that has no tree: the base
+  model alone on the same prompts, which `baseline_run.py` runs once per base model.
 
 `template_code.py` is the generated script with the varying parts marked, deliberately kept
 as **valid Python** so editors, linters and `python -m compileall` still work on it. Markers:
 `@@NAME@@` inline; a line that is only `@@NAME@@` or `# @@NAME@@` becomes a block; a line
 starting with `#~` is a template-only note that never reaches the output. Blocks: `TREE`,
-`BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`, `WEIGHT_SEED`, `TRAINING_SET`,
-`TRAINING_COUNT`, `LORA_SLOTS`. Inline: `SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`, `LEAF_COUNT`,
-`FINAL_ADAPTER`, `FINAL_RANK`.
+`BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`, `WEIGHT_SEED`, `BASE_MODEL`,
+`TRAINING_SET`, `TRAINING_COUNT`, `LORA_SLOTS`. Inline: `SCRIPT_NAME`, `PROVENANCE`,
+`LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`.
 
-`WEIGHT_SEED`, `TRAINING_SET`, `TRAINING_COUNT` and `LORA_SLOTS` are blocks rather than
-inline markers because each stands in for the assignment itself, so a generated script gets
-`WEIGHT_SEED = 12345` (or `= None`), `TRAINING_SET = '...'`, `TRAINING_COUNT = 10` (or
-`= None`) and the whole `LORA_SLOTS = {...}` dict as plain literals. They are why those four
+`WEIGHT_SEED`, `BASE_MODEL`, `TRAINING_SET`, `TRAINING_COUNT` and `LORA_SLOTS` are blocks
+rather than inline markers because each stands in for the assignment itself, so a generated
+script gets `WEIGHT_SEED = 12345` (or `= None`), `BASE_MODEL = '...'`,
+`TRAINING_SET = '...'`, `TRAINING_COUNT = 10` (or
+`= None`) and the whole `LORA_SLOTS = {...}` dict as plain literals. They are why those five
 are the names a linter calls undefined in both templates.
+
+`template_baseline.py` and `template_baseline_mocked.py` are the third and fourth
+templates: the base model on its own, answering the same eval prompts with nothing
+attached. They fill three of the same markers (`BASE_MODEL`, `TRAINING_SET`,
+`TRAINING_COUNT`) through `generate_runs.render_baseline()`, and they must keep matching
+`template_code.py`'s chat template and `ask()` -- a control generated under different
+settings would make every improvement score a comparison of the settings rather than of
+the blend.
 
 The eval file is read **a line at a time**, in either of two shapes, told apart by the line
 itself rather than by its extension: a **JSON record per line** carrying a `messages` list
@@ -344,13 +374,16 @@ overrides it; a step where nothing needs running is reported, not a failure.
   search optimises toward whatever the chosen evaluator rewards, so it is frozen into a
   sweep like every other setting and a step reads the sweep's, never `settings.py`'s.
   `evaluate_run.py` is a registry: an evaluator is a name, a description, `prepare(conf,
-  pending)` (once per step: discover the model, load the eval set's own answers, validate
-  its knobs) and `score(item, prepared)` (once per answer, -> `(quality, reason)`), and
-  raising from `score` fails that one answer rather than the step. Its `Prepared.label` is
+  pending, context=None)` (once per step: discover the model, load the eval set's own
+  answers, fill the base-answer cache, validate its knobs) and `score(item, prepared)`
+  (once per answer, -> `(quality, reason)`), and
+  raising from `score` fails that one answer rather than the step. `context` is the step's
+  own `Context`, passed for the one evaluator that needs more than settings and rows:
+  `llm_judge_baseline` wants the database and the run folder. Everything else ignores it. Its `Prepared.label` is
   what lands in `exchanges.judge_model` — a model id for a judge, the method's name for a
   local one. **No knob lives in `evaluate_run.py`**; they are all in `settings.py` under
-  the prefix of whichever evaluator reads them (`JUDGE_*`, `SIMILARITY_*`, `HEURISTIC_*`,
-  `PANEL_*`). The single exception is the API key, read from `$JUDGE_API_KEY`, because a
+  the prefix of whichever evaluator reads them (`JUDGE_*`, `BASELINE_*`, `SIMILARITY_*`,
+  `HEURISTIC_*`, `PANEL_*`). The single exception is the API key, read from `$JUDGE_API_KEY`, because a
   sweep writes its settings into the database and a bearer token has no business there.
   Two judge parsing traps already fixed: the score is requested *before* the reason (a long
   reason must not truncate it away), and `JUDGE_MAX_TOKENS` is generous because a reasoning

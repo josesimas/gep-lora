@@ -212,6 +212,9 @@ def step_runs(context):
     training_set = generate_runs.training_set_path(context.conf.get("TRAINING_SET"))
     # ...and so does the cap on how many of them each script uses.
     count = context.conf.get("TRAINING_COUNT")
+    # And the model they all attach their adapters to -- the same one the
+    # baseline the llm_judge_baseline evaluator grades against loads.
+    base_model = generate_runs.base_model_name(context.conf.get("BASE_MODEL"))
     prompts_path, prompt_count, prompt_total = generate_runs.eval_prompt_count(
         training_set, count)
 
@@ -236,6 +239,7 @@ def step_runs(context):
             training_set=training_set,
             slots=slots,
             count=count,
+            base_model=base_model,
         )
         broken = any(step.broken for step in steps)
         runnable += not broken
@@ -246,6 +250,7 @@ def step_runs(context):
     written = store.materialise(conn, run_id, context.run_dir)
     print("stored %d scripts in run %d (from %s)"
           % (len(rows), run_id, os.path.basename(context.template)))
+    print("base model: %s" % base_model)
     print("slot ranks: %s" % ", ".join("%s=%d" % pair for pair in sorted(ranks.items())))
     # Says "10 of 50" when TRAINING_COUNT is holding some back, so the number a
     # sweep is actually scored on is never guessed at from the file's size.
@@ -478,8 +483,15 @@ def step_evaluate(context):
     # where every script failed, or a mocked one that arrived scored -- from one
     # that really needs an endpoint up.
     evaluator = evaluate_run.get(context.conf.get("EVALUATOR"))
-    prepared = evaluator.prepare(context.conf, pending)
+    # The Context goes with it for the one evaluator that needs more than the
+    # settings and the pending rows: llm_judge_baseline reads the cache of
+    # base-model answers, and fills it -- one model load, once -- when the
+    # sweep asks a question no earlier sweep did.
+    # Said before prepare(), not after: preparing can take minutes -- the
+    # baseline evaluator may have a base model to run -- and a console that has
+    # not yet named the evaluator cannot explain what it is waiting for.
     print("evaluator: %s -- %s" % (evaluator.name, evaluator.description))
+    prepared = evaluator.prepare(context.conf, pending, context)
     for note in prepared.notes:
         print(note)
     print("scoring %d answer(s)%s\n"

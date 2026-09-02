@@ -21,6 +21,12 @@ row so sweeps accumulate instead of replacing each other:
       fitness_history  what each individual's fitness was at the end of each
                     generation, and when it was worked out
 
+    baselines     what the base model itself answered, per model and question.
+                  The one table outside that tree: it belongs to the model
+                  rather than to a sweep, so every sweep that grades against
+                  the base model reads the same cache instead of producing it
+                  again.
+
 Everything a scorer needs is reachable from one query, and nothing is derived
 from a filename. The only thing that still has to exist on disk is the generated
 run_NNN.py scripts, because process runs them as subprocesses -- and those are a
@@ -144,6 +150,31 @@ CREATE TABLE IF NOT EXISTS fitness_history (
     answers     INTEGER,                 -- exchanges the mean was taken over
     unscored    INTEGER,                 -- how many of those carried no quality
     UNIQUE (run_id, generation, number)
+);
+
+-- What the base model, with no adapter attached, says to each eval prompt.
+--
+-- The one table here that hangs off no run, on purpose: a base-model answer
+-- belongs to the model and the question and to nothing else, so the sweep that
+-- happened to pay for it is not part of its identity. Every later sweep on the
+-- same base model reads these rather than loading the model again, which is the
+-- whole reason they are stored -- producing them costs a model load and one
+-- generate() per prompt.
+--
+-- `model` is BASE_MODEL as the sweep recorded it, with a "mock:" prefix for
+-- answers a mocked baseline invented, so a dry run can never leave made-up
+-- answers where a real sweep would find them. `question_key` is the question
+-- reduced to what makes two of them the same question (see question_key), and
+-- is what the lookup matches on; `question` keeps the wording as it was asked.
+CREATE TABLE IF NOT EXISTS baselines (
+    id           INTEGER PRIMARY KEY,
+    model        TEXT NOT NULL,          -- BASE_MODEL, or mock:<BASE_MODEL>
+    question_key TEXT NOT NULL,          -- the question, normalised for matching
+    question     TEXT NOT NULL,          -- as it was asked
+    answer       TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    source       TEXT,                   -- which template produced it
+    UNIQUE (model, question_key)
 );
 
 CREATE INDEX IF NOT EXISTS individuals_by_run ON individuals(run_id, number);
@@ -430,6 +461,63 @@ def score_exchange(conn, exchange_id, quality, reason, model):
     conn.execute(
         "UPDATE exchanges SET quality = ?, reason = ?, judged_at = ?, judge_model = ?"
         " WHERE id = ?", (quality, reason, _now(), model, exchange_id))
+
+
+# --- the base model's own answers, cached across sweeps --------------------
+
+
+def question_key(text):
+    """A question reduced to what makes two of them the same question.
+
+    The baselines table matches on this rather than on the wording, because the
+    question reaching it comes back out of a transcript the generated script
+    printed, and a line that lost its trailing spaces on the way is still the
+    same question. Lives here rather than with the evaluator for the same reason
+    the table does: it is how a row is addressed.
+    """
+    return " ".join((text or "").split()).strip().lower()
+
+
+def baselines(conn, model):
+    """{question_key: answer} for one base model -- the cache, read whole.
+
+    One query rather than one per question: a transcript is a few dozen
+    exchanges of the same eval set, so the whole of a model's cache is smaller
+    than the transcript being scored against it.
+    """
+    rows = conn.execute(
+        "SELECT question_key, answer FROM baselines WHERE model = ?", (model,)).fetchall()
+    return {row["question_key"]: row["answer"] for row in rows}
+
+
+def add_baselines(conn, model, items, source=None):
+    """Store base-model answers. -> how many rows are new.
+
+    `items` is [(question, answer)]. An answer already cached for that model and
+    question is left as it was: it is the same model answering the same question
+    with do_sample off, so a second copy would say the same thing, and quietly
+    replacing it would move the ground every earlier score in the database was
+    measured against. An empty answer is not stored at all -- that is a run that
+    failed to answer, not the base model's reply.
+    """
+    added = 0
+    for question, answer in items:
+        if not (answer or "").strip():
+            continue
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO baselines"
+            " (model, question_key, question, answer, created_at, source)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (model, question_key(question), question, answer, _now(), source))
+        added += cursor.rowcount or 0
+    conn.commit()
+    return added
+
+
+def baseline_rows(conn, model):
+    """Every cached answer for one base model, in the order they were stored."""
+    return conn.execute(
+        "SELECT * FROM baselines WHERE model = ? ORDER BY id", (model,)).fetchall()
 
 
 def set_fitness(conn, run_id, number, fitness):

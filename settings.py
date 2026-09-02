@@ -33,6 +33,18 @@ BRANCH_PROB = 0.6
 
 # --- the adapters being blended --------------------------------------------
 
+# The model every one of the five adapters was trained on, and the model the
+# generated scripts load before attaching anything -- it reaches them through a
+# marker, like the slots below, so there is one copy of the name rather than one
+# per template. Change it only alongside adapters trained on the same base:
+# PEFT loads a LoRA against the model its adapter_config.json names.
+#
+# It is also the identity of the "llm_judge_baseline" evaluator's cached
+# base-model answers: those are stored under this name, so repointing this at
+# another model asks for that model's own baseline rather than reusing the old
+# one's.
+BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
+
 # Where each of the five LoRAs the trees refer to lives -- the search space
 # itself, so it belongs with the rest of the knobs rather than in the templates:
 # repoint a slot here and both templates follow, and the sweep records which
@@ -218,6 +230,15 @@ TRAINING_COUNT = 20
 #                          can see *style*: a judge grading on merit alone
 #                          happily rewards a helpful prose answer from a blend
 #                          that was supposed to rhyme.
+#   "llm_judge_baseline"   the same judge, shown what the *base model* replied
+#                          to the same question as well, and asked how much the
+#                          blend improved on it. Needs an endpoint, and one run
+#                          of the base model over the eval set -- cached in the
+#                          database the first time and read from there ever
+#                          after. This is the one that scores what this search
+#                          is actually for: 0.5 means the blend changed nothing
+#                          worth having, above it means it helped, below it
+#                          means it did harm.
 #   "similarity"           token or character overlap with the dataset's answer.
 #                          No endpoint, deterministic, free -- and a measure of
 #                          agreement with one particular answer rather than of
@@ -238,8 +259,8 @@ EVALUATOR = "llm_judge"
 
 # --- the judge model, for the evaluators that ask one -----------------------
 #
-# Read by "llm_judge", "llm_judge_reference", and by "panel" for everything
-# except which models sit on it. The API key is deliberately *not* here: a sweep
+# Read by "llm_judge", "llm_judge_reference", "llm_judge_baseline", and by
+# "panel" for everything except which models sit on it. The API key is deliberately *not* here: a sweep
 # writes its settings into the database, so the key is read from the
 # JUDGE_API_KEY environment variable by evaluate_run.py instead.
 
@@ -343,6 +364,73 @@ Score from 0.0 to 1.0:
 Reply with JSON and nothing else, with the score FIRST:
 {"quality": <number between 0 and 1>, "reason": "<at most 12 words>"}
 """
+
+# How the judge is told to grade when it is shown what the *base model* said to
+# the same question -- the rubric "llm_judge_baseline" selects on, and the one
+# that matches what this whole search is for: not "is this answer good" but "did
+# folding these adapters in make it better than the model was without them".
+#
+# The scale is centred, and that is the point. 0.5 is "the blend changed nothing
+# worth having", so a fitness of 0.5 across a transcript says an individual is
+# the base model with extra steps, above it says the blend earned its keep, and
+# below it says it did harm. A merit-only rubric cannot say any of that: a blend
+# that ruins nothing scores well on merit because the base model was already
+# competent, and the search then has nothing to climb.
+JUDGE_BASELINE_SYSTEM_PROMPT = """\
+You are measuring what a LoRA adapter blend did to a base model.
+
+You will be shown:
+  QUESTION      what the user asked
+  BASE ANSWER   what the base model replied, with no adapter attached
+  TUNED ANSWER  what the same model replied with the adapter blend attached
+
+Both answers come from the same model and the same question. Judge only how
+the TUNED ANSWER compares with the BASE ANSWER as a reply to that question.
+
+Consider, in this order:
+- Usefulness: does the tuned answer serve the person who asked better?
+- Specificity: more concrete and grounded, rather than more words.
+- Manner: a clearer, better suited style, voice or form for the request.
+- Coherence: the tuned answer must not be more repetitive, contradictory,
+  truncated or malformed than the base one.
+
+Do not reward length, padding, restated questions or lists for their own sake,
+and do not reward a change of subject. If the two answers are equally good in
+different words, that is no improvement.
+
+Score from 0.0 to 1.0, where 0.5 is "no real difference":
+  1.0  transformed - the tuned answer is far better in every way that matters
+  0.8  clearly better
+  0.6  slightly better
+  0.5  no meaningful difference, or a difference not worth having
+  0.3  slightly worse
+  0.2  clearly worse
+  0.0  ruined - empty, incoherent, repetitive or off topic where the base
+       answer was not
+
+Reply with JSON and nothing else, with the score FIRST:
+{"quality": <number between 0 and 1>, "reason": "<at most 12 words>"}
+"""
+
+
+# --- the base-model answers "llm_judge_baseline" grades against -------------
+#
+# Producing them costs one base-model load and one generate() per eval prompt,
+# once. They are then cached in the database under BASE_MODEL and the question,
+# outside any one sweep, so every later sweep on the same base model and the
+# same prompts reads them and loads nothing.
+
+# Which template the one baseline script is filled from. None picks it from the
+# sweep's own TEMPLATE: template_baseline.py for a real sweep, and
+# template_baseline_mocked.py for one generated from template_code_mocked.py,
+# so a mocked sweep still needs no GPU. Mocked baselines are cached apart from
+# real ones -- under "mock:<model>" -- so a dry run can never leave made-up base
+# answers where a real sweep would find them.
+BASELINE_TEMPLATE = None
+
+# Seconds to allow the baseline script. It answers every eval prompt in one
+# process, so give it roughly what one individual gets, times the prompts.
+BASELINE_TIMEOUT = 1800
 
 
 # --- the "similarity" evaluator --------------------------------------------

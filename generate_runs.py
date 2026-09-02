@@ -19,6 +19,13 @@ settings.py. template_code_mocked.py is the other one in the repo: same markers
 and same rank arithmetic, but no model load and random answers, for exercising
 the pipeline without a GPU.
 
+render_baseline() fills a fourth kind, template_baseline.py: the base model on
+its own, answering the same prompts with nothing attached. It has no tree and no
+weights, so it is not an individual and the runs step never asks for it --
+baseline_run.py does, once per base model, for the llm_judge_baseline evaluator
+to grade against. It fills its markers from the same resolvers as the rest,
+which is what makes it a control rather than a differently configured run.
+
 Markers, all of the form @@NAME@@:
 
     inline          replaced within the line, e.g. EXPRESSION = "@@EXPRESSION@@"
@@ -63,6 +70,12 @@ COMBINATION_TYPE = {"CAT": "cat", "SVD": "svd", "LIN": "linear"}
 
 TEMPLATE = os.path.join(_HERE, "template_code.py")
 
+# The base model on its own, answering the same eval prompts -- what the
+# llm_judge_baseline evaluator measures an individual's answers against. One
+# per base model rather than one per individual, so it is filled by
+# baseline_run.py rather than by the runs step.
+BASELINE_TEMPLATE = os.path.join(_HERE, "template_baseline.py")
+
 MARKER = "@@%s@@"
 TEMPLATE_COMMENT = "#~"
 
@@ -83,6 +96,25 @@ def training_set_path(value=None):
     if not os.path.isabs(value):
         value = os.path.join(_HERE, value)
     return os.path.abspath(value)
+
+
+def base_model_name(value=None):
+    """The base model the scripts load, from a settings value or None.
+
+    BASE_MODEL is a setting rather than a line in the templates so that one
+    name reaches all three of them -- the two individual templates and the
+    baseline the llm_judge_baseline evaluator grades against. A control that
+    loaded a different model than the individuals did would turn every
+    improvement score into a comparison of two models rather than of a blend.
+
+    Same contract as training_set_path(): None means whatever settings.py says
+    now, and a caller holding a sweep's stored settings passes that instead.
+    """
+    value = value or settings.BASE_MODEL
+    if not str(value).strip():
+        raise SystemExit("BASE_MODEL is empty; it has to name the model the "
+                         "adapters were trained on.")
+    return str(value)
 
 
 def training_count(value=None):
@@ -451,7 +483,7 @@ def fill(template_lines, blocks, values):
 
 def render(expression, steps, final, script_name, provenance, label,
            template_lines=None, template_path=TEMPLATE, weight_seed=None,
-           training_set=None, slots=None, count=None):
+           training_set=None, slots=None, count=None, base_model=None):
     """The complete text of one runnable script, built from the template.
 
     Callers pass the planning results from plan(); the template supplies
@@ -469,10 +501,11 @@ def render(expression, steps, final, script_name, provenance, label,
 
     `training_set` is what the script's TRAINING_SET becomes, resolved to an
     absolute path; None takes it from settings.py. `slots` is the same for
-    LORA_SLOTS, and `count` for TRAINING_COUNT. main.py passes the sweep's
-    stored values for all three, so a resumed sweep keeps reading the prompts,
-    reading as many of them, and blending the adapters it was created with even
-    if settings.py has since moved on.
+    LORA_SLOTS, `count` for TRAINING_COUNT, and `base_model` for BASE_MODEL.
+    main.py passes the sweep's stored values for all four, so a resumed sweep
+    keeps reading the prompts, reading as many of them, blending the adapters
+    and loading the model it was created with even if settings.py has since
+    moved on.
     """
     template_lines = (load_template(template_path) if template_lines is None
                       else template_lines)
@@ -505,6 +538,9 @@ def render(expression, steps, final, script_name, provenance, label,
                        + ["    %r: %r," % pair
                           for pair in sorted(lora_slots(slots).items())]
                        + ["}"]),
+        # And the model all of them are attached to, from the same one place
+        # the baseline script gets it from.
+        "BASE_MODEL": ["BASE_MODEL = %r" % base_model_name(base_model)],
     }
     values = {
         "SCRIPT_NAME": script_name,
@@ -514,4 +550,30 @@ def render(expression, steps, final, script_name, provenance, label,
         "LEAF_COUNT": str(len(leaves)),
         "FINAL_ADAPTER": final,
     }
+    return fill(template_lines, blocks, values)
+
+
+def render_baseline(script_name, provenance, template_lines=None,
+                    template_path=BASELINE_TEMPLATE, training_set=None,
+                    count=None, base_model=None):
+    """The complete text of the one baseline script -- the base model alone.
+
+    The control the llm_judge_baseline evaluator grades against: the same base
+    model, the same eval prompts, the same cap, and nothing attached. It has no
+    tree, no weights and no adapters, so it fills three markers where render()
+    fills eleven -- but it fills them from the same resolvers, which is what
+    makes it a control rather than a second, differently configured run.
+
+    There is one of these per base model, not one per individual, so nothing
+    about an individual reaches it. baseline_run.py fills it, runs it once, and
+    caches what it said.
+    """
+    template_lines = (load_template(template_path) if template_lines is None
+                      else template_lines)
+    blocks = {
+        "BASE_MODEL": ["BASE_MODEL = %r" % base_model_name(base_model)],
+        "TRAINING_SET": ["TRAINING_SET = %r" % training_set_path(training_set)],
+        "TRAINING_COUNT": ["TRAINING_COUNT = %s" % training_count(count)],
+    }
+    values = {"SCRIPT_NAME": script_name, "PROVENANCE": provenance}
     return fill(template_lines, blocks, values)
