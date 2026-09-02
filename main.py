@@ -79,7 +79,7 @@ from collections import namedtuple
 import calculate_fitness
 import draw_trees
 import elitism
-import evaluate_run
+import evaluators
 import generate_population
 import generate_runs
 import mutation
@@ -135,7 +135,7 @@ def new_sweep(conn, label):
     conf = config.snapshot()
     # Fail on an unknown EVALUATOR here rather than an hour later, when the
     # process step has finished and there is a transcript nobody can score.
-    evaluate_run.get(conf.get("EVALUATOR"))
+    evaluators.get(conf.get("EVALUATOR"))
     if conf.get("SEED") is None:
         conf["SEED"] = random.randrange(_SEED_LIMIT)
     if conf.get("WEIGHT_MASTER_SEED") is None:
@@ -482,7 +482,7 @@ def step_evaluate(context):
     # It is handed the pending rows so it can tell an all-blank set -- a sweep
     # where every script failed, or a mocked one that arrived scored -- from one
     # that really needs an endpoint up.
-    evaluator = evaluate_run.get(context.conf.get("EVALUATOR"))
+    evaluator = evaluators.get(context.conf.get("EVALUATOR"))
     # The Context goes with it for the one evaluator that needs more than the
     # settings and the pending rows: llm_judge_baseline reads the cache of
     # base-model answers, and fills it -- one model load, once -- when the
@@ -886,7 +886,7 @@ def main(argv=None):
 
     if args.evaluators:
         current = config.EVALUATOR
-        for name, description in evaluate_run.available():
+        for name, description in evaluators.available():
             mark = "*" if name == current else " "
             print("%s %-20s %s" % (mark, name, description))
         print("\n* is EVALUATOR in settings.py, which a *new* sweep is created "

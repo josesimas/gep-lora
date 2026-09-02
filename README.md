@@ -485,7 +485,7 @@ Children are launched with `sys.executable`, so they inherit whichever
 interpreter you started this with — run it with the venv's python (see the PATH
 gotcha below) or every child will fail on `import unsloth`.
 
-### 5. `evaluate_run.py` → `exchanges.quality`
+### 5. `evaluators/` → `exchanges.quality`
 
 Scores every answer. Only the most recent execution of each individual is
 scored; older ones keep the scores they were given.
@@ -494,8 +494,9 @@ scored; older ones keep the scores they were given.
 python main.py evaluate
 ```
 
-**How an answer is scored is a setting.** `evaluate_run.py` is a registry of
-evaluators and `EVALUATOR` in `settings.py` names the one a sweep uses:
+**How an answer is scored is a setting.** `evaluators/` is a registry —
+**one module per evaluator**, plus `evaluators/common.py` for what they share —
+and `EVALUATOR` in `settings.py` names the one a sweep uses:
 
 ```bash
 python main.py --evaluators     # what is registered, and which one is current
@@ -545,7 +546,7 @@ of them on its own merits. Every knob is in `settings.py`:
 
 The API key is the one judge setting that is *not* in `settings.py`: a sweep
 writes its settings into the database, so the key is read from the
-`JUDGE_API_KEY` environment variable by `evaluate_run.py` instead.
+`JUDGE_API_KEY` environment variable by `evaluators/common.py` instead.
 
 `JUDGE_SYSTEM_PROMPT` **is** the fitness criterion: it grades relevance,
 usefulness, specificity, coherence and appropriateness, with anchors at 1.0 /
@@ -726,25 +727,40 @@ message if it runs out mid-thought.
 
 #### Adding one of your own
 
-An evaluator is a name, a description and two functions, registered in
-`evaluate_run.py`:
+An evaluator is a name, a description and two functions. **One file per
+evaluator**, in `evaluators/`, ending in the call that registers it — say
+`evaluators/mine.py`:
 
 ```python
-def _prepare_mine(conf, pending):     # once per evaluate step
-    return evaluate_run.Prepared(conf, "mine", notes=["mine: ..."])
+from evaluators import common
 
-def _score_mine(item, prepared):      # once per answer -> (quality, reason)
+def prepare(conf, pending, context=None):   # once per evaluate step
+    return common.Prepared(conf, "mine", notes=["mine: ..."])
+
+def score(item, prepared):                  # once per answer -> (quality, reason)
     return 0.5, "why"
 
-register(Evaluator("mine", "what it does", _prepare_mine, _score_mine))
+common.register(common.Evaluator("mine", "what it does", prepare, score))
 ```
 
+Then add one line to `evaluators/__init__.py` — `from evaluators import mine` —
+because importing the module is what runs its `register()`. Nothing else in the
+pipeline changes: every step reaches an evaluator through `get(EVALUATOR)`.
+
+Every module here calls its two functions `prepare` and `score`, since the file
+name already says which evaluator they belong to — and that is what lets one
+build on another. `llm_judge_reference.py` and `llm_judge_baseline.py` are
+`llm_judge.prepare()` and `llm_judge.score()` plus a bigger prompt.
+
 `prepare()` is where the once-per-step work goes — discovering a model, loading
-the eval set's answers with `load_references()`, validating knobs — and what it
-returns is handed to every `score()` call. Its `label` is what lands in
-`exchanges.judge_model`. Knobs go in `settings.py` under a prefix of their own
-and reach `score()` as `prepared.conf`, which is the sweep's *stored* settings,
-never `settings.py` as it stands now.
+the eval set's answers with `common.load_references()`, filling the base-answer
+cache, validating knobs — and what it returns is handed to every `score()` call.
+Its `label` is what lands in `exchanges.judge_model`. `context` is the step's own
+`Context`, there for an evaluator that needs the database or the run folder;
+ignore it otherwise. Knobs go in `settings.py` under a prefix of their own and
+reach `score()` as `prepared.conf`, which is the sweep's *stored* settings, never
+`settings.py` as it stands now. Anything a second evaluator would also want
+belongs in `evaluators/common.py`.
 
 ### 6. `calculate_fitness.py` → `individuals.fitness`, `fitness_history`
 
@@ -1556,7 +1572,7 @@ the dataset's own answer, a judge shown what the base model said and asked how
 much the blend improved on it, overlap with that answer, local checks, or a
 panel.
 The registry and every knob behind it are described under
-[`evaluate_run.py`](#5-evaluate_runpy--exchangesquality) above; `python main.py
+[`evaluators/`](#5-evaluators--exchangesquality) above; `python main.py
 --evaluators` lists what is registered. It is the setting the search's direction
 hangs from, so it is worth choosing before a long run rather than after one.
 
@@ -1596,7 +1612,8 @@ warning — the effective cap is unchanged.
 | `template_baseline_mocked.py` | the same, mocked: no model load, invented answers, cached under `mock:` |
 | `training_set.txt` | the eval prompts, one per line, read by every generated script; the path is `TRAINING_SET` in `settings.py` |
 | `process_run.py` | launches a generated script and reads its transcript back |
-| `evaluate_run.py` | the evaluators: the registry `EVALUATOR` picks from, and one score per answer |
+| `evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_baseline.py`, `similarity.py`, `heuristic.py`, `panel.py` |
+| `evaluators/common.py` | what they share: the registry, the judge transport, the reference answers, the tokeniser |
 | `calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
 | `elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
 | `selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent |
@@ -1622,7 +1639,7 @@ template_code.py                           (the shape of those scripts)
 process_run.launch/exchanges          -->  executions, exchanges
 baseline_run.ensure                   -->  baselines (once per model+question,
                                            only for llm_judge_baseline)
-evaluate_run.get(EVALUATOR).score    -->  exchanges.quality
+evaluators.get(EVALUATOR).score      -->  exchanges.quality
 calculate_fitness.assign              -->  individuals.fitness
                                            + fitness_history (per generation)
 elitism.elect                         -->  individuals.is_best

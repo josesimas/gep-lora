@@ -30,7 +30,8 @@ Two things it is careful about:
     improvement score a comparison of the settings as much as of the blend.
 
 Nothing here decides *how* a base answer is used -- that is the evaluator's
-part, in evaluate_run.py. This module only makes sure the answers exist.
+part, in evaluators/llm_judge_baseline.py. This module only makes sure the
+answers exist.
 """
 
 import os

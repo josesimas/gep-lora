@@ -201,7 +201,8 @@ def eval_records(training_set=None, count=None):
     1-based and lines up with exchanges.position, since both count non-blank
     lines of this file from the top.
 
-    Kept next to eval_prompt_count() rather than in evaluate_run.py so the eval
+    Kept next to eval_prompt_count() rather than in the evaluators package so
+    the eval
     file has one reader per concern and neither has to know where the file is:
     training_set_path() already answers that, for a stored sweep's value as
     much as for settings.py's.

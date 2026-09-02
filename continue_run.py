@@ -55,7 +55,7 @@ Why the name
 ------------
 `continue` is a Python keyword, so a continue.py could be run but never
 imported. The _run suffix sidesteps that and puts it with process_run.py and
-evaluate_run.py besides, which is the company it keeps.
+baseline_run.py besides, which is the company it keeps.
 
     python continue_run.py --help
 """

@@ -3,7 +3,8 @@ test_lora.py - Ask one question twice: once of the bare base model, once with a
 LoRA attached, and print both answers next to each other.
 
 The quickest way to see what an adapter actually did. Everything else here
-either scores an adapter (the judge, in evaluate_run.py) or blends several of
+either scores an adapter (the judge, in the evaluators package) or blends
+several of
 them (the whole pipeline); this just shows you the difference one makes, in the
 words the model uses.
 

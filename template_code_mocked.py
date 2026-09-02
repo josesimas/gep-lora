@@ -5,7 +5,7 @@
 #~     python generate_runs.py --template template_code_mocked.py
 #~
 #~ What it is for: exercising the pipeline -- generate_runs -> process_run ->
-#~ evaluate_run, or `python main.py` end to end -- in seconds instead of hours,
+#~ evaluators, or `python main.py` end to end -- in seconds instead of hours,
 #~ with no GPU, no base-model load and no judge endpoint. Use it when what you
 #~ are testing is the plumbing, never when you are testing a blend.
 #~
@@ -18,7 +18,7 @@
 #~
 #~ What it fakes: the answers, and their scores. It prints QUALITY:/REASON:
 #~ lines after each answer, which process_run.py folds into the transcript --
-#~ so mocked transcripts arrive pre-scored and evaluate_run.py skips them
+#~ so mocked transcripts arrive pre-scored and the evaluate step skips them
 #~ (an exchange that already has a quality is left alone without --force).
 #~
 #~ Markers work exactly as in template_code.py:
@@ -328,7 +328,7 @@ def ask(question, max_new_tokens=250):
 
 
 def grade():
-    """A random score and a reason to match, in the shape evaluate_run.py writes.
+    """A random score and a reason to match, in the shape an evaluator writes.
 
     0.0 is worst and 1.0 is best, rounded to 3 places like a real judge's. It
     is noise: useful for checking that the plumbing carries the field and that

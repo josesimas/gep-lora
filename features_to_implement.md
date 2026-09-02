@@ -1,7 +1,8 @@
 # Features
 
 * Save all settings and data to the run database
-* Order the settings in a more sane way
+* Move the evaluators to the folder evaluators and put one evaluator per file (with a common file for duplicate functions)
+* ~~Order the settings in a more sane way~~
 * ~~Track fitness over the generations~~
 * ~~More fitness functions~~ (EVALUATOR in settings.py: llm_judge, llm_judge_reference, similarity, heuristic, panel)
 * ~~Run the training set through the base model and use the results in the evaluation of the loras (send then to the judge LLM)~~

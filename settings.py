@@ -212,8 +212,8 @@ PROCESS_RUN_PROGRESS_SECONDS = 30
 
 # --- how an answer is scored -----------------------------------------------
 
-# Which evaluator the evaluate step uses. One name, out of the registry in
-# evaluate_run.py:
+# Which evaluator the evaluate step uses. One name, out of the registry in the
+# evaluators package -- one module per evaluator, plus evaluators/common.py:
 #
 #   "llm_judge"            a judge model grades the answer on its own merits.
 #                          Needs an endpoint. The original behaviour, and the
@@ -257,7 +257,7 @@ EVALUATOR = "llm_judge"
 # Read by "llm_judge", "llm_judge_reference", "llm_judge_baseline", and by
 # "panel" for everything except which models sit on it. The API key is deliberately *not* here: a sweep
 # writes its settings into the database, so the key is read from the
-# JUDGE_API_KEY environment variable by evaluate_run.py instead.
+# JUDGE_API_KEY environment variable by evaluators/common.py instead.
 
 # Where the judge lives. The default is the local LMStudio instance; its API is
 # OpenAI-compatible, so a cloud endpoint is a drop-in replacement:

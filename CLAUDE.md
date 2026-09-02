@@ -373,7 +373,10 @@ overrides it; a step where nothing needs running is reported, not a failure.
 - **`EVALUATOR` is the fitness criterion**, and so is the rubric behind it — the whole
   search optimises toward whatever the chosen evaluator rewards, so it is frozen into a
   sweep like every other setting and a step reads the sweep's, never `settings.py`'s.
-  `evaluate_run.py` is a registry: an evaluator is a name, a description, `prepare(conf,
+  The `evaluators/` package is a registry, **one module per evaluator** (`llm_judge.py`,
+  `llm_judge_reference.py`, `llm_judge_baseline.py`, `similarity.py`, `heuristic.py`,
+  `panel.py`) plus `common.py` for what more than one of them needs. An evaluator is a
+  name, a description, `prepare(conf,
   pending, context=None)` (once per step: discover the model, load the eval set's own
   answers, fill the base-answer cache, validate its knobs) and `score(item, prepared)`
   (once per answer, -> `(quality, reason)`), and
@@ -381,10 +384,19 @@ overrides it; a step where nothing needs running is reported, not a failure.
   own `Context`, passed for the one evaluator that needs more than settings and rows:
   `llm_judge_baseline` wants the database and the run folder. Everything else ignores it. Its `Prepared.label` is
   what lands in `exchanges.judge_model` — a model id for a judge, the method's name for a
-  local one. **No knob lives in `evaluate_run.py`**; they are all in `settings.py` under
+  local one. **No knob lives in the package**; they are all in `settings.py` under
   the prefix of whichever evaluator reads them (`JUDGE_*`, `BASELINE_*`, `SIMILARITY_*`,
   `HEURISTIC_*`, `PANEL_*`). The single exception is the API key, read from `$JUDGE_API_KEY`, because a
   sweep writes its settings into the database and a bearer token has no business there.
+  Each module names its two functions `prepare` and `score` — the file says which evaluator
+  they belong to — and ends in the `common.register()` call that adds it; **importing the
+  module is the registration**, so a new evaluator is a new file plus one import line in
+  `evaluators/__init__.py`, and nothing else in the pipeline changes. That naming is also
+  what lets `llm_judge_reference` and `llm_judge_baseline` be `llm_judge.prepare()` and
+  `llm_judge.score()` plus a bigger prompt. Anything a second evaluator would want too
+  belongs in `common.py`: the registry types, the judge transport (`ask_judge`,
+  `endpoint_settings`, `discover_model`, `parse_reply`), the reference answers and the
+  tokeniser all live there because two or more of the six use each.
   Two judge parsing traps already fixed: the score is requested *before* the reason (a long
   reason must not truncate it away), and `JUDGE_MAX_TOKENS` is generous because a reasoning
   judge returns an empty message if it runs out mid-thought.

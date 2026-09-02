@@ -69,7 +69,8 @@ def _split_grade(lines):
 
     Only the mocked template (template_code_mocked.py) prints those, so for a
     real run this returns the lines untouched and an empty grade -- the scoring
-    still comes from evaluate_run.py. For a mocked run it is what carries the
+    still comes from the evaluators package. For a mocked run it is what carries
+    the
     made-up score into the transcript, so a dry sweep needs no judge endpoint.
 
     A reply line that genuinely started with "QUALITY:" would be cut short here.
