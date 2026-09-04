@@ -35,6 +35,7 @@ import argparse
 import html
 import json
 import os
+import re
 import sys
 import webbrowser
 
@@ -84,6 +85,7 @@ def read_sweep(conn, run_id):
                     for split in store.dataset_summary(conn, run_id)},
         "people": people,
         "quality": quality,
+        "ranks": slot_ranks(people),
         "executions": executions,
         "answers": answers,
         "history": history,
@@ -95,6 +97,38 @@ def read_sweep(conn, run_id):
         "test_summary": store.test_summary(conn, run_id),
         "totals": totals(conn, run_id),
     }
+
+
+# One line of a generated script's build order, which is the only place a
+# stored sweep writes down what rank a slot was:
+#
+#     n1_L2      = L2 @ w3                           rank 16
+#
+# generate_runs.build_order_block() is what writes it, and writes nothing else
+# in that shape.
+_LEAF_RANK = re.compile(r"=\s*(L\d)\s*@\s*w\d\s+rank\s+(\d+)")
+
+
+def slot_ranks(people):
+    """{slot: rank}, as the sweep's own scripts recorded it.
+
+    Read out of `script_source` rather than off the adapters on disk, for the
+    reason every step reads its sweep's stored settings rather than
+    settings.py: the rank worth showing is the one the individual was *built
+    with*, and `LORA_SLOTS` may have been repointed at a different adapter --
+    or the adapters may not be on this machine at all -- since the sweep ran.
+    The five slots are not assumed to share a rank; each is taken from a line
+    that names it.
+
+    Silent about a slot no script mentions. A sweep whose individuals have
+    never been through `runs` has recorded no ranks, and the page then draws
+    the leaves as it did before -- an invented rank would be worse than none.
+    """
+    found = {}
+    for row in people:
+        for slot, rank in _LEAF_RANK.findall(row["script_source"] or ""):
+            found.setdefault(slot, int(rank))
+    return found
 
 
 def generations(conn, run_id, history, champions):
@@ -635,21 +669,29 @@ def testing_chart(tested):
 # --- the blend, drawn ------------------------------------------------------
 
 
-def tree_svg(chromosome, weights=None):
+def tree_svg(chromosome, weights=None, ranks=None):
     """The chromosome as the blend it describes.
 
     An L* node and the w* below it are drawn as one leaf: the pair is a single
     fact -- this adapter, at this weight -- and splitting them across two rows
     would make the picture a drawing of the encoding rather than of the blend.
     The operators above them are the folds, in the order PEFT would apply them.
+
+    The leaf carries the slot's rank beside its weight, because the rank is
+    what decides whether the folds above it can run at all: cat sums the ranks
+    it meets, svd takes the larger, and linear refuses two that differ. Reading
+    the ranks off the bottom row is reading the constraint the whole tree is
+    built under.
     """
     try:
         root, _ = decode(chromosome)
     except ValueError as error:
         return '<p class="warn">cannot draw this chromosome: %s</p>' % esc(error)
 
-    leaf_step, level_step = 132.0, 92.0
+    ranks = ranks or {}
+    leaf_step, level_step = 158.0, 92.0
     node_w, node_h, leaf_h = 74.0, 38.0, 46.0
+    leaf_w = 124.0
     margin_x, margin_y = 24.0, 16.0
 
     placed, counter, depth_seen = [], [0], [0]
@@ -701,16 +743,24 @@ def tree_svg(chromosome, weights=None):
                    entry["x"] - node_w / 2.0, y, node_w, node_h,
                    entry["x"], y + 25, esc(entry["symbol"])))
         else:
+            rank = ranks.get(entry["symbol"])
             label = entry["variable"] or "?"
             if entry["weight"] is not None:
                 label = "%s = %.4f" % (label, entry["weight"])
+            if rank is not None:
+                label = "%s · r%d" % (label, rank)
+            spelt = "%s at %s%s" % (
+                entry["symbol"], entry["variable"] or "?",
+                "" if entry["weight"] is None else " = %.4f" % entry["weight"])
+            if rank is not None:
+                spelt += ", rank %d" % rank
             nodes.append(
-                '<g class="tnode leaf leaf-%s"><title>%s at %s</title>'
+                '<g class="tnode leaf leaf-%s"><title>%s</title>'
                 '<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="10"/>'
                 '<text class="slot" x="%.1f" y="%.1f" text-anchor="middle">%s</text>'
                 '<text class="wt" x="%.1f" y="%.1f" text-anchor="middle">%s</text></g>'
-                % (entry["symbol"].lower(), esc(entry["symbol"]), esc(label),
-                   entry["x"] - (node_w + 22) / 2.0, y, node_w + 22, leaf_h,
+                % (entry["symbol"].lower(), esc(spelt),
+                   entry["x"] - leaf_w / 2.0, y, leaf_w, leaf_h,
                    entry["x"], y + 21, esc(entry["symbol"]),
                    entry["x"], y + 37, esc(label)))
 
@@ -934,9 +984,11 @@ def individual_panel(data, best, seen, chosen):
     for leaf in _leaves(best["chromosome"]):
         drawn = weights.get(leaf["variable"])
         slot_rows.append('<tr><td><code>%s</code></td><td><code>%s</code></td>'
-                         '<td class="numeric">%s</td><td class="path">%s</td></tr>'
+                         '<td class="numeric">%s</td><td class="numeric">%s</td>'
+                         '<td class="path">%s</td></tr>'
                          % (esc(leaf["symbol"]), esc(leaf["variable"]),
-                            num(drawn, 4), esc(slots.get(leaf["symbol"], "-"))))
+                            num(drawn, 4), esc(data["ranks"].get(leaf["symbol"])),
+                            esc(slots.get(leaf["symbol"], "-"))))
 
     transcript = "".join(
         '<details class="qa"><summary><span class="pill %s">%s</span>'
@@ -1013,7 +1065,10 @@ def individual_panel(data, best, seen, chosen):
             '<div class="grid-2">'
             '<div class="card"><h3>The blend</h3>%s'
             '<p class="muted">Read bottom-up: each leaf attaches one adapter at one '
-            'weight, and each fold above it is a PEFT combination.</p>%s</div>'
+            'weight and its own rank (<code>r</code>), and each fold above it is a '
+            'PEFT combination - <code>CAT</code> sums the ranks it meets, '
+            '<code>SVD</code> takes the larger, and <code>LIN</code> requires two '
+            'that match.</p>%s</div>'
             '<div class="card"><h3>At a glance</h3><dl class="facts tight">%s</dl>'
             '<h3>The weight draw</h3><div class="weights">%s</div>'
             '<p class="muted">All five are drawn from the individual\'s own seed; '
@@ -1026,14 +1081,16 @@ def individual_panel(data, best, seen, chosen):
             '%s</div>'
             % (number,
                "" if number == chosen else " hidden",
-               head, notices_html, tree_svg(best["chromosome"], weights),
+               head, notices_html,
+               tree_svg(best["chromosome"], weights, data["ranks"]),
                karva_rows(best["chromosome"]),
                "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (esc(key), esc(value))
                        for key, value in stats),
                "".join(weight_rows) or '<p class="muted">no draw recorded</p>',
                testing_note,
                table('<th>slot</th><th>weight</th><th class="numeric">drawn</th>'
-                     '<th>path</th>', "".join(slot_rows), sortable=False),
+                     '<th class="numeric">rank</th><th>path</th>',
+                     "".join(slot_rows), sortable=False),
                answers_chart(rows) or '<p class="muted">nothing answered yet</p>',
                transcript or '<p class="muted">no transcript stored</p>',
                "".join(extras)))

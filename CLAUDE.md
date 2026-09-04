@@ -109,13 +109,25 @@ The other reader, and the only one that produces a file: one stored sweep as a
 single self-contained HTML page, written **beside the database**
 (`gep_run1_stats.html` next to `gep.sqlite3`; `--out` moves it, `--run` picks the
 sweep, `0` = latest, `--open` opens it). It leads with one individual --
-score, chromosome, the blend drawn as an SVG tree with each leaf's drawn weight,
-the Karva rows, the weight draw, a bar per question, the transcript with the
-judge's reasons, the script that earned it -- then the fitness history, the
-population, the score distribution, the testing pass, the dataset and the
-settings. Derived and disposable: it writes nothing to the sweep, and reads
-through `store.py`'s helpers rather than its own SQL, bar a couple of read-only
-aggregates the way `main.py` and `test_run_with_dataset.py` already do.
+score, chromosome, the blend drawn as an SVG tree whose leaves carry the drawn
+weight *and the slot's rank*, the Karva rows, the weight draw, a bar per
+question, the transcript with the judge's reasons, the script that earned it --
+then the fitness history, the population, the score distribution, the testing
+pass, the dataset and the settings. Derived and disposable: it writes nothing to
+the sweep, and reads through `store.py`'s helpers rather than its own SQL, bar a
+couple of read-only aggregates the way `main.py` and `test_run_with_dataset.py`
+already do.
+
+**Where the leaf ranks come from is deliberate.** `slot_ranks()` parses them out
+of the stored `script_source` -- `generate_runs.build_order_block()` writes one
+line per node naming its rank, and `_LEAF_RANK` matches the leaf ones -- rather
+than calling `generate_runs.slot_ranks()`, which reads the adapters on disk.
+This is a *third* reader of the ranks and it is the right one here for the
+reason a step reads its sweep's stored settings: the rank worth showing is the
+one that individual was built with, `LORA_SLOTS` may have been repointed since,
+and a database is often read on a machine the adapters were never on. It is
+also all-or-nothing per slot rather than per sweep: a slot no script mentions
+gets no rank on the leaf, and the drawing falls back to the weight alone.
 
 **Which individual is a combobox**, starting on the best. Every individual gets a
 complete panel and all but one are `hidden`, rather than the page holding a

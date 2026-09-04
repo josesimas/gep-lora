@@ -1796,11 +1796,32 @@ The page lands **beside the database** — `gep_run1_stats.html` next to
 puts it elsewhere. `--run 0` (the default) is the most recent sweep.
 
 It leads with an individual: the score, the chromosome, the blend drawn as a
-tree with each leaf's drawn weight on it, the Karva rows, the weight draw, the
-adapters it attaches, a bar per question, the whole transcript with the judge's
-reason under each answer, and the script that earned it. Then the search's own
-history, the population, the distribution of scores, the testing pass, the
-dataset and every setting the sweep was created with.
+tree, the Karva rows, the weight draw, the adapters it attaches, a bar per
+question, the whole transcript with the judge's reason under each answer, and
+the script that earned it. Then the search's own history, the population, the
+distribution of scores, the testing pass, the dataset and every setting the
+sweep was created with.
+
+Each leaf of the tree carries its slot's **weight and rank** — `w5 = 0.8400 ·
+r16` — because the rank is what decides whether the folds above it can run at
+all: `CAT` sums the ranks it meets, `SVD` takes the larger, `LIN` refuses two
+that differ. Reading the bottom row is reading the constraint the whole tree was
+built under, and a `BAD` individual usually shows its reason right there.
+
+Those ranks come out of the sweep's **own stored scripts**, not off the adapters
+on disk. Every generated script's build order names each leaf's rank —
+
+```
+    n1_L4      = L4 @ w5                       rank 4
+    n2_L1      = L1 @ w5                       rank 16
+    n3_CAT     = CAT(n1_L4, n2_L1)             rank 20
+```
+
+— which is the rank that individual was *built with*, for the same reason every
+step reads its sweep's stored settings rather than `settings.py`: `LORA_SLOTS`
+may have been repointed since, and the adapters may not be on this machine at
+all. A slot no script mentions simply has no rank shown; an invented one would
+be worse than none.
 
 **Which individual is a combobox**, and the best one is what it starts on. Every
 individual in the population gets a complete panel — the whole panel above,
