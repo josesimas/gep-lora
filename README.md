@@ -102,6 +102,53 @@ individuals as unfit and let selection drop them.
 
 ---
 
+## What an `SVD` node costs
+
+`svd` is the one operator that does real work at build time, and PEFT leaves a
+trap in it. `_svd_generalized_task_arithmetic_weighted_adapter` runs
+`torch.linalg.svd` on each module's delta weight and returns `Vh[:new_rank, :]`,
+which `add_weighted_adapter` assigns straight to that module's `lora_A`. That
+slice is a **view**: it pins the whole `V` matrix for as long as the adapter
+lives, and `V` is sized by the delta weight rather than by the rank. It also
+comes back contiguous, so `.contiguous()` is a no-op on it — only a copy lets
+the buffer go.
+
+On this base model, measured on an A6000:
+
+| module | delta shape | `lora_A` | buffer pinned behind it |
+|---|---|---|---|
+| `down_proj` | 1536 × 8960 | 0.55 MB | **306 MB** |
+| `gate_proj`, `up_proj` | 8960 × 1536 | 0.09 MB | 9 MB each |
+| `q_proj`, `o_proj` | 1536 × 1536 | 0.09 MB | 9 MB each |
+| `k_proj`, `v_proj` | 256 × 1536 | 0.09 MB | 9 MB each |
+
+360 MB a layer across 28 layers — a single `SVD` node used to add **~10 GB of
+resident VRAM** to hold about 18 MB of weights, seven times the model it
+attaches to. [template_code.py](template_code.py) closes it in `combine()`:
+`svd_full_matrices=False` asks for the thin SVD (the first `new_rank` singular
+vectors are identical either way, and the full n × n `V` is only a bigger buffer
+to compute and throw away), and `_compact()` then clones every weight still
+sitting on storage larger than itself.
+
+One `CAT.SVD.LIN` individual, start to first answer:
+
+| stage | before | after |
+|---|---|---|
+| base model, 4-bit | 1.47 GB | 1.47 GB |
+| four leaf adapters attached | 1.64 GB | 1.64 GB |
+| **after the `SVD` node** | **11.58 GB** | **1.71 GB** |
+| generating | 11.68 GB | 1.81 GB |
+| what `nvidia-smi` shows | **14.0 GB** | **3.6 GB** |
+
+The transient peak during the node is still ~4.7 GB, because the views pile up
+across the module loop and are only released once it ends — that peak, not the
+resting figure, is what a batch has to fit.
+
+The mocked template builds no adapters, so it has none of this and says nothing
+about VRAM; the note where `_compact()` would go says so.
+
+---
+
 ## Scripts
 
 Run everything from `project/`.
@@ -182,6 +229,55 @@ from its own seed — see `WEIGHT_MASTER_SEED`.
 Every upper-case name in `settings.py` is snapshotted into the sweep when it
 starts, so a knob added there is a knob recorded — and a resumed sweep reads the
 settings **it** was created with, not whatever the file says now.
+
+#### The dataset, saved with the sweep
+
+Creating a sweep does one more thing before the first step runs: it reads the
+dataset and writes it into the **`datasets`** table, whole.
+
+```
+new run 7 in run_db/gep.sqlite3
+training    60 record(s), 60 with a reference answer, from D:\...\medical_training_lora_dataset.json
+validation  20 record(s), 20 with a reference answer, from D:\...\medical_validation_lora_dataset.json
+testing     20 record(s), 20 with a reference answer, from D:\...\medical_testing_lora_dataset.json
+```
+
+Alongside the settings, and for the same reason. A fitness number means *this
+blend, under these knobs, on these questions*, and a settings table that records
+`TRAINING_SET` records only **where** the questions were — the files themselves
+go on being edited, repointed and regenerated. A sweep read back in a month can
+now say what it was actually asked.
+
+The table holds the three splits — `training`, `validation`, `testing` — one row
+per record, each with the question (the user turn), the reference answer (the
+assistant turn, where the record has one) and the line it was read from, so a
+later reader can disagree with this repo's parsing of it. `position` is 1-based
+over non-blank lines from the top, the same numbering `exchanges.position` uses.
+
+Which files those are is three settings:
+
+```python
+TRAINING_SET   = "datasets/medical_training_lora_dataset.json"
+VALIDATION_SET = None      # e.g. "datasets/medical_validation_lora_dataset.json"
+TESTING_SET    = None      # e.g. "datasets/medical_testing_lora_dataset.json"
+```
+
+Only the training split is read by the search: it is the eval set every
+generated script asks and every fitness number is earned on. The other two are
+stored when they are named and read by nothing yet — the point of storing them
+now is that a later validation or test pass gets the questions this sweep was
+built beside rather than whatever those files hold by then. A split left `None`
+is simply not part of the sweep and leaves no rows; a split naming a file that
+cannot be read stops the sweep at its first second rather than an hour in.
+
+Every record is stored, uncapped. `TRAINING_COUNT` says how many of them an
+*individual* is judged on, which is a fact about the sweep and already in the
+settings table, not a fact about the dataset.
+
+`python store.py --show` prints a line per split, and `--export` writes each one
+back out as `dataset_<split>.txt` — the lines as they were read, so the export
+can be diffed against the file on disk today to see whether the dataset has
+moved under the sweep.
 
 **Adding a step.** Append a `Step(name, callable, description)` to `main.py`'s
 `STEPS`. The callable takes the `Context` — the connection, the run id, the
@@ -356,7 +452,9 @@ takes as long as its slowest member. `1` is one at a time, and the output then
 reads exactly as it did before batching existed.
 
 The ceiling is fixed because the cost is fixed: a batch of N is N copies of the
-base model resident at the same time. Set it to what the GPU can actually hold.
+base model resident at the same time. Set it to what the GPU can actually hold —
+reckon on ~3.6 GB resting and ~4.7 GB peak per script on this base model, the
+peak being the `SVD` node (see [What an `SVD` node costs](#what-an-svd-node-costs)).
 An individual that runs out of memory is recorded as a failed execution like any
 other, so too large a batch does not stop a sweep — it quietly fills it with
 failures. A mocked sweep loads nothing and can go far higher.
@@ -1296,6 +1394,8 @@ library of pure functions — `build_population`, `draw`, `plan`/`render`,
 ```
 runs          one sweep: when, which template, which interpreter, which commit
   settings    every knob it ran under, including the seeds
+  datasets    the records it was given -- training, validation and testing --
+              saved whole at the moment the sweep was created
   individuals the population: chromosome, tree, rank, verdict, and the
               generated script in full
     executions  one per time that individual was run: exit code, seconds, the
@@ -1630,6 +1730,7 @@ the arrows end in tables, not files.
 ```
 plan.txt                              the rules
    |
+main.save_datasets                    -->  datasets (once, as the sweep is made)
 generate_population.build_population  -->  individuals (chromosome)
 draw_trees.draw                       -->  individuals.tree
 generate_runs.plan/render             -->  individuals.script_source
