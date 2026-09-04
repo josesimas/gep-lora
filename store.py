@@ -12,6 +12,8 @@ row so sweeps accumulate instead of replacing each other:
 
     runs          one sweep: when, which template, which interpreter, which commit
       settings    every knob it ran under, including the seeds
+      datasets    the training/validation/testing records it was given, saved
+                  the moment the sweep was created
       individuals the population: chromosome, tree, rank, verdict, and the
                   generated script in full
         executions  one per time that individual was actually run: exit code,
@@ -82,6 +84,38 @@ CREATE TABLE IF NOT EXISTS settings (
     key     TEXT    NOT NULL,
     value   TEXT,
     PRIMARY KEY (run_id, key)
+);
+
+-- The dataset the sweep was given, one row per record, saved at the moment the
+-- sweep is created and never touched again -- for the reason the settings are:
+-- a fitness number means "this blend, under these knobs, on these questions",
+-- and the file the questions came from goes on being edited, repointed and
+-- regenerated long after the sweep that was judged on it.
+--
+-- `split` is which of the three the row belongs to. Only the training split is
+-- read by the search today (it is TRAINING_SET, capped by TRAINING_COUNT, and
+-- what every generated script asks); validation and testing are stored when
+-- settings name them so that a later pass has the questions this sweep was
+-- built beside rather than whatever those files hold by then.
+--
+-- Every record of the file is stored, uncapped: TRAINING_COUNT says how many
+-- an individual is judged on, which is a fact about the sweep and already in
+-- the settings table, not a fact about the dataset. `position` is 1-based over
+-- non-blank lines from the top, so it lines up with exchanges.position the way
+-- generate_runs.eval_records() does. `content` is the line as it stood --
+-- question and reference are this repo's reading of it, and keeping the line
+-- means a later reader can disagree.
+CREATE TABLE IF NOT EXISTS datasets (
+    id        INTEGER PRIMARY KEY,
+    run_id    INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    split     TEXT    NOT NULL
+              CHECK (split IN ('training', 'validation', 'testing')),
+    source    TEXT    NOT NULL,      -- the file it was read from, resolved
+    position  INTEGER NOT NULL,      -- 1-based, non-blank lines from the top
+    question  TEXT    NOT NULL,      -- the user turn: what a script would ask
+    reference TEXT,                  -- the assistant turn, when the record has one
+    content   TEXT    NOT NULL,      -- the whole line, as it was read
+    UNIQUE (run_id, split, position)
 );
 
 CREATE TABLE IF NOT EXISTS individuals (
@@ -309,6 +343,70 @@ def get_settings(conn, run_id):
         except (ValueError, TypeError):
             out[row["key"]] = row["value"]      # written by hand, keep the text
     return out
+
+
+# --- the dataset the sweep was given --------------------------------------
+
+# The three splits, in the order they are worked through and reported. The
+# schema names them too (datasets.split is CHECK'd against exactly these), so
+# a fourth split is a schema change rather than a new string somewhere.
+SPLITS = ("training", "validation", "testing")
+
+
+def save_dataset(conn, run_id, split, source, records):
+    """Store one split of a sweep's dataset. -> how many records were written.
+
+    `records` is generate_runs.dataset_records() output -- position, question,
+    reference and the line it came from -- and `source` the file they were read
+    from, resolved, so the row says where it came from as well as what it said.
+
+    Written whole, replacing whatever that split held: a dataset is saved once,
+    at sweep creation, and re-saving one is either a re-run of that moment or a
+    correction, never half of each. The rows themselves are never edited
+    afterwards -- the point of them is that they say what this sweep was built
+    on, and a sweep's dataset changing under it would be the thing they exist to
+    prevent.
+    """
+    if split not in SPLITS:
+        raise ValueError("unknown dataset split %r; the table holds %s"
+                         % (split, ", ".join(SPLITS)))
+    conn.execute("DELETE FROM datasets WHERE run_id = ? AND split = ?",
+                 (run_id, split))
+    conn.executemany(
+        "INSERT INTO datasets (run_id, split, source, position, question,"
+        " reference, content) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(run_id, split, source, record["position"], record["question"],
+          record["reference"], record["content"]) for record in records])
+    conn.commit()
+    return len(records)
+
+
+def dataset(conn, run_id, split):
+    """One split's records, in file order."""
+    return conn.execute(
+        "SELECT * FROM datasets WHERE run_id = ? AND split = ? ORDER BY position",
+        (run_id, split)).fetchall()
+
+
+def dataset_summary(conn, run_id):
+    """[{split, source, records, references}, ...] for the splits a sweep holds.
+
+    In SPLITS order rather than in whatever order they were saved, and silent
+    about the ones a sweep was never given -- a sweep with no validation set has
+    no validation rows, which is not the same as an empty one.
+    """
+    rows = conn.execute(
+        "SELECT split, source, COUNT(*) AS records,"
+        "       SUM(CASE WHEN reference IS NULL THEN 0 ELSE 1 END) AS references_"
+        "  FROM datasets WHERE run_id = ? GROUP BY split, source",
+        (run_id,)).fetchall()
+    found = {row["split"]: row for row in rows}
+    return [{"split": name,
+             "source": found[name]["source"],
+             "records": found[name]["records"],
+             "references": found[name]["references_"] or 0}
+            for name in SPLITS if name in found]
+
 
 
 # --- the population --------------------------------------------------------
@@ -776,6 +874,14 @@ def export_run(conn, run_id, out_dir):
 
     write("population.txt", "".join(row["chromosome"] + "\n" for row in rows))
 
+    # Each split written back as the lines it was read from, so the file in the
+    # folder can be diffed against the one on disk today and say whether the
+    # dataset has moved under the sweep.
+    for entry in dataset_summary(conn, run_id):
+        write("dataset_%s.txt" % entry["split"],
+              "".join(item["content"] + "\n"
+                      for item in dataset(conn, run_id, entry["split"])))
+
     drawn = [row for row in rows if row["tree"]]
     if drawn:
         write("trees.txt", "\n\n\n".join(
@@ -866,6 +972,14 @@ def summarise(conn, run_id):
             if len(printable) > 60:
                 printable = printable[:57] + "..."
             print("    %-20s %s" % (key, printable))
+
+    splits = dataset_summary(conn, run_id)
+    if splits:
+        print("\ndataset")
+        for entry in splits:
+            print("    %-11s %4d record(s), %4d with a reference  %s"
+                  % (entry["split"], entry["records"], entry["references"],
+                     entry["source"]))
 
     rows = quality_rows(conn, run_id)
     print("\n%d individual(s)" % len(rows))

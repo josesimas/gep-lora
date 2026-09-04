@@ -176,10 +176,25 @@ value it did not use.
 
 `main.py` is the entry point and the driver: it owns the `STEPS` list, the `Context` each
 step gets, and the argument parser. `settings.py` is the one copy of the knobs; `store.py`
-owns the sqlite schema (`runs -> settings, individuals -> executions -> exchanges`,
+owns the sqlite schema (`runs -> settings, datasets, individuals -> executions -> exchanges`,
 plus `fitness_history` hanging off `runs`, plus `baselines`, which hangs off nothing --
 see the evaluate section), its
 helpers, and `--list/--show/--export`. Nothing else imports sqlite3.
+
+`main.save_datasets()` runs inside `new_sweep()`, before the first step: it stores the
+dataset the sweep was given into `datasets`, alongside the settings and for the same
+reason -- the settings table records *where* the questions were, and the files go on being
+edited. One row per record, with the question (the user turn), the reference (the
+assistant turn, when there is one) and the line it was read from. `store.SPLITS` and the
+table's own CHECK constraint are the three splits it holds: `training` (`TRAINING_SET` --
+the eval set the search is actually judged on), `validation` (`VALIDATION_SET`) and
+`testing` (`TESTING_SET`); the last two are stored when settings name them and read by
+nothing yet, so a later pass gets the questions this sweep was built beside. A split left
+`None` leaves no rows, and every record is stored **uncapped** -- `TRAINING_COUNT` is how
+many an individual is judged on, which is a fact about the sweep and already a setting,
+not a fact about the dataset. `generate_runs.dataset_records()` is that uncapped read;
+`eval_records()` is the same parse with the cap applied. Only a *new* sweep saves one:
+`continue_run.py` resumes a sweep that already recorded its dataset, which is the point.
 
 `generate_population.py` is the root module — it owns the alphabet (`BINARY_OPS`,
 `UNARY_OPS`, `VARIABLES`, `ARITY`), the `Node` type, and `decode`/`encode`/`levels`.
@@ -257,6 +272,10 @@ ranks is expected and is culled by the usual `BAD` path.
 - `eval_records()` — the eval set as `{position, question, reference}`, for the evaluators
   that grade against the dataset's own answer. Same file, same order, same cap the scripts
   ask under; the reference is the part they never see.
+- `dataset_records(dataset)` — one dataset file, whole, as
+  `{position, question, reference, content}` records, with no `TRAINING_COUNT` cap and the
+  line it came from kept. `eval_records()` is this plus the cap; `main.save_datasets()`
+  uses it for all three splits.
 - `training_set_path()` / `training_count()` / `lora_slots()` / `base_model_name()` — the
   eval prompts file, the cap on how many of its records are used, the five adapter
   paths and the model they attach to, from `TRAINING_SET`, `TRAINING_COUNT`, `LORA_SLOTS`
@@ -347,6 +366,19 @@ overrides it; a step where nothing needs running is reported, not a failure.
 **Never assume a shared rank.** Every rank is read from that slot's own
 `adapter_config.json` (`slot_ranks()` at generation time, `_rank()` at runtime), taking
 `max(r, *rank_pattern.values())` the way PEFT does.
+
+**`svd` also has a memory rule.** PEFT hands back each module's `lora_A` as
+`Vh[:new_rank, :]` -- a *view* into the full `V`, which is sized by the delta weight and
+not by the rank, and which the adapter then pins for its whole life. On this base model
+that is ~306 MB behind every `down_proj`, ~10 GB across the stack, for ~18 MB of weights:
+one `SVD` node used to cost more VRAM than the model under it. `combine()` in
+`template_code.py` passes `svd_full_matrices=False` and calls `_compact()`, which clones
+any weight sitting on storage larger than itself -- the slice comes back **contiguous**,
+so `.contiguous()` is a no-op and only a copy releases the buffer. Resting cost per script
+went 14.0 GB -> 3.6 GB; the transient peak during the node is ~4.7 GB, and that is the
+number `PROCESS_RUN_BATCH_SIZE` has to multiply. The mocked template builds no adapters,
+so it carries a `#~` note where `_compact()` would be rather than a stub -- a mock that
+appeared to manage VRAM would be claiming to test something it cannot.
 
 ## Conventions that matter
 

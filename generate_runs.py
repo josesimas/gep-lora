@@ -207,19 +207,48 @@ def eval_records(training_set=None, count=None):
     training_set_path() already answers that, for a stored sweep's value as
     much as for settings.py's.
     """
-    path = training_set_path(training_set)
+    cap = training_count(count)
+    records = dataset_records(training_set)
+    return records[:cap] if cap else records
+
+
+def dataset_records(dataset=None):
+    """One dataset file, whole, as records -- the uncapped form of the above.
+
+    -> [{"position": 1, "question": "...", "reference": "..." or None,
+         "content": "the line as it stood"}, ...]
+
+    Same parser and the same two shapes eval_records() reads, and the same path
+    rule, so a validation or testing split is read exactly the way the eval set
+    is. Two things differ, and both are why this is a separate function:
+    TRAINING_COUNT is not applied -- that cap says how many prompts an
+    individual is *judged* on, which is nothing to do with how much of a file
+    there is -- and each record keeps the line it came from, so storing a
+    dataset stores what was actually in it rather than this module's reading of
+    it.
+    """
+    path = training_set_path(dataset)
     try:
         with open(path, encoding="utf-8") as handle:
             lines = [line.strip() for line in handle if line.strip()]
     except OSError as error:
         raise SystemExit("cannot read the eval prompts from %s (%s)."
                          % (path, error.strerror))
-    cap = training_count(count)
+    if lines and lines[0].startswith("["):
+        # eval_prompt_count() says this about the eval set; a validation or
+        # testing split is read by nothing else, so it is said here too rather
+        # than letting a whole-file array be stored as one nonsense question.
+        raise SystemExit(
+            "%s looks like one big JSON array. A dataset is read a line at a "
+            "time -- write it as one JSON record per line (JSON Lines), or as "
+            "plain one-prompt-per-line text." % path
+        )
     records = []
-    for position, line in enumerate(lines[:cap] if cap else lines, start=1):
+    for position, line in enumerate(lines, start=1):
         records.append({"position": position,
                         "question": _question_of(line, path, position),
-                        "reference": _reference_of(line)})
+                        "reference": _reference_of(line),
+                        "content": line})
     return records
 
 

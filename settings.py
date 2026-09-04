@@ -12,7 +12,7 @@ Change a value and re-run; nothing else needs editing.
 # --- the population --------------------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 4
+COUNT = 2
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time -- and, since a sweep records what it drew,
@@ -40,7 +40,7 @@ BRANCH_PROB = 0.6
 # selection *appends* its picks, so with SELECTION_COUNT left at None the
 # population doubles every generation and the work of a run grows with it. Fix
 # SELECTION_COUNT to a number to grow by that much per generation instead.
-GENERATIONS = 5
+GENERATIONS = 2
 
 # --- where things go -------------------------------------------------------
 
@@ -62,7 +62,7 @@ DB_PATH = "run_db/gep.sqlite3"
 # is used as it stands, so the file need not sit in the project folder at all.
 # generate_runs.py resolves it and stamps the result into each script, so a
 # script no longer has to find this file by walking up from itself.
-TRAINING_SET = "datasets/poem_lora_dataset.json"
+TRAINING_SET = "datasets/medical_training_lora_dataset.json"
 
 # How many records of TRAINING_SET each run is judged on. The first
 # TRAINING_COUNT of them, in file order, or the whole file when it holds fewer
@@ -80,6 +80,24 @@ TRAINING_SET = "datasets/poem_lora_dataset.json"
 # worth turning down while iterating and back up for a real search, remembering
 # that a short eval set makes a noisier fitness signal.
 TRAINING_COUNT = 20
+
+# The other two splits of the same dataset, recorded beside the training one.
+#
+# Nothing in the search reads these yet -- fitness is earned on TRAINING_SET
+# alone -- but a sweep saves every split it is given into the database's
+# `datasets` table at the moment it is created, so the questions a later
+# validation or test pass would use are stored with the sweep that will be
+# judged on them rather than left to whatever the files happen to hold by then.
+# Same path rule as TRAINING_SET: relative to this file's folder, absolute used
+# as it stands. None means that split is simply not part of this sweep.
+#
+# Point them at the siblings of whatever TRAINING_SET names, e.g.
+#     VALIDATION_SET = "datasets/medical_validation_lora_dataset.json"
+#     TESTING_SET    = "datasets/medical_testing_lora_dataset.json"
+# and mind that they have to be splits of the same dataset -- a validation set
+# from another task would be recorded as this sweep's, and mean nothing.
+VALIDATION_SET = None
+TESTING_SET = None
 
 
 
