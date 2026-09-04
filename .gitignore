@@ -12,6 +12,7 @@ test
 tmp
 unsloth_compiled_cache
 run_tmp
+.idea
 
 # Ignore everything inside the adapter folders by default. This ignores their
 # *contents* rather than the folders themselves: git cannot re-include a file
