@@ -391,18 +391,45 @@ def score_pass(conn, run_id, dataset, conf, options, run_dir, say=print):
     say("scoring %d answer(s)%s\n"
         % (len(items), " (--force: re-scoring)" if options.force else ""))
 
-    scored = failed = 0
+    # The same rule the evaluate step applies, for the same reason: a judge call
+    # is what a pass costs, and an individual whose first answers all score 0
+    # spends the rest of them confirming it. A row here is one individual, so
+    # "the first 10%" is of the answers this pass has left to grade for it.
+    limit_fraction = (graded.get("JUDGE_ABANDON_FRACTION")
+                      if evaluator.needs_endpoint else None)
+    if limit_fraction:
+        say("giving up on an individual once its first %g%% of graded answers "
+            "have all scored 0" % (100 * limit_fraction))
+
+    scored = failed = abandoned = 0
     started = time.time()
     for row in pending:
         transcript = json.loads(row["exchanges"])
         say("individual %d  %s" % (row["number"], row["chromosome"]))
+        todo = [position for position, item in enumerate(transcript, 1)
+                if options.force or item.get("quality") is None]
+        limit = (evaluators.abandon_after(graded, len(todo))
+                 if limit_fraction else None)
+        judged = zeros = 0
+        giving_up = ""
+
         for position, item in enumerate(transcript, 1):
             if not options.force and item.get("quality") is not None:
+                continue
+            if giving_up:
+                # Scored rather than left ungraded, so the row's mean is the
+                # mean of the whole individual and a re-run does not come back
+                # for these -- the same bargain the evaluate step makes.
+                item["quality"], item["reason"] = 0.0, giving_up
+                scored += 1
+                abandoned += 1
                 continue
             answer = item.get("answer") or ""
             if not answer.strip():
                 # Nothing to grade: an unanswered question is worth nothing,
-                # and asking a judge about an empty string wastes a call.
+                # and asking a judge about an empty string wastes a call. It is
+                # not an evaluation either, so it neither counts toward the
+                # first 10% nor condemns the individual on its own.
                 item["quality"], item["reason"] = 0.0, "no answer given"
                 scored += 1
                 say("    [%d] 0.00  (no answer)" % position)
@@ -413,13 +440,24 @@ def score_pass(conn, run_id, dataset, conf, options, run_dir, say=print):
                      "position": position, "number": row["number"]}, prepared)
             except (RuntimeError, ValueError) as error:
                 # One answer's failure, not the pass's: it keeps its NULL and a
-                # re-run picks it up again.
+                # re-run picks it up again. A failure is not a zero, so it never
+                # counts toward giving up either.
                 failed += 1
                 say("    [%d] FAILED  %s" % (position, error))
                 continue
             item["quality"], item["reason"] = round(quality, 3), reason
             scored += 1
+            judged += 1
+            zeros += 1 if item["quality"] == 0.0 else 0
             say("    [%d] %.2f  %s" % (position, item["quality"], reason))
+
+            if limit and judged >= limit and zeros == judged:
+                giving_up = ("abandoned: the first %d graded answer(s) all "
+                             "scored 0" % judged)
+                say("    giving up on individual %d -- %s, so its remaining "
+                    "%d answer(s) are scored 0 unasked"
+                    % (row["number"], giving_up,
+                       len([left for left in todo if left > position])))
         mean = store.score_test_result(conn, row["id"], transcript,
                                        evaluator.name, prepared.label)
         # Committed per row, so an interrupted scoring run keeps what it did.
@@ -429,6 +467,9 @@ def score_pass(conn, run_id, dataset, conf, options, run_dir, say=print):
 
     say("\nscored %d, %d failed, in %.1fs"
         % (scored, failed, time.time() - started))
+    if abandoned:
+        say("%d answer(s) scored 0 unasked, on individuals given up on early"
+            % abandoned)
     if failed and not scored:
         raise SystemExit("nothing could be scored by the %s evaluator -- check "
                          "its settings, and the judge endpoint if it uses one"

@@ -670,6 +670,7 @@ of them on its own merits. Every knob is in `settings.py`:
 | `JUDGE_MAX_TOKENS` | `2000` | headroom for a reasoning judge |
 | `JUDGE_TIMEOUT` / `JUDGE_RETRIES` / `JUDGE_RETRY_WAIT` | 300 / 2 / 3 | one call's patience |
 | `JUDGE_RESPONSE_FORMAT` | `{"type": "json_object"}` | `None` for an endpoint that rejects it |
+| `JUDGE_ABANDON_FRACTION` | `0.1` | give up on an individual whose first 10% of graded answers all score 0 |
 | `JUDGE_SYSTEM_PROMPT` | see the file | **the rubric the search selects on** |
 | `main.py --force` | off | re-score answers that already have a quality |
 
@@ -834,6 +835,48 @@ than fatal — a panel that loses one model still has a score — and only a pan
 where nobody answered fails the exchange. An empty `PANEL_MODELS` asks the
 endpoint what it has loaded and sits a panel of one on it, which is `llm_judge`
 with extra steps.
+
+#### Giving up early on a hopeless individual
+
+A judge call is the expensive part of a sweep, and most of the calls an
+individual costs are spent confirming what its first few answers already said.
+`JUDGE_ABANDON_FRACTION` is how much of one individual's pending answers has to
+be graded, and to come back unanimously `0.0`, before the evaluate step stops
+asking about that individual: `0.1` is "the first 10%", rounded up, never fewer
+than one answer, and `0` or `None` turns the rule off.
+
+The answers it never asks about are stored as `0.0` with the reason
+`abandoned: the first N graded answer(s) all scored 0`, rather than left NULL.
+That is what makes the individual's **fitness** zero rather than merely the part
+of it that was graded — fitness is the mean over an individual's exchanges — and
+it is also what keeps a re-run of `evaluate` from asking about them after all.
+The console says so as it happens, and again in the step's summary:
+
+```
+individual 7  CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+    [1] 0.00  refuses the question, no plan given
+    [2] 0.00  repeats the prompt back
+    giving up on individual 7 -- abandoned: the first 2 graded answer(s) all scored 0, so its remaining 18 answer(s) are scored 0 unasked
+```
+
+The testing pass applies the same rule, from the same setting, over its own
+rows — see [`test_run_with_dataset.py`](#14-test_run_with_datasetpy--test_results).
+`evaluators.abandon_after()` is the one piece of arithmetic behind both.
+
+Three things it deliberately does not do. It never applies to `similarity` or
+`heuristic`: a local scorer costs nothing to finish, so stopping it short would
+only lose detail, and the rule is on for the four evaluators that call an
+endpoint. An **empty** answer scores `0.0` without a call, and is not an
+evaluation, so it neither counts toward the first 10% nor condemns an individual
+by itself — a script that missed one question still gets its other answers
+graded. And an answer the evaluator **failed** to score is not a zero either, so
+an endpoint having a bad minute cannot abandon anybody.
+
+The cost is a real one: this gives up on an individual that opens badly and
+recovers later. On a small eval set it is sharper than it sounds — with
+`TRAINING_COUNT = 10` the first 10% is a single answer, so one zero is enough.
+Lower the fraction, raise `TRAINING_COUNT`, or set it to `0` if the search
+should grade everything whatever the early answers say.
 
 #### Resumable, whichever one is chosen
 
@@ -1698,6 +1741,17 @@ was not up yet, or a change of mind about the rubric all cost nothing but the
 grading. A mocked pass arrives pre-scored (the mocked template grades its own
 answers) and never reaches an evaluator; those rows still take their mean,
 recorded as `generated`.
+
+It gives up early on the same terms the evaluate step does. A row here *is* one
+individual, so `JUDGE_ABANDON_FRACTION` is a fraction of the answers this pass
+still has to grade for it — the ones an interrupted pass already scored are left
+alone and do not count — and once that many graded answers have all come back
+`0.0`, the rest of that individual's answers are written as `0.0` with the
+reason saying so. The row's mean is then the mean of the whole individual, which
+is what makes a testing quality comparable with the training quality it is
+printed beside. As in the evaluate step, only the evaluators that call an
+endpoint abandon anything, and neither an empty answer nor a failed grading call
+counts toward it.
 
 `test_answers` reads the graded transcripts back one answer at a time:
 

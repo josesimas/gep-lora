@@ -13,6 +13,9 @@ evaluators beside it, and nothing here is an evaluator itself:
                         against the dataset's own answer
     the tokeniser       WORD, tokens() -- similarity and heuristic both count
                         words
+    the steps' own      needs_grading(), abandon_after() -- what the evaluate
+                        step and the testing pass both have to decide about a
+                        set of pending answers before an evaluator sees them
 
 The names are public because they cross module boundaries now: a helper an
 evaluator file imports cannot be an underscore. The one that stays private,
@@ -30,6 +33,7 @@ API, which LMStudio, OpenAI, OpenRouter, vLLM and most gateways all speak.
 """
 
 import json
+import math
 import os
 import re
 import time
@@ -343,6 +347,26 @@ def needs_grading(pending):
     neither should make the step demand an endpoint that need not be up.
     """
     return any((row["answer"] or "").strip() for row in pending)
+
+
+def abandon_after(conf, answers):
+    """How many graded zeros in a row condemn one individual, or None.
+
+    JUDGE_ABANDON_FRACTION of the answers that individual has pending, rounded
+    up and never fewer than one -- 0.1 is "the first 10%". None when the rule is
+    off, which is what 0, None and an individual with nothing pending all mean.
+
+    Here rather than in either caller because both of them apply it: the
+    evaluate step over `exchanges` and the testing pass over `test_results`
+    grade the same answers under the same evaluator, so an individual worth
+    giving up on in one is worth giving up on in the other. Whether to apply it
+    at all is the caller's -- only an evaluator that calls an endpoint has
+    anything to save by stopping early.
+    """
+    fraction = conf.get("JUDGE_ABANDON_FRACTION", 0.0) or 0.0
+    if fraction <= 0 or not answers:
+        return None
+    return max(1, math.ceil(fraction * answers))
 
 
 # ===========================================================================

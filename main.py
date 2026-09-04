@@ -69,6 +69,7 @@ Reading a sweep back:
 """
 
 import argparse
+import itertools
 import os
 import random
 import sys
@@ -500,40 +501,82 @@ def step_evaluate(context):
     print("scoring %d answer(s)%s\n"
           % (len(pending), " (--force: re-scoring)" if options.force else ""))
 
-    scored = failed = 0
-    current = None
-    started = time.time()
-    for row in pending:
-        if row["number"] != current:
-            current = row["number"]
-            print("individual %d  %s" % (row["number"], row["chromosome"]))
+    # Giving up early is only ever worth it when a score costs something to
+    # get: a local evaluator would spend nothing finishing an individual, and
+    # stopping short would only lose detail. The rows arrive ordered by
+    # individual and then by position, so each group below is one individual's
+    # answers in the order they were asked -- which is what "the first 10%"
+    # means.
+    limit_fraction = (context.conf.get("JUDGE_ABANDON_FRACTION")
+                      if evaluator.needs_endpoint else None)
+    if limit_fraction:
+        print("giving up on an individual once its first %g%% of graded answers "
+              "have all scored 0" % (100 * limit_fraction))
 
-        answer = row["answer"] or ""
-        if not answer.strip():
-            # Nothing to grade: an unanswered question is worth nothing, and
-            # asking the judge about an empty string just wastes a call.
-            store.score_exchange(conn, row["id"], 0.0, "no answer given", None)
-            scored += 1
-            print("    [%d] 0.00  (no answer)" % row["position"])
-        else:
-            item = {"question": row["question"], "answer": answer,
-                    "position": row["position"], "number": row["number"]}
-            try:
-                # An evaluator that cannot score this one answer fails it and
-                # nothing else: the exchange keeps its NULL quality, the step
-                # counts it, and a re-run picks it up again.
-                quality, reason = evaluator.score(item, prepared)
-                store.score_exchange(conn, row["id"], round(quality, 3), reason,
-                                     prepared.label)
+    scored = failed = abandoned = 0
+    started = time.time()
+    for number, group in itertools.groupby(pending, key=lambda row: row["number"]):
+        rows = list(group)
+        print("individual %d  %s" % (number, rows[0]["chromosome"]))
+        # How many graded answers, all of them zero, are enough to stop asking.
+        limit = (evaluators.abandon_after(context.conf, len(rows))
+                 if limit_fraction else None)
+        graded = zeros = 0
+        giving_up = ""
+
+        for index, row in enumerate(rows):
+            answer = row["answer"] or ""
+            if giving_up:
+                # Written rather than left NULL: an individual's fitness is the
+                # mean over its exchanges, so this is what makes "fitness zero"
+                # true of the whole individual rather than of the part that was
+                # graded -- and a re-run of evaluate does not ask about these
+                # again.
+                store.score_exchange(conn, row["id"], 0.0, giving_up, None)
                 scored += 1
-                print("    [%d] %.2f  %s" % (row["position"], round(quality, 3), reason))
-            except (RuntimeError, ValueError) as error:
-                failed += 1
-                print("    [%d] FAILED  %s" % (row["position"], error))
-        # Saved as we go, so an interrupted scoring run resumes where it stopped.
-        conn.commit()
+                abandoned += 1
+            elif not answer.strip():
+                # Nothing to grade: an unanswered question is worth nothing, and
+                # asking the judge about an empty string just wastes a call. It
+                # is not an evaluation either, so it neither counts toward the
+                # first 10% nor condemns the individual on its own.
+                store.score_exchange(conn, row["id"], 0.0, "no answer given", None)
+                scored += 1
+                print("    [%d] 0.00  (no answer)" % row["position"])
+            else:
+                item = {"question": row["question"], "answer": answer,
+                        "position": row["position"], "number": row["number"]}
+                try:
+                    # An evaluator that cannot score this one answer fails it
+                    # and nothing else: the exchange keeps its NULL quality, the
+                    # step counts it, and a re-run picks it up again. A failure
+                    # is not a zero, so it never counts toward giving up either.
+                    quality, reason = evaluator.score(item, prepared)
+                    quality = round(quality, 3)
+                    store.score_exchange(conn, row["id"], quality, reason,
+                                         prepared.label)
+                    scored += 1
+                    graded += 1
+                    zeros += 1 if quality == 0.0 else 0
+                    print("    [%d] %.2f  %s" % (row["position"], quality, reason))
+                except (RuntimeError, ValueError) as error:
+                    failed += 1
+                    print("    [%d] FAILED  %s" % (row["position"], error))
+
+                if limit and graded >= limit and zeros == graded:
+                    giving_up = ("abandoned: the first %d graded answer(s) all "
+                                 "scored 0" % graded)
+                    print("    giving up on individual %d -- %s, so its "
+                          "remaining %d answer(s) are scored 0 unasked"
+                          % (number, giving_up, len(rows) - index - 1))
+            # Saved as we go, so an interrupted scoring run resumes where it stopped.
+            conn.commit()
 
     print("\nscored %d, %d failed, in %.1fs" % (scored, failed, time.time() - started))
+
+    if abandoned:
+        print("%d answer(s) scored 0 unasked, on individuals given up on early"
+              % abandoned)
 
     qualities = [row["quality"] for row in store.quality_rows(conn, run_id)
                  if row["quality"] is not None]

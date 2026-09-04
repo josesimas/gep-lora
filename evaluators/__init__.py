@@ -69,8 +69,8 @@ Usage, which is all main.py does with it:
     quality, reason = evaluator.score(item, prepared)
 """
 
-from evaluators.common import (API_KEY, DEFAULT, Evaluator, Prepared, available,
-                               get, register)
+from evaluators.common import (API_KEY, DEFAULT, Evaluator, Prepared,
+                               abandon_after, available, get, register)
 
 # Importing each module is what registers its evaluator, so these are the
 # registry itself rather than unused imports. Listed in the order --evaluators
@@ -82,5 +82,5 @@ from evaluators import similarity               # noqa: F401,E402
 from evaluators import heuristic                # noqa: F401,E402
 from evaluators import panel                    # noqa: F401,E402
 
-__all__ = ["API_KEY", "DEFAULT", "Evaluator", "Prepared", "available", "get",
-           "register"]
+__all__ = ["API_KEY", "DEFAULT", "Evaluator", "Prepared", "abandon_after",
+           "available", "get", "register"]

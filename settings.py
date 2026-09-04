@@ -326,6 +326,25 @@ JUDGE_RETRY_WAIT = 3
 # the prompt asks for JSON anyway, and a 400 falls back to that by itself.
 JUDGE_RESPONSE_FORMAT = {"type": "json_object"}
 
+# When to stop grading an individual that is going nowhere. A judge call is the
+# expensive part of a sweep, and an individual whose *first* graded answers all
+# come back 0.0 is one the search has already decided against: the rest of its
+# answers cost a call each to confirm a fitness of zero. This is the fraction of
+# an individual's answers that has to be graded, and to be unanimously zero,
+# before the evaluate step gives up on it -- 0.1 is "the first 10%", rounded up,
+# and never fewer than one answer. The abandoned answers are stored as 0.0 with
+# a reason saying so, so the individual's fitness really is the mean of its own
+# scores, and a re-run does not ask about them again.
+#
+# Only the evaluators that call an endpoint (llm_judge, llm_judge_reference,
+# llm_judge_baseline, panel) abandon anything -- a local scorer costs nothing to
+# finish, and cutting it short would only lose detail.
+#
+# Mind how sharp this is on a small eval set: with TRAINING_COUNT = 10 the first
+# 10% is a single answer, so one zero condemns the individual. 0 or None grades
+# every answer, whatever the early ones say.
+JUDGE_ABANDON_FRACTION = 0.1
+
 # How the judge is told to grade, with no reference to compare against. This is
 # the rubric the whole search selects on, so it is worth tuning deliberately.
 JUDGE_SYSTEM_PROMPT = """\

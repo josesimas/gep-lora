@@ -170,12 +170,14 @@ pick the sweep, `--count` caps the questions, `--keep-scripts` leaves the script
 
 The scoring half is the evaluate step over `test_results` instead of `exchanges`: same
 registry, same `prepare()`/`score()` contract, same resumability (an answer with a quality
-is skipped unless `--force`), and the same rule that a failed answer fails alone. Defaults
-to the sweep's own `EVALUATOR` -- a testing quality graded by a different rubric than the
-training quality it is printed beside would compare nothing -- with `--evaluator NAME` to
-override, `--no-score` to store the answers and stop, and `--score-only` to grade a pass
-that already ran. Scores go into the transcript beside their answers; the row keeps the
-mean, the evaluator and its label. `report()` then prints training quality, testing quality
+is skipped unless `--force`), the same rule that a failed answer fails alone, and the same
+`JUDGE_ABANDON_FRACTION` giving up on an individual whose first graded answers all score
+0 -- over the answers *this pass* has left to grade, so a resumed pass counts only those.
+Defaults to the sweep's own `EVALUATOR` -- a testing quality graded by a different rubric
+than the training quality it is printed beside would compare nothing -- with
+`--evaluator NAME` to override, `--no-score` to store the answers and stop, and
+`--score-only` to grade a pass that already ran. Scores go into the transcript beside
+their answers; the row keeps the mean, the evaluator and its label. `report()` then prints training quality, testing quality
 and the delta per individual, which is the number the whole script exists to produce.
 
 **`testing_conf()` is not optional.** It hands the evaluators the sweep's settings with
@@ -209,6 +211,19 @@ OpenAI-compatible judge endpoint (`JUDGE_BASE_URL`, defaulting to LMStudio at
 `http://172.22.208.1:1234/v1`). It is resumable either way — already-scored exchanges
 are skipped unless `--force` — and `python main.py --evaluators` lists what is
 registered.
+
+The step also **gives up on an individual that opens badly**:
+`JUDGE_ABANDON_FRACTION` (0.1) is how much of one individual's pending answers
+must be graded, and be unanimously 0.0, before `step_evaluate` stops asking about
+it and scores the rest 0.0 unasked, with a reason saying so. Written rather than
+left NULL, because fitness is the mean over an individual's exchanges -- that is
+what makes the whole individual's fitness zero, and what stops a re-run asking
+again. Only the four evaluators that call an endpoint abandon anything
+(`needs_endpoint`); a blank answer and a failed grading call are neither
+evaluations nor zeros, so neither counts toward it. `evaluators.abandon_after()` is the
+arithmetic (rounded up, never fewer than one), and the rule condemns an
+individual that would have recovered later -- which on a ten-question eval set
+means one zero is enough.
 
 `llm_judge_baseline` is the one that scores what the search is for: the judge is shown
 the question, what the **bare base model** answered and what the blend answered, and
