@@ -74,12 +74,24 @@ python full_run.py
 ```
 
 `main.py` then `continue_run.py` against the same sweep -- a whole search, `1 + GENERATIONS`
-generations, in one command. It calls both drivers as **libraries in this interpreter** (a
+generations, in one command -- and then, when the sweep names a `TESTING_SET`,
+`test_run_with_dataset.py` against it. It calls all three as **libraries in this
+interpreter** (a
 subprocess would be another chance to run under the wrong Python, since `process` uses
 `sys.executable`), and hands the sweep on **by id** rather than by "the latest", so a
 database that gains a sweep in between cannot be picked up by mistake. `--label` goes to
-`main.py`, `--generations`/`--set` to `continue_run.py`, the rest to both. A failing first
+`main.py`, `--generations`/`--set` to `continue_run.py`, `--no-test`/`--test-min-quality`
+to the testing pass, the rest to both or all three. A failing first
 half stops the run.
+
+The testing pass is **last, and gated on `TESTING_SET`** -- that setting is the only
+statement of which questions the search was not judged on, and the sweep's *stored* value
+is what is read, not settings.py's. It runs only if the search finished (a half-finished
+sweep's best individual is not what the search found), costs a base-model load per
+individual above `TESTING_MIN_QUALITY`, and its exit code is the run's if the search
+succeeded and it did not. Being last is not an accident either: a finished search ends in
+mutation, so the individuals worth testing are the ones that were actually scored -- which
+is what their stored scripts still describe.
 
 ```bash
 python store.py --show 0
@@ -143,6 +155,53 @@ verdict, and writes `run/test_tree.txt` / `run/test_run.py` — its own folder, 
 `run_db/`, so it never collides with a sweep. Output is byte-identical to what that
 chromosome would get as an individual. There is no pytest suite.
 
+```bash
+python test_run_with_dataset.py datasets/medical_testing_lora_dataset.json
+```
+
+The one thing that runs **after** a sweep rather than as part of one: it records the
+dataset as that sweep's `testing` split, takes the individuals whose mean training quality
+is above `TESTING_MIN_QUALITY` (0.5; `--min-quality`, `--limit`), re-points each one's
+stored script at the new file, runs them into the `test_results` table and grades what
+they say. Everything the search does is earned on the training split, so this is the only
+way to ask whether a blend holds up on questions it was never selected for. `--db`/`--run`
+pick the sweep, `--count` caps the questions, `--keep-scripts` leaves the scripts in
+`run_testing/`.
+
+The scoring half is the evaluate step over `test_results` instead of `exchanges`: same
+registry, same `prepare()`/`score()` contract, same resumability (an answer with a quality
+is skipped unless `--force`), and the same rule that a failed answer fails alone. Defaults
+to the sweep's own `EVALUATOR` -- a testing quality graded by a different rubric than the
+training quality it is printed beside would compare nothing -- with `--evaluator NAME` to
+override, `--no-score` to store the answers and stop, and `--score-only` to grade a pass
+that already ran. Scores go into the transcript beside their answers; the row keeps the
+mean, the evaluator and its label. `report()` then prints training quality, testing quality
+and the delta per individual, which is the number the whole script exists to produce.
+
+**`testing_conf()` is not optional.** It hands the evaluators the sweep's settings with
+`TRAINING_SET`/`TRAINING_COUNT` swapped for the testing dataset -- the same substitution
+`repoint()` makes to the scripts. `llm_judge_reference` and `similarity` read the reference
+beside each question and `llm_judge_baseline` asks the base model those questions, so
+without the swap all three would silently grade a testing answer against a training
+question's reference.
+
+Three things about it that are deliberate. It **re-points rather than re-renders** --
+`repoint()` rewrites exactly the `TRAINING_SET` and `TRAINING_COUNT` assignments in the
+stored `script_source`, so the blend, the weight seed and the template code are the ones
+that earned the training score; re-rendering would compare template versions as much as
+blends. It stores results in **their own table**, because `fitness`/`elitism`/`selection`
+read an individual's latest *execution* and a testing row in `executions` would decide the
+next generation on questions the search is not judged on. And a **mocked pass arrives
+pre-scored**, as a mocked sweep does, so `settle()` gives those rows the mean their printed
+scores come to rather than leaving them looking ungraded. `test_answers` (a view over the
+JSON transcript) reads any of it back one answer at a time.
+
+Mind the state a finished sweep is in: `mutation` runs last, so most individuals hold a
+chromosome their stored script no longer describes. The pass runs the script and records
+the chromosome the *script* builds (`script_chromosome()`, from the `EXPRESSION` line),
+counts how many rows that applies to and says so. Re-run `trees runs process evaluate`
+first to test the current population.
+
 The `evaluate` step scores answers the way `EVALUATOR` in `settings.py` says. Two of the
 six registered evaluators are local (`similarity`, `heuristic`); the other four
 (`llm_judge`, `llm_judge_reference`, `llm_judge_baseline`, `panel`) need an
@@ -177,8 +236,8 @@ value it did not use.
 `main.py` is the entry point and the driver: it owns the `STEPS` list, the `Context` each
 step gets, and the argument parser. `settings.py` is the one copy of the knobs; `store.py`
 owns the sqlite schema (`runs -> settings, datasets, individuals -> executions -> exchanges`,
-plus `fitness_history` hanging off `runs`, plus `baselines`, which hangs off nothing --
-see the evaluate section), its
+plus `fitness_history` and `test_results` hanging off `runs`, plus `baselines`, which hangs
+off nothing -- see the evaluate section), its
 helpers, and `--list/--show/--export`. Nothing else imports sqlite3.
 
 `add_dataset.save_all()` runs inside `main.new_sweep()`, before the first step: it stores

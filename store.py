@@ -211,10 +211,62 @@ CREATE TABLE IF NOT EXISTS baselines (
     UNIQUE (model, question_key)
 );
 
+-- What a finished individual says on a dataset it was never scored on.
+--
+-- The search judges every individual on the training split, over and over, and
+-- an individual that scores well there has been selected *for* that split. The
+-- question a testing pass asks is the other one: does the blend hold up on
+-- questions it was never picked for? test_run_with_dataset.py takes the ones
+-- worth asking it of, re-points their own scripts at another dataset and runs
+-- them again, and this is where the answers land.
+--
+-- Deliberately not a second `executions` table hanging off `individuals`:
+-- fitness, elitism and selection all read the *latest execution* of an
+-- individual, so a test run stored there would be picked up as that
+-- individual's current result and would decide the next generation on the
+-- strength of questions the search is not judged on. Its own table cannot be
+-- read by mistake.
+--
+-- A row is self-contained the way an execution row is, and for the reason
+-- fitness_history rows are: the individual it names goes on being rewritten by
+-- mutation and selection, so the number, the chromosome, the weights and the
+-- quality that got it picked are all kept as they were at the moment it was
+-- tested. `exchanges` is the whole transcript as JSON -- question, answer, and
+-- whatever quality the run itself carried -- because a testing pass is read
+-- back whole and a script that crashed still leaves a row saying so, with an
+-- empty transcript and its exit code. The test_answers view below unnests it
+-- for the times a query wants one row per question.
+CREATE TABLE IF NOT EXISTS test_results (
+    id            INTEGER PRIMARY KEY,
+    run_id        INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    individual_id INTEGER NOT NULL REFERENCES individuals(id) ON DELETE CASCADE,
+    number        INTEGER NOT NULL,      -- the individual's own number, as it was
+    chromosome    TEXT    NOT NULL,      -- what the script that ran builds
+    dataset       TEXT    NOT NULL,      -- the file it was tested on, resolved
+    records       INTEGER,               -- how many of its questions it was asked
+    selected_on   REAL,                  -- the training quality that got it picked
+    started_at    TEXT    NOT NULL,
+    seconds       REAL,
+    exit_code     INTEGER,               -- NULL means it hit the timeout
+    verdict       TEXT,                  -- ok | timeout | exit N
+    weight_seed   INTEGER,
+    weights       TEXT,                  -- JSON {"w1": .., .. } as drawn
+    stdout        TEXT,
+    stderr        TEXT,
+    exchanges     TEXT    NOT NULL DEFAULT '[]',  -- JSON, the whole transcript
+    -- Filled by the scoring pass, which is a second visit: a pass stores the
+    -- answers first and grades them after, so these are NULL until it has.
+    quality       REAL,                   -- mean over this row's scored answers
+    evaluator     TEXT,                   -- which one gave those scores
+    judge_model   TEXT,                   -- its label: a model id, or a method
+    scored_at     TEXT
+);
+
 CREATE INDEX IF NOT EXISTS individuals_by_run ON individuals(run_id, number);
 CREATE INDEX IF NOT EXISTS executions_by_individual ON executions(individual_id);
 CREATE INDEX IF NOT EXISTS exchanges_by_execution ON exchanges(execution_id);
 CREATE INDEX IF NOT EXISTS fitness_history_by_run ON fitness_history(run_id, generation);
+CREATE INDEX IF NOT EXISTS test_results_by_run ON test_results(run_id, number);
 
 -- The fitness view: one row per individual, over its most recent execution.
 -- Mean quality is what a selection step would sort on.
@@ -238,6 +290,24 @@ LEFT JOIN executions e
                    ORDER BY id DESC LIMIT 1)
 LEFT JOIN exchanges x ON x.execution_id = e.id
 GROUP BY i.id;
+
+-- One row per answer of a testing pass, out of the JSON each test_results row
+-- carries. The table stores a transcript whole because that is how a pass is
+-- written and read back; this is for the questions that want it the other way
+-- round -- which chromosome said what to which question.
+CREATE VIEW IF NOT EXISTS test_answers AS
+SELECT t.id         AS test_result_id,
+       t.run_id     AS run_id,
+       t.number     AS number,
+       t.chromosome AS chromosome,
+       t.dataset    AS dataset,
+       t.verdict    AS verdict,
+       j.key + 1    AS position,
+       json_extract(j.value, '$.question') AS question,
+       json_extract(j.value, '$.answer')   AS answer,
+       json_extract(j.value, '$.quality')  AS quality,
+       json_extract(j.value, '$.reason')   AS reason
+FROM test_results t, json_each(t.exchanges) j;
 
 CREATE VIEW IF NOT EXISTS individual_stats AS
 select i.number, i.chromosome, SUM(ex.quality) AS SumQuality, Max(ex.quality) AS MaxQuality, MIN(ex.quality) AS MinQuality, AVG(ex.quality) AS AvgQuality
@@ -559,6 +629,137 @@ def score_exchange(conn, exchange_id, quality, reason, model):
     conn.execute(
         "UPDATE exchanges SET quality = ?, reason = ?, judged_at = ?, judge_model = ?"
         " WHERE id = ?", (quality, reason, _now(), model, exchange_id))
+
+
+# --- a testing pass -------------------------------------------------------
+
+
+def add_test_result(conn, run_id, individual, chromosome, dataset, records,
+                    selected_on, seconds, exit_code, verdict, weights, stdout,
+                    stderr, transcript):
+    """Record one individual's run against a testing dataset. Returns its id.
+
+    `individual` is the row it was built from -- its number and weight seed are
+    copied in rather than joined to later, because the row has to go on meaning
+    what it meant after mutation has rewritten that individual.
+
+    `chromosome` is passed separately, and is the one the script that ran
+    actually builds, which is not always individuals.chromosome: mutation
+    rewrites that column and leaves the script describing what the individual
+    used to be. What was tested is what ran, so that is what is stored.
+
+    Stored whatever happened: a script that crashed leaves a row with its exit
+    code and an empty transcript, the way a failed execution does, because "it
+    could not answer these questions" is a result of a testing pass and not an
+    absence of one.
+    """
+    cursor = conn.execute(
+        "INSERT INTO test_results (run_id, individual_id, number, chromosome,"
+        " dataset, records, selected_on, started_at, seconds, exit_code, verdict,"
+        " weight_seed, weights, stdout, stderr, exchanges)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, individual["id"], individual["number"], chromosome,
+         dataset, records, selected_on, _now(), seconds, exit_code, verdict,
+         individual["weight_seed"], json.dumps(weights or {}), stdout, stderr,
+         json.dumps(transcript or [])))
+    return cursor.lastrowid
+
+
+def test_results_to_score(conn, run_id, dataset=None, force=False):
+    """The testing rows holding answers that still need a quality.
+
+    Whole rows rather than answers, because a transcript is stored whole: the
+    caller unpacks the JSON, scores what is missing and writes the row back.
+    With `force`, every row that has any answer at all, so a pass can be
+    re-graded by another evaluator.
+
+    A row whose script crashed carries an empty transcript and is not pending
+    -- there is nothing in it to grade, and it would come back forever.
+    """
+    rows = test_results(conn, run_id, dataset)
+    pending = []
+    for row in rows:
+        transcript = json.loads(row["exchanges"] or "[]")
+        if not transcript:
+            continue
+        if force or any(item.get("quality") is None for item in transcript):
+            pending.append(row)
+    return pending
+
+
+def score_test_result(conn, result_id, transcript, evaluator, judge_model):
+    """Write a graded transcript back, with the mean it comes to. -> that mean.
+
+    The scores live inside the JSON, beside the answers they belong to, so the
+    test_answers view reads them without another join and a row goes on being
+    the whole story of one individual against one dataset. `quality` is the
+    mean over the answers that have one -- the same average over the same
+    answers that individual_quality takes for a training run, so a testing
+    number and a training number mean the same thing.
+
+    None when nothing in the row could be scored: an average of no scores is
+    not zero, and storing 0.0 would say the blend answered badly rather than
+    that nobody managed to grade it.
+    """
+    scored = [item["quality"] for item in transcript
+              if item.get("quality") is not None]
+    mean = round(sum(scored) / len(scored), 4) if scored else None
+    conn.execute(
+        "UPDATE test_results SET exchanges = ?, quality = ?, evaluator = ?,"
+        " judge_model = ?, scored_at = ? WHERE id = ?",
+        (json.dumps(transcript), mean, evaluator, judge_model, _now(), result_id))
+    return mean
+
+
+def test_quality(conn, run_id, dataset=None):
+    """How the tested individuals did, beside how they did in the search.
+
+    One row each: the training quality that got it picked (selected_on, as it
+    was then) and the quality it earned on the dataset it was never scored on.
+    The two columns side by side are the whole point of a testing pass, and the
+    difference between them is the only thing that says whether a blend was
+    selected for the questions or for the job.
+    """
+    sql = ("SELECT id, number, chromosome, dataset, verdict, records,"
+           "       selected_on, quality, evaluator,"
+           "       json_array_length(exchanges) AS answers"
+           "  FROM test_results WHERE run_id = ?")
+    args = [run_id]
+    if dataset is not None:
+        sql += " AND dataset = ?"
+        args.append(dataset)
+    return conn.execute(sql + " ORDER BY id", args).fetchall()
+
+
+def test_results(conn, run_id, dataset=None):
+    """A sweep's testing rows, newest pass last, optionally for one dataset."""
+    sql = "SELECT * FROM test_results WHERE run_id = ?"
+    args = [run_id]
+    if dataset is not None:
+        sql += " AND dataset = ?"
+        args.append(dataset)
+    return conn.execute(sql + " ORDER BY id", args).fetchall()
+
+
+def test_summary(conn, run_id):
+    """[{dataset, tested, ok, answers, last}, ...], one per dataset tested on.
+
+    The read side of a testing pass at a glance: which datasets this sweep's
+    individuals have been put in front of, how many of them ran, and how many
+    answers came back. Silent about a sweep that has never been tested.
+    """
+    rows = conn.execute(
+        "SELECT dataset,"
+        "       COUNT(*)                                        AS tested,"
+        "       SUM(CASE WHEN verdict = 'ok' THEN 1 ELSE 0 END) AS ok_,"
+        "       SUM(json_array_length(exchanges))               AS answers,"
+        "       AVG(quality)                                    AS quality,"
+        "       MAX(started_at)                                 AS last"
+        "  FROM test_results WHERE run_id = ?"
+        " GROUP BY dataset ORDER BY last", (run_id,)).fetchall()
+    return [{"dataset": row["dataset"], "tested": row["tested"],
+             "ok": row["ok_"] or 0, "answers": row["answers"] or 0,
+             "quality": row["quality"], "last": row["last"]} for row in rows]
 
 
 # --- the base model's own answers, cached across sweeps --------------------
@@ -1011,6 +1212,21 @@ def summarise(conn, run_id):
                   % (entry["generation"], entry["recorded_at"], entry["population"],
                      entry["best"] or 0.0, entry["mean"] or 0.0,
                      entry["worst"] or 0.0, best["chromosome"] if best else "-"))
+
+    # And this is the sweep against questions it was never scored on --
+    # test_run_with_dataset.py, if it has been run. Silent otherwise: most
+    # sweeps have never been tested, and an empty heading says nothing.
+    tested = test_summary(conn, run_id)
+    if tested:
+        print("\ntesting passes")
+        print("    %-20s %-7s %-5s %-8s %-7s %s"
+              % ("last", "tested", "ok", "answers", "quality", "dataset"))
+        for entry in tested:
+            print("    %-20s %-7d %-5d %-8d %-7s %s"
+                  % (entry["last"], entry["tested"], entry["ok"],
+                     entry["answers"],
+                     "-" if entry["quality"] is None else "%.3f" % entry["quality"],
+                     entry["dataset"]))
 
 
 def main(argv=None):

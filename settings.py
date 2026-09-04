@@ -12,7 +12,7 @@ Change a value and re-run; nothing else needs editing.
 # --- the population --------------------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 2
+COUNT = 5
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time -- and, since a sweep records what it drew,
@@ -53,6 +53,14 @@ GENERATIONS = 2
 # generation time and stamped into each script as an absolute path.)
 DB_RUN_DIR = "run_db"
 DB_PATH = "run_db/gep.sqlite3"
+
+# Where test_run_with_dataset.py puts the scripts it runs against a dataset the
+# sweep was never scored on. A folder of its own, beside run_db/ rather than
+# inside it: those scripts are the sweep's own, re-pointed at other questions,
+# and finding one in run_db/ later would be finding a script that answers
+# something other than what its name says. Same rule as DB_RUN_DIR -- exactly
+# one level below the project folder, or the LoRA paths inside it break.
+TESTING_RUN_DIR = "run_testing"
 
 # The eval prompts every generated script is judged on, one per line. It lives
 # here rather than in the templates so the eval set can be repointed without
@@ -97,7 +105,15 @@ TRAINING_COUNT = 20
 # and mind that they have to be splits of the same dataset -- a validation set
 # from another task would be recorded as this sweep's, and mean nothing.
 VALIDATION_SET = None
-TESTING_SET = None
+TESTING_SET = "datasets/medical_testing_lora_dataset.json"
+
+# How good an individual has to have been on the training split before
+# test_run_with_dataset.py will spend a base-model load asking it the testing
+# questions. Mean quality over its most recent execution, strictly above this;
+# --min-quality overrides it for one pass. Turning it down tests more of the
+# population and costs one model load per extra individual; 0 tests everything
+# that ever answered anything.
+TESTING_MIN_QUALITY = 0.5
 
 
 

@@ -3,7 +3,9 @@ full_run.py - A sweep from nothing to the end of the search, in one command.
 
     main.py          draws a population and takes it through one generation
     continue_run.py  carries that sweep on for GENERATIONS more
-    full_run.py      both, in that order, against the same sweep
+    test_run_with_dataset.py  puts what the search found in front of the
+                     testing split, and grades it
+    full_run.py      all of that, in that order, against the same sweep
 
     python full_run.py
 
@@ -35,8 +37,22 @@ Options are forwarded to whichever driver understands them: --label to main.py,
     python full_run.py --db run_real/gep.sqlite3 --label "overnight"
     python full_run.py --limit 2 --generations 1     # a smoke test of the lot
 
+--no-test and --test-min-quality go to the testing pass, and --db, --limit,
+--keep-scripts, --timeout and --force reach it too.
+
 A failing half stops the run: if main.py cannot produce a sweep there is nothing
 to continue, and its exit code comes straight back out.
+
+The testing pass at the end runs only when the sweep has a TESTING_SET, because
+that setting is the only statement anyone has made about which questions the
+search was not judged on. It costs a base-model load per individual above
+TESTING_MIN_QUALITY, so --no-test skips it and --test-min-quality changes how
+many that is. It is deliberately the *last* thing: a search that has finished
+ends in mutation, and the individuals worth testing are the ones that were
+actually scored -- which is what their stored scripts still describe.
+
+    python full_run.py --no-test                 # search only, as before
+    python full_run.py --test-min-quality 0.7    # test fewer of them
 """
 
 import argparse
@@ -47,6 +63,7 @@ import continue_run
 import main
 import settings as config
 import store
+import test_run_with_dataset
 
 
 def forwarded(options):
@@ -144,6 +161,77 @@ def cli(argv=None):
              time.time() - started, run_id, options.db))
     print("python store.py --show %d" % run_id)
     print("=" * 70)
+
+    # The search is over; this is the one question it could not answer about
+    # itself. Skipped when the search stopped early -- a half-finished sweep's
+    # best individual is not what the search found -- and when the sweep names
+    # no testing set, which is the only statement of which questions it was
+    # never judged on.
+    if not code:
+        code = test(options, run_id)
+    return code
+
+
+def testing_set(db_path, run_id):
+    """The sweep's own TESTING_SET, or None if it named none.
+
+    The sweep's stored setting rather than settings.py's, for the reason every
+    step reads stored settings: the file it recorded at creation is the one its
+    `testing` split holds, and settings.py may have been repointed since.
+    """
+    conn = store.connect(db_path)
+    try:
+        return store.get_settings(conn, run_id).get("TESTING_SET")
+    finally:
+        conn.close()
+
+
+def test(options, run_id):
+    """Put the finished search in front of its testing split. -> an exit code.
+
+    Called as a library, in this interpreter, for the reason the other two are:
+    the pass launches each script with sys.executable, so a subprocess would be
+    one more chance to run it under the wrong Python.
+
+    A pass that stops itself -- nothing scored above the bar, no judge to grade
+    with -- is reported and returned, not swallowed: the search finished and
+    this did not, and saying so is the difference between a testing pass that
+    was skipped and one that failed.
+    """
+    if options.no_test:
+        return 0
+    dataset = testing_set(options.db, run_id)
+    if not dataset:
+        print()
+        print("no testing pass: run %d names no TESTING_SET, so nothing says "
+              "which questions it was never judged on." % run_id)
+        print("    set TESTING_SET in settings.py before a sweep, or run "
+              "test_run_with_dataset.py against this one.")
+        return 0
+
+    print()
+    print("#" * 70)
+    print("# the search is done -- testing run %d against %s" % (run_id, dataset))
+    print("#" * 70)
+    print()
+
+    argv = [dataset, "--db", options.db, "--run", str(run_id),
+            "--timeout", str(options.timeout)]
+    if options.test_min_quality is not None:
+        argv += ["--min-quality", str(options.test_min_quality)]
+    if options.limit:
+        # Means there what it means here: only the first few individuals, so a
+        # smoke test of the whole thing stays a smoke test.
+        argv += ["--limit", str(options.limit)]
+    if options.keep_scripts:
+        argv.append("--keep-scripts")
+    if options.force:
+        argv.append("--force")
+
+    code = call(test_run_with_dataset.main, argv)
+    if code:
+        print()
+        print("the search finished; the testing pass did not.")
     return code
 
 
@@ -179,6 +267,14 @@ def parse(argv):
                         help="seconds to allow each script (default 900)")
     parser.add_argument("--force", action="store_true",
                         help="re-score answers that already have a quality")
+    parser.add_argument("--no-test", action="store_true",
+                        help="skip the testing pass at the end (it runs when the "
+                             "sweep names a TESTING_SET, and costs a base-model "
+                             "load per individual it tests)")
+    parser.add_argument("--test-min-quality", type=float, default=None, metavar="Q",
+                        help="test the individuals scoring above this (default "
+                             "TESTING_MIN_QUALITY in settings.py, currently %.2f)"
+                             % config.TESTING_MIN_QUALITY)
     options = parser.parse_args(argv)
     if options.generations is not None and options.generations < 1:
         parser.error("--generations is %d; main.py's generation would be the whole "

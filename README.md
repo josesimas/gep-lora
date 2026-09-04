@@ -1357,6 +1357,40 @@ Options go to whichever driver understands them — `--label` to `main.py`,
 A failing half stops the run: if `main.py` cannot produce a sweep there is
 nothing to continue, and its exit code comes straight back out.
 
+#### And then the testing pass
+
+When the sweep names a `TESTING_SET`, the search is followed by
+[§14's testing pass](#14-test_run_with_datasetpy--test_results) against it —
+same interpreter, same sweep, by id:
+
+```
+######################################################################
+# the search is done -- testing run 7 against datasets/medical_testing_lora_dataset.json
+######################################################################
+```
+
+`TESTING_SET` is the trigger because it is the only statement anyone has made
+about which questions the search was *not* judged on. Leave it `None` and the
+run says so and stops there; the pass can still be run by hand later.
+
+It is deliberately the last thing. A finished search ends in `mutation`, so the
+individuals worth testing are the ones that were actually scored — which is what
+their stored scripts still describe, and what the pass runs.
+
+Mind what it costs: one base-model load per individual above
+`TESTING_MIN_QUALITY`, on top of the search. `--test-min-quality` moves that bar
+for one run and `--no-test` skips the pass entirely; `--db`, `--limit`,
+`--keep-scripts`, `--timeout` and `--force` reach it too.
+
+```bash
+python full_run.py --no-test                  # the search alone, as before
+python full_run.py --test-min-quality 0.7     # test fewer of them
+```
+
+The pass runs only if the search itself finished — a half-finished sweep's best
+individual is not what the search found. If the search finishes and the pass
+does not, that is said in as many words and the exit code is the pass's.
+
 ### 12. `test.py` → `run/test_*`
 
 Try one chromosome by hand without starting a sweep. Set the variable at the top
@@ -1434,6 +1468,10 @@ runs          one sweep: when, which template, which interpreter, which commit
       exchanges the questions and answers, and the judge's score for each
   fitness_history  what each individual's fitness was at the end of each
                 generation, and when it was worked out
+
+  test_results  what an individual said on a dataset it was never scored on,
+                one row per individual per testing pass, transcript, scores
+                and the mean they come to
 
 baselines     what the base model itself answered, per model and question --
               the one table outside that tree, because a base-model answer
@@ -1543,6 +1581,147 @@ python main.py runs
 
 Only the scripts that actually ran are removed. Ones skipped as `BAD`, or left
 out by `--limit`, are still waiting and stay where they are.
+
+### 14. `test_run_with_dataset.py` → `test_results`
+
+Everything above happens on the training split. Every fitness number, every
+election, every roulette slice is earned on those questions, so an individual
+that scores well there has been *selected for that file* — and the file stopped
+being unseen the moment the first generation was scored on it. This asks the
+other question: does the blend hold up on questions it was never picked for?
+
+```bash
+python test_run_with_dataset.py datasets/medical_testing_lora_dataset.json
+```
+
+```
+sweep 7 in run_db/gep.sqlite3
+testing     20 record(s), 20 with a reference answer, from .../medical_testing_lora_dataset.json
+
+testing 3 individual(s) scoring above 0.500, on 20 question(s)
+wrote 3 script(s) to .../run_testing, each re-pointed at the testing set
+each one loads the base model, so this takes a while
+
+[1/3] run_005.py  CAT.L5.L5.w3.w3  (training quality 0.577)
+[2/3] run_001.py  CAT.L4.L1.w5.w1  (training quality 0.529)
+[3/3] run_004.py  CAT.SVD.L3.L1.SVD.w2.w3.L2.L4.w4.w1  (training quality 0.512)
+        batch 1/1: 3 running at once
+        run_005.py  ok        41.2s  20 answer(s) -> test result 1
+```
+
+Four things happen, in order:
+
+1. **The dataset is recorded** as this sweep's `testing` split, through
+   `add_dataset.add()` — the same rows a sweep saves for itself, so what the
+   pass asked is stored beside what the search asked. Running the same file
+   again is not a conflict; a *different* file over a split already stored
+   needs `--replace`.
+2. **The individuals are chosen** by mean quality on the training split, above
+   `TESTING_MIN_QUALITY` (0.5; `--min-quality` for one pass, `--limit` for the
+   best few). That number comes from the `individual_quality` view rather than
+   `individuals.fitness`, so a sweep whose fitness step never ran still has an
+   answer.
+3. **Each one's own script is re-pointed**, into `run_testing/`. Not
+   re-rendered — the stored `script_source` is taken as it is and exactly two
+   assignments are rewritten, `TRAINING_SET` and `TRAINING_COUNT`. Same
+   chromosome, same weight seed, same adapters, same base model, same template
+   code of the day it ran; different questions. Re-rendering would rebuild all
+   of that from whatever the template says today, which would make the pass a
+   comparison of two template versions as much as of a blend.
+4. **They run** the way `process` runs a generation — batches of
+   `PROCESS_RUN_BATCH_SIZE`, streaming progress, one base-model load each, a
+   crash stored as a row rather than stopping the pass — and every answer lands
+   in `test_results`.
+5. **The answers are graded**, by the sweep's own evaluator unless
+   `--evaluator` says otherwise, and the scores go back into the same rows.
+
+The scripts go in a folder of their own (`TESTING_RUN_DIR`, one level below the
+project folder like `run_db/`, because a generated script still finds the LoRA
+folders by going up one) and are deleted once they have run, `--keep-scripts`
+aside. A `run_007.py` that asks the testing questions has no business sitting in
+`run_db/` next to the one that asks the training questions.
+
+**Then it grades them**, with the sweep's own `EVALUATOR` — the same registry,
+the same `prepare()`/`score()` contract the evaluate step uses, the same rule
+that an evaluator which cannot score one answer fails that answer and nothing
+else. The sweep's evaluator is the default because a testing quality graded by a
+different rubric than the training quality it sits beside would make the
+comparison meaningless; `--evaluator NAME` overrides it when the point *is* to
+grade this dataset differently.
+
+```
+evaluator: similarity -- token or character overlap with the dataset's own answer
+grading against .../medical_testing_lora_dataset.json
+scoring 60 answer(s)
+
+individual 5  CAT.L5.L5.w3.w3
+    [1] 0.62  token f1 0.62 (p 0.58, r 0.67)
+    ...
+    -> 0.548 over 20 answer(s)
+
+#    training testing  delta   chromosome
+5    0.577    0.548    -0.029  CAT.L5.L5.w3.w3
+1    0.529    0.402    -0.127  CAT.L4.L1.w5.w1
+mean over 2 individual(s): training 0.553, testing 0.475 (-0.078)
+```
+
+That last table is the answer to the question the pass exists to ask. An
+individual that holds its score answered questions it was never selected on; one
+that drops was selected for the training file rather than for the job.
+
+Each score goes into the transcript beside the answer it belongs to, and the row
+keeps the mean, which evaluator produced it and what that evaluator's label was
+(a judge's model id, or a local method's name). The mean is the same average
+over the same kind of answers that `individual_quality` takes for a training
+run, which is what makes the two numbers comparable at all.
+
+**The scoring half reads the sweep's settings with one substitution**: the eval
+set is the testing dataset (`testing_conf()`) — the same swap `repoint()` makes
+to the scripts. Three of the six evaluators grade against the eval set's own
+answers (`llm_judge_reference` and `similarity` read the reference beside each
+question; `llm_judge_baseline` asks the base model those questions), and left
+pointing at `TRAINING_SET` every one of them would quietly compare a testing
+answer with a training question's reference.
+
+**The two halves are separable**, because only the first costs a base-model
+load:
+
+```bash
+python test_run_with_dataset.py testing.json --no-score      # answers only
+python test_run_with_dataset.py testing.json --score-only    # grade them later
+python test_run_with_dataset.py testing.json --score-only --force --evaluator similarity
+```
+
+Scoring is resumable the way the evaluate step is — an answer that already has a
+quality is left alone unless `--force` — so an interrupted judge, a judge that
+was not up yet, or a change of mind about the rubric all cost nothing but the
+grading. A mocked pass arrives pre-scored (the mocked template grades its own
+answers) and never reaches an evaluator; those rows still take their mean,
+recorded as `generated`.
+
+`test_answers` reads the graded transcripts back one answer at a time:
+
+```sql
+SELECT number, chromosome, position, question, answer, quality, reason
+  FROM test_answers WHERE run_id = 7;
+```
+
+**Results live in their own table, on purpose.** `fitness`, `elitism` and
+`selection` all read an individual's *latest execution*; a testing pass stored
+in `executions` would be picked up as that individual's current result and would
+decide the next generation on questions the search is not judged on. Its own
+table cannot be read by mistake. Each row keeps the number, the chromosome, the
+weight seed, the weights and the training quality that picked it, as they were
+when it ran, so mutation rewriting the population afterwards does not rewrite
+what the pass found.
+
+One consequence worth knowing: a sweep that has just finished ends in
+`mutation`, so most of its individuals hold a chromosome their stored script no
+longer describes. The pass runs the script, records the chromosome the *script*
+builds, and says how many rows that applies to. Run `trees runs process
+evaluate` again first if you want the current population tested.
+
+`python store.py --show` lists the passes a sweep has been through.
 
 ---
 
@@ -1728,7 +1907,7 @@ warning — the effective cap is unchanged.
 | `plan.txt` | the original spec |
 | `main.py` | the entry point and the driver; add future steps to its `STEPS` list |
 | `continue_run.py` | runs the generation loop on over a sweep already in the database |
-| `full_run.py` | main.py then continue_run.py — a whole search in one command |
+| `full_run.py` | main.py, continue_run.py, then the testing pass — a whole search in one command |
 | `settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
 | `store.py` | the database: schema, helpers, `--list/--show/--export` |
 | `add_dataset.py` | the only way into the `datasets` table: every split as a sweep is created, or one afterwards from the command line |
@@ -1750,6 +1929,8 @@ warning — the effective cap is unchanged.
 | `elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
 | `selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent |
 | `mutation.py` | point-mutates every chromosome but the elite's, within its grammar; clears the fitness it invalidates |
+| `test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
+| `run_testing/` | where those scripts run, and are deleted from; `TESTING_RUN_DIR` in `settings.py` |
 | `test.py` | try a single chromosome → `run/test_*` |
 | `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `test.py` |
 | `combination.py` | the original two-adapter script the generated code is modelled on |
@@ -1782,10 +1963,14 @@ mutation.apply                        -->  individuals.chromosome + has_changed
 
 store.py --show / --export                 reads any of it back out
 add_dataset.py --split testing        -->  datasets (a split added afterwards)
+test_run_with_dataset.py              -->  test_results (the best individuals,
+                                           re-pointed at unseen questions,
+                                           then graded by the same evaluators)
 
 test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
 
 continue_run.py  -->  that whole column again, once per generation
+full_run.py      -->  main.py, continue_run.py, then the testing pass
 ```
 
 Running the whole thing:
