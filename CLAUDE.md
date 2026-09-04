@@ -102,6 +102,34 @@ one into a folder of text files (population, trees, index, scripts, outputs, tra
 results) — a view of the sweep, derived from the database, never the sweep itself.
 
 ```bash
+python generate_html_db_stats.py run_db/gep.sqlite3
+```
+
+The other reader, and the only one that produces a file: one stored sweep as a
+single self-contained HTML page, written **beside the database**
+(`gep_run1_stats.html` next to `gep.sqlite3`; `--out` moves it, `--run` picks the
+sweep, `0` = latest, `--open` opens it). It leads with the best individual --
+score, chromosome, the blend drawn as an SVG tree with each leaf's drawn weight,
+the Karva rows, the weight draw, a bar per question, the transcript with the
+judge's reasons, the script that earned it -- then the fitness history, the
+population, the score distribution, the testing pass, the dataset and the
+settings. Derived and disposable: it writes nothing to the sweep, and reads
+through `store.py`'s helpers rather than its own SQL, bar a couple of read-only
+aggregates the way `main.py` and `test_run_with_dataset.py` already do.
+
+Three deliberate choices. It **refuses a path that is not already a database** --
+`store.connect()` creates what it cannot open, which would turn a typo into an
+empty sweep and a report about nothing. It **inlines everything** -- no CDN, no
+fonts, charts hand-drawn as SVG coloured through the page's CSS variables, so
+one drawing serves light and dark and the page survives being mailed or
+archived. And it **says what the numbers do not**: a best individual that is
+`BAD`, has never run, or was mutated since it was scored carries a note, because
+a finished sweep ends in `mutation` and the chromosome an individual holds then
+is usually not the one its stored transcript belongs to. The population table
+shows `quality` (the mean over the latest execution) beside `fitness` (the
+column the search reads) for the same reason.
+
+```bash
 python main.py population trees runs
 ```
 

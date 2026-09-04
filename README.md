@@ -1779,6 +1779,51 @@ evaluate` again first if you want the current population tested.
 
 ---
 
+### 15. `generate_html_db_stats.py` → an HTML page beside the database
+
+`store.py --show` prints a sweep. This writes the same sweep out as one
+self-contained HTML file, with the things a column of numbers cannot draw: the
+best blend as a tree, fitness generation by generation, the population's spread,
+what the judge actually gave.
+
+```bash
+python generate_html_db_stats.py run_db/gep.sqlite3
+python generate_html_db_stats.py run_db/gep.sqlite3 --run 2 --open
+```
+
+The page lands **beside the database** — `gep_run1_stats.html` next to
+`gep.sqlite3` — because that is where the thing it describes lives; `--out`
+puts it elsewhere. `--run 0` (the default) is the most recent sweep.
+
+It leads with the best individual: the score, the chromosome, the blend drawn as
+a tree with each leaf's drawn weight on it, the Karva rows, the weight draw, the
+adapters it attaches, a bar per question, the whole transcript with the judge's
+reason under each answer, and the script that earned it. Then the search's own
+history, the population, the distribution of scores, the testing pass, the
+dataset and every setting the sweep was created with.
+
+Three things it deliberately does:
+
+- **Read-only, and it refuses to create.** `store.connect()` makes a database it
+  cannot open, which is right for a driver and wrong for a reader — a mistyped
+  path would leave you with an empty sweep and a report about nothing. So the
+  file has to exist first.
+- **Nothing external.** No CDN, no fonts, no JSON beside it; the charts are
+  hand-drawn SVG that takes its colours from the page's own CSS variables, so
+  light and dark are one drawing. The page still works mailed, archived or
+  opened offline.
+- **It says what the numbers do not.** A best individual that is `BAD`, that has
+  never run, or that mutation has rewritten since it was scored gets a note
+  saying so — because a finished sweep ends in `mutation`, and the chromosome an
+  individual holds then is usually not the one its transcript belongs to.
+
+`quality` and `fitness` are shown side by side in the population table for the
+same reason: the first is the mean over the latest execution's answers, the
+second is the column the search reads, and mutation clears the second while
+leaving the first standing.
+
+---
+
 ## Running a generated script
 
 The generated scripts need the project venv, which lives one level up at
@@ -1964,6 +2009,7 @@ warning — the effective cap is unchanged.
 | `full_run.py` | main.py, continue_run.py, then the testing pass — a whole search in one command |
 | `settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
 | `store.py` | the database: schema, helpers, `--list/--show/--export` |
+| `generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database |
 | `add_dataset.py` | the only way into the `datasets` table: every split as a sweep is created, or one afterwards from the command line |
 | `run_db/gep.sqlite3` | every sweep ever run, with its settings, seeds, transcripts and scores |
 | `run_db/run_001.py` … | the generated combination scripts, until `process` has run them |
@@ -2016,6 +2062,8 @@ mutation.apply                        -->  individuals.chromosome + has_changed
                                            (and fitness back to NULL)
 
 store.py --show / --export                 reads any of it back out
+generate_html_db_stats.py             -->  <db>_run<N>_stats.html (the same,
+                                           as a page, beside the database)
 add_dataset.py --split testing        -->  datasets (a split added afterwards)
 test_run_with_dataset.py              -->  test_results (the best individuals,
                                            re-pointed at unseen questions,

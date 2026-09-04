@@ -16,8 +16,11 @@
 * Log to a file alongside writing to the console
 * Remove redundant data from the sqlite file (trees for example)
 * Create a parallel pipeline that is less batch oriented (process one chromosome only end to end)
+* Create a pipeline that only loads the weights once during the run (if possible) and once during the testing
 * Explore ways to avoid loading and unloading the same weights more than once
 * Add parallelism to the model evaluation and processing steps 
     * ~~Done for lora processing~~
     * TBD for evaluation
 * Run the evaluation step using unsloth and local code instead of querying a remote model
+* After a run is done and tested go through the answers of a specific lora combine and analyse it more deeply (list the less successful answers and try to explain why they are weak, do the opposite for the best models). The idea is to provide the user with a report with the weaknesses and strong points of this model.
+* Add complexity and "time to load" as values that influence the fitness (or some fitnesses). We may want to favour a combine that loads very fast.
