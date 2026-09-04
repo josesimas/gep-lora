@@ -1795,12 +1795,41 @@ The page lands **beside the database** — `gep_run1_stats.html` next to
 `gep.sqlite3` — because that is where the thing it describes lives; `--out`
 puts it elsewhere. `--run 0` (the default) is the most recent sweep.
 
-It leads with the best individual: the score, the chromosome, the blend drawn as
-a tree with each leaf's drawn weight on it, the Karva rows, the weight draw, the
+It leads with an individual: the score, the chromosome, the blend drawn as a
+tree with each leaf's drawn weight on it, the Karva rows, the weight draw, the
 adapters it attaches, a bar per question, the whole transcript with the judge's
 reason under each answer, and the script that earned it. Then the search's own
 history, the population, the distribution of scores, the testing pass, the
 dataset and every setting the sweep was created with.
+
+**Which individual is a combobox**, and the best one is what it starts on. Every
+individual in the population gets a complete panel — the whole panel above,
+built for each of them — and choosing one from the box swaps which is on screen.
+There is a second copy of the same box on **The search**, kept in step with the
+first, because the selection reaches that chart too: the fitness plot draws the
+selected individual's own line across the generations beside the best/mean/worst
+band. A line that stops is an individual whose fitness mutation cleared; one
+that starts late is a copy selection appended; no line at all is an individual
+that was appended after the last fitness snapshot, and the caption says so
+rather than leaving you looking at an empty chart.
+
+**Two buttons replay the sweep.**
+
+- *Replay the search*, on the fitness chart, wipes the plot in from the left
+  with a playhead, naming each generation as it passes — its best, its mean, its
+  size and its fittest chromosome.
+- *Play the evolution*, under the population, walks the population forward one
+  generation at a time: bars grow and shrink to each generation's scores, the
+  chromosome beside each bar changes as mutation rewrites it, and new bars
+  arrive as selection appends copies. A slider scrubs to any generation.
+
+Both replay `fitness_history`, which is the only place a sweep says what it
+*used to be* — every row keeps the chromosome, the state and the fitness **as
+they were then** — so the animation is the recorded past rather than the present
+population rearranged. Neither is a second chart drawn in JavaScript: the
+drawings are rendered whole by Python, and the script only widens a clip
+rectangle over one and moves widths and labels on the other. With no script at
+all you get the finished picture of each, which is what printing gets too.
 
 Three things it deliberately does:
 
@@ -1821,6 +1850,12 @@ Three things it deliberately does:
 same reason: the first is the mean over the latest execution's answers, the
 second is the column the search reads, and mutation clears the second while
 leaving the first standing.
+
+One economy worth knowing about, since a panel per individual is not free:
+selection copies `script_source` **verbatim**, so a copy that has not been
+through `runs` again carries its parent's script byte for byte. Rather than
+repeat eighteen kilobytes of identical Python per copy, those panels say whose
+script it is and link to that individual — which is the truer statement anyway.
 
 ---
 

@@ -108,7 +108,7 @@ python generate_html_db_stats.py run_db/gep.sqlite3
 The other reader, and the only one that produces a file: one stored sweep as a
 single self-contained HTML page, written **beside the database**
 (`gep_run1_stats.html` next to `gep.sqlite3`; `--out` moves it, `--run` picks the
-sweep, `0` = latest, `--open` opens it). It leads with the best individual --
+sweep, `0` = latest, `--open` opens it). It leads with one individual --
 score, chromosome, the blend drawn as an SVG tree with each leaf's drawn weight,
 the Karva rows, the weight draw, a bar per question, the transcript with the
 judge's reasons, the script that earned it -- then the fitness history, the
@@ -116,6 +116,35 @@ population, the score distribution, the testing pass, the dataset and the
 settings. Derived and disposable: it writes nothing to the sweep, and reads
 through `store.py`'s helpers rather than its own SQL, bar a couple of read-only
 aggregates the way `main.py` and `test_run_with_dataset.py` already do.
+
+**Which individual is a combobox**, starting on the best. Every individual gets a
+complete panel and all but one are `hidden`, rather than the page holding a
+dataset and building a panel on demand -- the panels are then the same
+server-rendered HTML whichever is on screen, and all of them are in the file
+whether or not a script ever runs. A second copy of the same box sits on *The
+search*, synced to the first, because the selection reaches that chart: it draws
+the selected individual's own line across the generations beside the
+best/mean/worst band. The panel-per-individual cost is paid back where it comes
+from -- selection copies `script_source` verbatim, so a copy points at the
+individual whose script it shares instead of repeating ~18 KB of identical
+Python.
+
+**Two buttons replay the sweep**, both over `fitness_history` -- the only place a
+sweep says what it *used to be*, since every row keeps the chromosome, state and
+fitness as they were in that generation. *Replay the search* wipes the fitness
+plot in from the left behind a playhead, captioning each generation as it
+passes; *Play the evolution* walks the population forward a generation at a time
+(bars growing and shrinking, chromosomes changing under mutation, new bars
+arriving as selection appends), with a slider to scrub. **Neither is a second
+chart drawn in JavaScript**: Python renders both whole and the script only
+widens a clip rectangle over one and moves widths and labels on the other, so
+the no-script and print states are the finished pictures. Keep it that way -- a
+chart that exists only in the animation would be a chart the page cannot show
+without running.
+
+The page's only data is `payload()`'s JSON block: the generations and which
+individual to start on. Everything else on the page is already HTML, and should
+stay that way.
 
 Three deliberate choices. It **refuses a path that is not already a database** --
 `store.connect()` creates what it cannot open, which would turn a typo into an

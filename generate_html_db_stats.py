@@ -73,6 +73,7 @@ def read_sweep(conn, run_id):
     champions = {entry["generation"]: store.best_of_generation(conn, run_id,
                                                                entry["generation"])
                  for entry in history}
+    frames = generations(conn, run_id, history, champions)
 
     return {
         "run": run,
@@ -87,12 +88,43 @@ def read_sweep(conn, run_id):
         "answers": answers,
         "history": history,
         "champions": champions,
+        "frames": frames,
         "best": choose_best(people, quality),
         "tested": store.test_quality(conn, run_id),
         "test_rows": {row["id"]: row for row in store.test_results(conn, run_id)},
         "test_summary": store.test_summary(conn, run_id),
         "totals": totals(conn, run_id),
     }
+
+
+def generations(conn, run_id, history, champions):
+    """The population as it stood at each recorded generation, oldest first.
+
+    `fitness_history` is the only place a sweep says what it *used to be* --
+    every row keeps the chromosome, the state and the fitness as they were then
+    -- so the animations replay those rows rather than reconstructing a past out
+    of the present population, which mutation and selection have both moved on
+    from. One frame per generation, each carrying its own membership: the
+    population grows as selection appends, and an individual that did not exist
+    yet is simply absent from the earlier frames.
+    """
+    members = {}
+    for row in store.fitness_history(conn, run_id):
+        members.setdefault(row["generation"], []).append(row)
+    frames = []
+    for entry in history:
+        champion = champions.get(entry["generation"])
+        frames.append({
+            "generation": entry["generation"],
+            "recorded_at": entry["recorded_at"],
+            "population": entry["population"],
+            "best": entry["best"], "mean": entry["mean"], "worst": entry["worst"],
+            "chromosome": champion["chromosome"] if champion else None,
+            "rows": [{"number": row["number"], "fitness": row["fitness"],
+                      "chromosome": row["chromosome"], "state": row["state"]}
+                     for row in sorted(members.get(entry["generation"], []),
+                                       key=lambda row: row["number"])]})
+    return frames
 
 
 def choose_best(people, quality):
@@ -260,6 +292,13 @@ def history_chart(history, champions):
     The band is what says whether the search is working -- a population whose
     worst is climbing has spread its gains, one where only the best moves has
     found a lucky individual and nothing else.
+
+    Drawn whole, then handed to the page's script twice over: the plot geometry
+    goes out as `data-plot` so the selected individual's own line can be laid
+    over exactly these axes without a second copy of the arithmetic, and the
+    plotted group sits behind a clip rectangle so the search can be replayed by
+    widening it. Both are additions to a finished drawing -- with no script at
+    all the chart is complete and the clip is already full width.
     """
     if not history:
         return ""
@@ -282,6 +321,15 @@ def history_chart(history, champions):
 
     parts = [_grid(left, right, top, bottom)]
 
+    # Everything that is "the search happening" goes inside the clip; the axes,
+    # the labels and the legend stay outside it, because they are the frame the
+    # replay happens in rather than part of the replay.
+    parts.append('<defs><clipPath id="history-reveal">'
+                 '<rect id="history-reveal-rect" x="%.1f" y="0" width="%.1f" '
+                 'height="%d"/></clipPath></defs>'
+                 % (left - 6, span + 12, height))
+    parts.append('<g class="plotted" clip-path="url(#history-reveal)">')
+
     band_points = (["%.1f,%.1f" % (x, y) for x, y in zip(xs, best)] +
                    ["%.1f,%.1f" % (x, y) for x, y in zip(reversed(xs), reversed(worst))])
     parts.append('<polygon class="spread" points="%s"/>' % " ".join(band_points))
@@ -289,6 +337,11 @@ def history_chart(history, champions):
     for name, ys in (("worst", worst), ("best", best), ("mean", mean)):
         points = " ".join("%.1f,%.1f" % (x, y) for x, y in zip(xs, ys))
         parts.append('<polyline class="line %s" points="%s"/>' % (name, points))
+
+    # Filled by the page's script for whichever individual is selected; empty,
+    # and so invisible, until something selects one.
+    parts.append('<polyline class="line picked" id="history-picked" points=""/>'
+                 '<g id="history-picked-dots"></g>')
 
     for index, entry in enumerate(history):
         champion = champions.get(entry["generation"])
@@ -303,22 +356,39 @@ def history_chart(history, champions):
                      % (xs[index], mean[index]))
         parts.append('<circle class="hit" cx="%.1f" cy="%.1f" r="18"/></g>'
                      % (xs[index], (top + bottom) / 2.0))
+    parts.append('</g>')
+
+    # The playhead the replay drags across the plot. Parked and hidden until it.
+    parts.append('<line class="playhead is-off" id="history-playhead" '
+                 'x1="%.1f" y1="%d" x2="%.1f" y2="%.1f"/>'
+                 % (left, top - 12, left, bottom + 4))
+
+    for index, entry in enumerate(history):
         parts.append('<text class="tick" x="%.1f" y="%.1f" text-anchor="middle">'
                      'gen %d</text>' % (xs[index], bottom + 20, entry["generation"]))
         parts.append('<text class="tick faint" x="%.1f" y="%.1f" text-anchor="middle">'
                      'n=%d</text>' % (xs[index], bottom + 34, entry["population"]))
 
-    legend = [("best", "best"), ("mean", "mean"), ("worst", "worst")]
-    for index, (cls, label) in enumerate(legend):
-        cx = right - 210 + index * 70
-        parts.append('<line class="line %s" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>'
-                     % (cls, cx, top - 8, cx + 22, top - 8))
-        parts.append('<text class="tick" x="%.1f" y="%.1f">%s</text>'
-                     % (cx + 28, top - 4, label))
+    # The fourth entry belongs to whichever individual is selected, so it is
+    # drawn empty and hidden; the script gives it a name when there is one.
+    legend = [("best", "best", ""), ("mean", "mean", ""), ("worst", "worst", ""),
+              ("picked", "", ' id="history-picked-key"')]
+    for index, (cls, label, extra) in enumerate(legend):
+        cx = right - 290 + index * 72
+        parts.append('<g class="legend-key%s"%s>'
+                     '<line class="line %s" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>'
+                     '<text class="tick" x="%.1f" y="%.1f">%s</text></g>'
+                     % (" is-off" if cls == "picked" else "", extra, cls,
+                        cx, top - 8, cx + 22, top - 8,
+                        cx + 28, top - 4, esc(label)))
 
-    return ('<svg class="chart" viewBox="0 0 %d %d" role="img" '
+    plot = json.dumps({"left": left, "right": right, "top": top, "bottom": bottom,
+                       "xs": [round(x, 1) for x in xs],
+                       "generations": [entry["generation"] for entry in history]})
+    return ('<svg class="chart" id="history-chart" data-plot=\'%s\' '
+            'viewBox="0 0 %d %d" role="img" '
             'aria-label="fitness by generation">%s</svg>'
-            % (width, height, "".join(parts)))
+            % (esc(plot), width, height, "".join(parts)))
 
 
 def population_chart(people, quality):
@@ -373,6 +443,67 @@ def population_chart(people, quality):
     return ('<svg class="chart" viewBox="0 0 %d %d" role="img" '
             'aria-label="quality per individual">%s</svg>'
             % (width, height, "".join(parts)))
+
+
+def evolution_chart(frames):
+    """The population, generation by generation, as one animatable drawing.
+
+    Every bar the sweep will ever need is drawn here once, at the last
+    generation, and the page's script only ever changes widths, labels and
+    classes -- so the animation is this chart being re-labelled rather than a
+    second chart drawn in JavaScript, and the still picture you get with no
+    script at all is the finished population.
+
+    A row exists for every individual any generation held, so the growth
+    selection causes shows as bars arriving rather than as the chart resizing
+    under the reader.
+    """
+    if not frames:
+        return ""
+    numbers = sorted({row["number"] for frame in frames for row in frame["rows"]})
+    if not numbers:
+        return ""
+    last = {row["number"]: row for row in frames[-1]["rows"]}
+
+    width = 760
+    left, right, top = 210, width - 56, 20
+    step, bar = 24, 14
+    height = top + len(numbers) * step + 26
+    parts = []
+    for index in range(6):
+        value = index / 5.0
+        x = left + value * (right - left)
+        parts.append('<line class="grid" x1="%.1f" y1="%d" x2="%.1f" y2="%d"/>'
+                     % (x, top - 6, x, top + len(numbers) * step))
+        parts.append('<text class="tick" x="%.1f" y="%d" text-anchor="middle">%.1f</text>'
+                     % (x, height - 8, value))
+
+    for index, number in enumerate(numbers):
+        y = top + index * step
+        row = last.get(number)
+        value = row["fitness"] if row else None
+        length = 0.0 if value is None else (right - left) * max(0.0, min(1.0, value))
+        parts.append('<text class="rowlabel" x="10" y="%.1f">#%d</text>'
+                     % (y + bar - 3, number))
+        parts.append('<text class="rowchrom" data-role="chromosome" data-number="%d" '
+                     'x="%d" y="%.1f" text-anchor="end">%s</text>'
+                     % (number, left - 10, y + bar - 3,
+                        esc(shorten(row["chromosome"], 24)) if row else ""))
+        parts.append('<rect class="track" x="%d" y="%.1f" width="%.1f" height="%d" '
+                     'rx="4"/>' % (left, y, right - left, bar))
+        parts.append('<rect class="bar %s" data-role="bar" data-number="%d" x="%d" '
+                     'y="%.1f" width="%.1f" height="%d" rx="4"/>'
+                     % (band(value), number, left, y, length, bar))
+        parts.append('<text class="value" data-role="value" data-number="%d" '
+                     'x="%.1f" y="%.1f">%s</text>'
+                     % (number, left + length + 7, y + bar - 3, num(value)))
+
+    geometry = json.dumps({"left": left, "right": right, "top": top,
+                           "step": step, "bar": bar, "numbers": numbers})
+    return ('<svg class="chart" id="evolution-chart" data-geometry=\'%s\' '
+            'viewBox="0 0 %d %d" role="img" '
+            'aria-label="the population, generation by generation">%s</svg>'
+            % (esc(geometry), width, height, "".join(parts)))
 
 
 def answers_chart(rows):
@@ -690,15 +821,65 @@ def section_overview(data):
                        for key, value in facts)))
 
 
-def section_best(data):
-    """The lead: everything known about the individual the sweep chose."""
-    best = data["best"]
-    if best is None:
-        return ('<section id="best"><h2>Best individual</h2>'
-                '<p class="warn">This sweep has no scored individual yet - run '
-                '<code>process</code> and <code>evaluate</code>, then '
-                '<code>fitness</code>.</p></section>')
+def picker(data, name):
+    """The combobox that says which individual the page is showing.
 
+    One per section that follows the selection, all carrying the same options
+    and kept in step by the page's script, so choosing an individual anywhere
+    chooses it everywhere. Its own value is the truth about what is on screen;
+    the panels below merely show and hide.
+    """
+    options = []
+    for row in data["people"]:
+        measured = data["quality"].get(row["number"])
+        value = measured["quality"] if measured else None
+        options.append(
+            '<option value="%d"%s>#%-3d  %s  %s%s</option>'
+            % (row["number"], " selected" if data["best"] is not None
+               and row["number"] == data["best"]["number"] else "",
+               row["number"], num(value), shorten(row["chromosome"], 34),
+               "  ★" if row["is_best"] else
+               ("  (blocked)" if row["state"] == "BAD" else "")))
+    return ('<label class="picker"><span>Individual</span>'
+            '<select data-sync="individual" id="%s">%s</select></label>'
+            % (esc(name), "".join(options)))
+
+
+def section_individuals(data):
+    """The lead: everything known about one individual, with a way to switch.
+
+    Every individual gets a complete panel and all but one start hidden, rather
+    than the page holding a dataset and building a panel on demand. It costs
+    bytes and buys the two things a report wants: the panels are the same
+    server-rendered HTML whichever one you are looking at, and every one of them
+    is there in the file whether or not any script ever runs.
+    """
+    if not data["people"]:
+        return ('<section id="individual"><h2>Individuals</h2>'
+                '<p class="warn">This sweep has no population yet - run '
+                '<code>population</code>.</p></section>')
+
+    seen = {}
+    chosen = data["best"]["number"] if data["best"] else data["people"][0]["number"]
+    panels = "".join(individual_panel(data, row, seen, chosen)
+                     for row in data["people"])
+    lead = ('The best individual is selected; the rest of the population is one '
+            'choice away. What follows changes with it, and so does its line on '
+            'the search chart below.')
+    return ('<section id="individual"><div class="section-head">'
+            '<h2>Individual</h2>%s</div><p class="muted lead">%s</p>'
+            '<div class="panels" data-default="%d">%s</div></section>'
+            % (picker(data, "picker-individual"), lead, chosen, panels))
+
+
+def individual_panel(data, best, seen, chosen):
+    """One individual, whole: the panel the picker shows and hides.
+
+    `seen` maps a script source to the individual that already carried it, so
+    the copies selection appends -- which inherit `script_source` verbatim --
+    point at that one instead of repeating eighteen kilobytes of identical
+    Python per copy. Saying "identical to #4's" is also the truer statement.
+    """
     number = best["number"]
     measured = data["quality"].get(number)
     execution = data["executions"].get(number)
@@ -706,8 +887,12 @@ def section_best(data):
     weights = json.loads(execution["weights"]) if execution and execution["weights"] else {}
     conf = data["settings"]
     slots = conf.get("LORA_SLOTS") or {}
-    elected = "elected by the elitism step" if best["is_best"] else \
-              "highest measured quality (elitism has not run)"
+    if best["is_best"]:
+        standing = "elected by the elitism step - this sweep's best"
+    elif data["best"] is not None and data["best"]["number"] == number:
+        standing = "highest measured quality (elitism has not run)"
+    else:
+        standing = "one of the population"
 
     scored = [row["quality"] for row in rows if row["quality"] is not None]
     tested = [row for row in data["tested"] if row["number"] == number]
@@ -715,12 +900,14 @@ def section_best(data):
     head = ('<div class="champ-head">'
             '<div class="champ-score"><span class="big %s">%s</span>'
             '<span class="champ-cap">mean quality</span></div>'
-            '<div class="champ-id"><h3>Individual #%d</h3>'
+            '<div class="champ-id"><h3>Individual #%d%s</h3>'
             '<code class="chromosome">%s</code>'
             '<p class="muted">%s</p></div></div>'
             % (band(measured["quality"] if measured else None),
                num(measured["quality"] if measured else None), number,
-               esc(best["chromosome"]), esc(elected)))
+               ' <span class="crown" title="the elite">&#9733;</span>'
+               if best["is_best"] else "",
+               esc(best["chromosome"]), esc(standing)))
 
     stats = [("state", best["state"]),
              ("final rank", best["rank"]),
@@ -805,7 +992,14 @@ def section_best(data):
 
     source = best["script_source"] or ""
     extras = []
-    if source:
+    if source and source in seen:
+        extras.append('<p class="muted">Its script is byte-for-byte the script of '
+                      '<a href="#individual" data-show="%d">individual #%d</a> - '
+                      'selection copies <code>script_source</code> verbatim, so a '
+                      'copy carries its parent\'s script until <code>runs</code> '
+                      're-renders it.</p>' % (seen[source], seen[source]))
+    elif source:
+        seen[source] = number
         extras.append('<details class="code"><summary>The script that earned this '
                       'score (%d lines)</summary><pre><code>%s</code></pre></details>'
                       % (source.count("\n") + 1, esc(source)))
@@ -814,8 +1008,7 @@ def section_best(data):
                       '<pre><code>%s</code></pre></details>'
                       % esc(_tail(execution["stderr"])))
 
-    return ('<section id="best" class="champion"><h2>Best individual '
-            '<span class="crown">&#9733;</span></h2>'
+    return ('<div class="panel champion" data-number="%d"%s>'
             '%s%s'
             '<div class="grid-2">'
             '<div class="card"><h3>The blend</h3>%s'
@@ -830,8 +1023,10 @@ def section_best(data):
             '<div class="card"><h3>Adapters this blend attaches</h3>%s</div>'
             '<div class="card"><h3>Score per question</h3>%s</div>'
             '<div class="card"><h3>The transcript</h3>%s</div>'
-            '%s</section>'
-            % (head, notices_html, tree_svg(best["chromosome"], weights),
+            '%s</div>'
+            % (number,
+               "" if number == chosen else " hidden",
+               head, notices_html, tree_svg(best["chromosome"], weights),
                karva_rows(best["chromosome"]),
                "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (esc(key), esc(value))
                        for key, value in stats),
@@ -886,12 +1081,20 @@ def section_history(data):
            esc(champions[entry["generation"]]["chromosome"])
            if champions.get(entry["generation"]) else "-")
         for entry in history)
-    return ('<section id="history"><h2>The search</h2>'
-            '%s%s'
+    controls = ('<div class="controls">'
+                '<button type="button" class="action" id="play-search">'
+                '&#9654; Replay the search</button>'
+                '%s<span class="caption" id="history-caption">%d generation(s) '
+                'recorded</span></div>'
+                % (picker(data, "picker-search"), len(history)))
+    return ('<section id="history"><h2>The search</h2>%s%s%s'
             '<p class="muted">Each row is what the population looked like when the '
             'fitness step last ran over it. Selection appends, so a growing '
-            'population is the generations passing.</p></section>'
-            % (card(history_chart(history, champions)),
+            'population is the generations passing. The fourth line is whichever '
+            'individual is selected, generation by generation - a line that stops '
+            'is an individual mutation cleared the fitness of, and one that starts '
+            'late is a copy selection appended.</p></section>'
+            % (controls, card(history_chart(history, champions)),
                table('<th>gen</th><th>recorded</th><th class="numeric">pop</th>'
                      '<th class="numeric">best</th><th class="numeric">mean</th>'
                      '<th class="numeric">worst</th><th class="numeric">scored</th>'
@@ -933,9 +1136,27 @@ def section_population(data):
             'reads. They part company on purpose - mutation clears the fitness of an '
             'individual whose chromosome it rewrote, because that score was earned by '
             'a blend it no longer describes.</p>')
-    return ('<section id="population"><h2>Population</h2>'
-            '%s%s%s</section>'
-            % (card(population_chart(people, quality)),
+    frames = data["frames"]
+    evolution = ""
+    if frames:
+        evolution = (
+            '<div class="card"><h3>Generation by generation</h3>'
+            '<div class="controls">'
+            '<button type="button" class="action" id="play-evolution">'
+            '&#9654; Play the evolution</button>'
+            '<label class="scrub"><span>generation</span>'
+            '<input type="range" id="evolution-scrub" min="1" max="%d" value="%d" '
+            'step="1"></label>'
+            '<span class="caption" id="evolution-caption"></span></div>%s'
+            '<p class="muted">Replayed from <code>fitness_history</code>, which '
+            'keeps each individual\'s chromosome and score <em>as they were</em> '
+            'in that generation. A bar arriving is selection appending a copy; a '
+            'bar collapsing to nothing is mutation clearing a fitness that was '
+            'earned by a chromosome the individual no longer holds.</p></div>'
+            % (len(frames), len(frames), evolution_chart(frames)))
+
+    return ('<section id="population"><h2>Population</h2>%s%s%s%s</section>'
+            % (card(population_chart(people, quality)), evolution,
                table('<th class="numeric">#</th><th>flags</th><th>chromosome</th>'
                      '<th class="numeric">rank</th><th>verdict</th><th>quality</th>'
                      '<th class="numeric">fitness</th><th class="numeric">answers</th>'
@@ -1167,6 +1388,35 @@ dl.facts dd { margin: 0; font-size: 13.5px; word-break: break-word;
   font-family: var(--mono); }
 dl.facts.tight > div { grid-template-columns: 120px 1fr; padding: 7px 12px; }
 
+.is-off { display: none !important; }
+.panel[hidden] { display: none; }
+.section-head { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap;
+  margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.section-head h2 { border: 0; margin: 0; padding: 0; flex: 1 1 auto; }
+p.lead { margin: 0 0 16px; max-width: 70ch; }
+
+.picker { display: inline-flex; align-items: center; gap: 9px; font-size: 12px;
+  text-transform: uppercase; letter-spacing: .07em; color: var(--ink-2); }
+.picker select {
+  font: 13px/1.3 var(--mono); color: var(--ink); background: var(--bg-2);
+  border: 1px solid var(--line-2); border-radius: 9px; padding: 7px 10px;
+  max-width: 380px; cursor: pointer; text-transform: none; letter-spacing: 0; }
+.picker select:hover { border-color: var(--accent); }
+.picker select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-bottom: 14px; }
+button.action {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  font: 600 13px/1 system-ui, sans-serif; color: #fff; background: var(--accent);
+  border: 1px solid var(--accent); border-radius: 9px; padding: 9px 14px; }
+button.action:hover { filter: brightness(1.08); }
+button.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.scrub { display: inline-flex; align-items: center; gap: 9px; font-size: 12px;
+  text-transform: uppercase; letter-spacing: .07em; color: var(--ink-2); }
+.scrub input[type="range"] { width: 150px; accent-color: var(--accent); cursor: pointer; }
+.caption { font: 12.5px/1.4 var(--mono); color: var(--ink-2); }
+
 .champion { }
 .champ-head { display: flex; align-items: center; gap: 26px; flex-wrap: wrap;
   background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius);
@@ -1255,9 +1505,14 @@ svg.chart .line { fill: none; stroke-width: 2.4; stroke-linejoin: round;
 svg.chart .line.best { stroke: var(--high); }
 svg.chart .line.mean { stroke: var(--accent); }
 svg.chart .line.worst { stroke: var(--none); stroke-dasharray: 5 4; stroke-width: 1.8; }
+svg.chart .line.picked { stroke: var(--accent-2); stroke-width: 3;
+  stroke-dasharray: 1 6; stroke-linecap: round; }
 svg.chart .dot { stroke: var(--bg-2); stroke-width: 2; }
 svg.chart .dot.best { fill: var(--high); } svg.chart .dot.mean { fill: var(--accent); }
+svg.chart .dot.picked { fill: var(--accent-2); }
 svg.chart .hit { fill: transparent; }
+svg.chart .playhead { stroke: var(--accent-2); stroke-width: 1.5;
+  stroke-dasharray: 3 3; }
 
 table.data { width: 100%; border-collapse: collapse; background: var(--bg-2);
   border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
@@ -1379,6 +1634,224 @@ SCRIPT = """
     if (a > b) { return down ? 1 : -1; }
     return 0;
   }
+  // --- the sweep, as data ---------------------------------------------------
+  var block = document.getElementById('gep-data');
+  var DATA = block ? JSON.parse(block.textContent) : { frames: [], selected: null };
+  var FRAMES = DATA.frames || [];
+  var SVGNS = 'http://www.w3.org/2000/svg';
+
+  function at(frame, number) {
+    for (var i = 0; i < frame.rows.length; i++) {
+      if (frame.rows[i].number === number) { return frame.rows[i]; }
+    }
+    return null;
+  }
+  function clamp01(value) { return Math.max(0, Math.min(1, value || 0)); }
+  function band(value) {
+    if (value === null || value === undefined) { return 's-none'; }
+    if (value >= 0.8) { return 's-high'; }
+    if (value >= 0.5) { return 's-mid'; }
+    return value > 0 ? 's-low' : 's-zero';
+  }
+  function ease(t) { return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; }
+
+  // --- which individual the page is showing ---------------------------------
+  var pickers = document.querySelectorAll('select[data-sync="individual"]');
+  var panels = document.querySelectorAll('.panel[data-number]');
+  var historyCaption = document.getElementById('history-caption');
+  var resting = historyCaption ? historyCaption.textContent : '';
+  var searchRunning = null;
+
+  function drawPicked(number) {
+    var chart = document.getElementById('history-chart');
+    if (!chart) { return; }
+    var plot = JSON.parse(chart.dataset.plot);
+    var line = document.getElementById('history-picked');
+    var dots = document.getElementById('history-picked-dots');
+    var key = document.getElementById('history-picked-key');
+    var points = [];
+    while (dots.firstChild) { dots.removeChild(dots.firstChild); }
+    FRAMES.forEach(function (frame, index) {
+      var row = at(frame, number);
+      if (!row || row.fitness === null) { return; }
+      var x = plot.xs[index];
+      var y = plot.bottom - clamp01(row.fitness) * (plot.bottom - plot.top);
+      points.push(x.toFixed(1) + ',' + y.toFixed(1));
+      var dot = document.createElementNS(SVGNS, 'circle');
+      dot.setAttribute('class', 'dot picked');
+      dot.setAttribute('cx', x.toFixed(1));
+      dot.setAttribute('cy', y.toFixed(1));
+      dot.setAttribute('r', '4');
+      var tip = document.createElementNS(SVGNS, 'title');
+      tip.textContent = '#' + number + ' - gen ' + frame.generation + ': '
+        + row.fitness.toFixed(3) + '\\n' + row.chromosome;
+      dot.appendChild(tip);
+      dots.appendChild(dot);
+    });
+    line.setAttribute('points', points.join(' '));
+    key.setAttribute('class', points.length ? 'legend-key' : 'legend-key is-off');
+    key.querySelector('text').textContent = '#' + number;
+    // An individual selection appended after the last fitness snapshot has no
+    // line at all, which on its own looks like a bug rather than a fact.
+    if (historyCaption && !searchRunning) {
+      historyCaption.textContent = points.length ? resting
+        : ('#' + number + ' is not in any recorded generation yet');
+    }
+  }
+
+  function show(number) {
+    Array.prototype.forEach.call(panels, function (panel) {
+      panel.hidden = panel.dataset.number !== String(number);
+    });
+    Array.prototype.forEach.call(pickers, function (picker) {
+      if (picker.value !== String(number)) { picker.value = String(number); }
+    });
+    drawPicked(number);
+  }
+
+  Array.prototype.forEach.call(pickers, function (picker) {
+    picker.addEventListener('change', function () { show(Number(picker.value)); });
+  });
+  // "identical to the script of #4" jumps to that individual rather than
+  // scrolling to a panel that is not on screen.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-show]'),
+    function (link) {
+      link.addEventListener('click', function () { show(Number(link.dataset.show)); });
+    });
+  if (DATA.selected !== null && DATA.selected !== undefined) { show(DATA.selected); }
+
+  // --- replaying the search -------------------------------------------------
+  // The chart is already drawn; the replay only widens the clip over it and
+  // drags a playhead, so what you watch appear is the finished drawing.
+  var searchButton = document.getElementById('play-search');
+  if (searchButton && FRAMES.length) {
+    var reveal = document.getElementById('history-reveal-rect');
+    var head = document.getElementById('history-playhead');
+
+    function settle() {
+      var plot = JSON.parse(document.getElementById('history-chart').dataset.plot);
+      reveal.setAttribute('x', (plot.left - 6).toFixed(1));
+      reveal.setAttribute('width', (plot.right - plot.left + 12).toFixed(1));
+      head.setAttribute('class', 'playhead is-off');
+      searchRunning = null;
+      historyCaption.textContent = resting;
+      searchButton.innerHTML = '&#9654; Replay the search';
+      drawPicked(Number(pickers[0] ? pickers[0].value : DATA.selected));
+    }
+
+    searchButton.addEventListener('click', function () {
+      if (searchRunning) { cancelAnimationFrame(searchRunning); settle(); return; }
+      var plot = JSON.parse(document.getElementById('history-chart').dataset.plot);
+      var span = plot.right - plot.left;
+      var total = Math.min(9000, Math.max(1600, FRAMES.length * 900));
+      var started = null;
+      searchButton.innerHTML = '&#9632; Stop';
+      head.setAttribute('class', 'playhead');
+      searchRunning = requestAnimationFrame(function step(now) {
+        if (started === null) { started = now; }
+        var t = Math.min(1, (now - started) / total);
+        var x = plot.left + span * t;
+        reveal.setAttribute('x', (plot.left - 6).toFixed(1));
+        reveal.setAttribute('width', (x - plot.left + 6).toFixed(1));
+        head.setAttribute('x1', x.toFixed(1));
+        head.setAttribute('x2', x.toFixed(1));
+        var reached = 0;
+        for (var i = 0; i < plot.xs.length; i++) {
+          if (plot.xs[i] <= x + 0.5) { reached = i; }
+        }
+        var frame = FRAMES[reached];
+        historyCaption.textContent = 'generation ' + frame.generation + '/' + FRAMES.length
+          + '  \\u00b7  best ' + (frame.best || 0).toFixed(3)
+          + '  \\u00b7  mean ' + (frame.mean || 0).toFixed(3)
+          + '  \\u00b7  ' + (frame.population) + ' individuals'
+          + (frame.chromosome ? '  \\u00b7  ' + frame.chromosome : '');
+        if (t < 1) { searchRunning = requestAnimationFrame(step); }
+        else { settle(); }
+      });
+    });
+  }
+
+  // --- replaying the population --------------------------------------------
+  // Same idea one level down: every bar is already in the page, and a frame is
+  // a set of widths and labels to move them to.
+  var evolutionButton = document.getElementById('play-evolution');
+  var evolutionChart = document.getElementById('evolution-chart');
+  if (evolutionChart && FRAMES.length) {
+    var geometry = JSON.parse(evolutionChart.dataset.geometry);
+    var scrub = document.getElementById('evolution-scrub');
+    var evoCaption = document.getElementById('evolution-caption');
+    var bars = {}, values = {}, chromosomes = {};
+    geometry.numbers.forEach(function (number) {
+      bars[number] = evolutionChart.querySelector('[data-role="bar"][data-number="'
+        + number + '"]');
+      values[number] = evolutionChart.querySelector('[data-role="value"][data-number="'
+        + number + '"]');
+      chromosomes[number] = evolutionChart.querySelector(
+        '[data-role="chromosome"][data-number="' + number + '"]');
+    });
+    var width = geometry.right - geometry.left;
+    var playing = null;
+
+    function paint(index, progress) {
+      var frame = FRAMES[index];
+      var previous = index > 0 ? FRAMES[index - 1] : null;
+      geometry.numbers.forEach(function (number) {
+        var now = at(frame, number);
+        var was = previous ? at(previous, number) : null;
+        var to = now && now.fitness !== null ? now.fitness : 0;
+        var from = was && was.fitness !== null ? was.fitness : 0;
+        var value = from + (to - from) * progress;
+        var length = width * clamp01(value);
+        bars[number].setAttribute('width', length.toFixed(1));
+        bars[number].setAttribute('class', 'bar ' + band(now ? now.fitness : null));
+        values[number].setAttribute('x', (geometry.left + length + 7).toFixed(1));
+        values[number].textContent = now
+          ? (now.fitness === null ? '-' : value.toFixed(3)) : '';
+        chromosomes[number].textContent = now
+          ? (now.chromosome.length > 24 ? now.chromosome.slice(0, 23) + '\\u2026'
+                                        : now.chromosome)
+          : '';
+        chromosomes[number].setAttribute('class', now ? 'rowchrom' : 'rowchrom is-off');
+      });
+      evoCaption.textContent = 'generation ' + frame.generation + '/' + FRAMES.length
+        + '  \\u00b7  ' + frame.population + ' individuals'
+        + '  \\u00b7  best ' + (frame.best || 0).toFixed(3)
+        + '  \\u00b7  mean ' + (frame.mean || 0).toFixed(3)
+        + '  \\u00b7  ' + frame.recorded_at;
+      if (scrub && Number(scrub.value) !== index + 1) { scrub.value = String(index + 1); }
+    }
+
+    function stopEvolution() {
+      if (playing) { cancelAnimationFrame(playing); playing = null; }
+      evolutionButton.innerHTML = '&#9654; Play the evolution';
+    }
+
+    if (scrub) {
+      scrub.addEventListener('input', function () {
+        stopEvolution();
+        paint(Math.min(FRAMES.length - 1, Math.max(0, Number(scrub.value) - 1)), 1);
+      });
+    }
+    if (evolutionButton) {
+      evolutionButton.addEventListener('click', function () {
+        if (playing) { stopEvolution(); return; }
+        var tween = 750, hold = 450, each = tween + hold;
+        var started = null;
+        evolutionButton.innerHTML = '&#9632; Stop';
+        playing = requestAnimationFrame(function step(now) {
+          if (started === null) { started = now; }
+          var elapsed = now - started;
+          var index = Math.min(FRAMES.length - 1, Math.floor(elapsed / each));
+          var local = Math.min(1, (elapsed - index * each) / tween);
+          paint(index, ease(local));
+          if (elapsed < FRAMES.length * each) { playing = requestAnimationFrame(step); }
+          else { paint(FRAMES.length - 1, 1); stopEvolution(); }
+        });
+      });
+    }
+    paint(FRAMES.length - 1, 1);
+  }
+
   Array.prototype.forEach.call(document.querySelectorAll('table.sortable'), function (table) {
     var heads = table.querySelectorAll('thead th');
     Array.prototype.forEach.call(heads, function (head, index) {
@@ -1399,15 +1872,32 @@ SCRIPT = """
 """
 
 
-NAV = (("overview", "Overview"), ("best", "Best individual"), ("history", "The search"),
+NAV = (("overview", "Overview"), ("individual", "Individual"), ("history", "The search"),
        ("population", "Population"), ("judging", "Judging"), ("testing", "Testing"),
        ("dataset", "Dataset"), ("settings", "Settings"))
+
+
+def payload(data):
+    """What the page's script needs, as JSON in a data block rather than code.
+
+    Only the two things a drawing cannot carry: the generations, to replay, and
+    which individual to start on. Everything else on the page is already HTML.
+    Escaping `<` keeps a chromosome or a dataset path from ever closing the
+    script element it sits in.
+    """
+    body = json.dumps({
+        "frames": data["frames"],
+        "selected": (data["best"]["number"] if data["best"]
+                     else (data["people"][0]["number"] if data["people"] else None)),
+    }, separators=(",", ":"))
+    return ('<script type="application/json" id="gep-data">%s</script>'
+            % body.replace("<", "\\u003c"))
 
 
 def render(data, values):
     """The whole page as one string."""
     run = data["run"]
-    sections = [section_overview(data), section_best(data), section_history(data),
+    sections = [section_overview(data), section_individuals(data), section_history(data),
                 section_population(data), section_judging(data, values),
                 section_testing(data), section_dataset(data), section_settings(data)]
     present = {name for name, _ in NAV
@@ -1440,6 +1930,7 @@ def render(data, values):
 <footer>Generated by <code>generate_html_db_stats.py</code> from
   <code>%s</code>. A view of the sweep, derived from the database &mdash; never the
   sweep itself.</footer>
+%s
 <script>%s</script>
 </body>
 </html>
@@ -1447,7 +1938,7 @@ def render(data, values):
        " &middot; " + esc(run["label"]) if run["label"] else "",
        esc(run["created_at"]), esc(run["template"]), esc(run["git_commit"] or "?"),
        esc(data["db_path"]), esc(run["status"]), esc(run["status"]), nav,
-       "".join(sections), esc(data["db_path"]), SCRIPT))
+       "".join(sections), esc(data["db_path"]), payload(data), SCRIPT))
 
 
 def default_output(db_path, run_id):
