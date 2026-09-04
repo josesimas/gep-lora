@@ -278,6 +278,43 @@ def attach(name, slot):
 # Fold the tree together, deepest node first. Each call leaves behind a new
 # adapter that later calls can use as an input.
 # ---------------------------------------------------------------------------
+def _compact(name):
+    """Copy adapter `name`'s weights off whatever buffer they were sliced from.
+
+    PEFT builds an svd node by running torch.linalg.svd on each module's delta
+    weight and handing back `Vh[:new_rank, :]` (peft/tuners/lora/model.py,
+    _svd_generalized_task_arithmetic_weighted_adapter), which it assigns
+    straight to that module's lora_A. The slice is a *view*, so it pins the
+    whole V matrix for as long as the adapter lives -- and V is sized by the
+    delta weight, not by the rank. On this base model that is ~306 MB behind
+    every down_proj: right around 10 GB across the stack, holding some 18 MB
+    of actual weights, which is how an svd node came to cost seven times the
+    model it attaches to.
+
+    The slice comes back contiguous, so .contiguous() is a no-op here -- only
+    a copy drops the reference to the buffer behind it. Anything already
+    sitting on its own storage is left alone.
+    """
+    for module in model.modules():
+        for store in ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B"):
+            entry = getattr(module, store, None)
+            if entry is None or name not in entry:
+                continue
+            held = entry[name]
+            # lora_A/lora_B hold Linears; the embedding pair holds bare
+            # Parameters. Both are weights to us.
+            weight = getattr(held, "weight", held)
+            if weight.untyped_storage().nbytes() > weight.numel() * weight.element_size():
+                weight.data = weight.data.clone()
+
+    # The buffers just released are the caching allocator's now, not the
+    # driver's, and PROCESS_RUN_BATCH_SIZE runs its batch-mates as separate
+    # processes -- which cannot see this one's free list. Hand the scratch
+    # back so a batch is sized by what its scripts hold rather than by the
+    # high-water mark they each passed through.
+    torch.cuda.empty_cache()
+
+
 def combine(name, combination_type, left, right):
     """Fold two adapters into one under `name`, tracking the resulting rank.
 
@@ -301,7 +338,15 @@ def combine(name, combination_type, left, right):
         weights=[left_weight, right_weight],
         adapter_name=name,
         combination_type=combination_type,
+        # The thin SVD. The first new_rank singular vectors are identical
+        # either way, so the full n x n V that PEFT asks for by default is
+        # only a bigger buffer to compute and then throw away -- see
+        # _compact(), which has to throw it away either way.
+        svd_full_matrices=False,
     )
+
+    if combination_type == "svd":
+        _compact(name)
 
     if combination_type == "cat":
         RANKS[name] = left_rank + right_rank

@@ -282,6 +282,13 @@ def attach(name, slot):
 # but every rank is, so the arithmetic that decides a tree's fate is the real
 # arithmetic.
 # ---------------------------------------------------------------------------
+#~ template_code.py has a _compact() here, and svd_full_matrices=False on the
+#~ add_weighted_adapter call: PEFT returns each svd node's lora_A as a view
+#~ into the full V matrix, which pins ~10 GB of buffers this base model has no
+#~ other use for. There is nothing to mirror -- no adapter is built here, so
+#~ there is no storage to copy off -- and inventing a _compact() that touched
+#~ nothing would only suggest the mock says something about VRAM. It says
+#~ nothing about VRAM. The ranks below are what it is faithful about.
 def combine(name, combination_type, left, right):
     """Fold two adapters into one under `name`, tracking the resulting rank.
 
