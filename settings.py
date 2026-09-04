@@ -225,7 +225,7 @@ PROCESS_RUN_BATCH_SIZE = 4
 # Turn it down to watch a run closely, up for a quieter log, and to 0 for the
 # milestones alone. The transcript itself is never echoed -- it goes to the
 # database, and store.py --show reads it back.
-PROCESS_RUN_PROGRESS_SECONDS = 30
+PROCESS_RUN_PROGRESS_SECONDS = 5
 
 
 # --- how an answer is scored -----------------------------------------------

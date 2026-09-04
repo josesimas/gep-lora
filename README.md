@@ -232,8 +232,9 @@ settings **it** was created with, not whatever the file says now.
 
 #### The dataset, saved with the sweep
 
-Creating a sweep does one more thing before the first step runs: it reads the
-dataset and writes it into the **`datasets`** table, whole.
+Creating a sweep does one more thing before the first step runs: it calls
+`add_dataset.save_all()`, which reads the dataset and writes it into the
+**`datasets`** table, whole.
 
 ```
 new run 7 in run_db/gep.sqlite3
@@ -278,6 +279,36 @@ settings table, not a fact about the dataset.
 back out as `dataset_<split>.txt` — the lines as they were read, so the export
 can be diffed against the file on disk today to see whether the dataset has
 moved under the sweep.
+
+**A split the sweep was never given.** A validation or testing set decided on
+after the sweep started has nowhere to go — `save_all()` runs once, as the sweep
+is created, and `continue_run.py` resumes a sweep that already recorded its
+dataset. The same module is that act performed afterwards, by hand:
+
+```bash
+python add_dataset.py datasets/medical_validation_lora_dataset.json --split validation
+```
+
+```
+validation  20 record(s), 20 with a reference answer, from D:\...\medical_validation_lora_dataset.json
+run 7 in run_db/gep.sqlite3
+```
+
+`--db` names a database (default `settings.DB_PATH`), `--run` a sweep (`0`, the
+default, is the most recent). It parses nothing and stores nothing itself:
+`generate_runs.dataset_records()` reads the file — the same two shapes, the same
+1-based positions, uncapped — and `store.save_dataset()` writes it.
+
+A split added by hand is therefore not *like* one the driver stored, it is
+stored by the same function: `save_all()` is a loop over `add()`, once per split
+its settings name, and the command line is `add()` once. One reader of a dataset
+file, one INSERT, one printed line — which is why `--show` and `--export` pick
+either up without knowing which it was.
+
+It will **not** overwrite a split the sweep already holds unless `--replace`
+says so. Those rows are what that sweep was built on, and a dataset changing
+under a finished sweep is the thing the table exists to prevent; adding the
+split that was missing is a different act from rewriting the one that was there.
 
 **Adding a step.** Append a `Step(name, callable, description)` to `main.py`'s
 `STEPS`. The callable takes the `Context` — the connection, the run id, the
@@ -1700,6 +1731,7 @@ warning — the effective cap is unchanged.
 | `full_run.py` | main.py then continue_run.py — a whole search in one command |
 | `settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
 | `store.py` | the database: schema, helpers, `--list/--show/--export` |
+| `add_dataset.py` | the only way into the `datasets` table: every split as a sweep is created, or one afterwards from the command line |
 | `run_db/gep.sqlite3` | every sweep ever run, with its settings, seeds, transcripts and scores |
 | `run_db/run_001.py` … | the generated combination scripts, until `process` has run them |
 | `generate_population.py` | the alphabet, `encode`/`decode`, and the random draw |
@@ -1730,7 +1762,7 @@ the arrows end in tables, not files.
 ```
 plan.txt                              the rules
    |
-main.save_datasets                    -->  datasets (once, as the sweep is made)
+add_dataset.save_all                  -->  datasets (once, as the sweep is made)
 generate_population.build_population  -->  individuals (chromosome)
 draw_trees.draw                       -->  individuals.tree
 generate_runs.plan/render             -->  individuals.script_source
@@ -1749,6 +1781,7 @@ mutation.apply                        -->  individuals.chromosome + has_changed
                                            (and fitness back to NULL)
 
 store.py --show / --export                 reads any of it back out
+add_dataset.py --split testing        -->  datasets (a split added afterwards)
 
 test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
 

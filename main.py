@@ -76,6 +76,7 @@ import threading
 import time
 from collections import namedtuple
 
+import add_dataset
 import calculate_fitness
 import draw_trees
 import elitism
@@ -149,45 +150,8 @@ def new_sweep(conn, label):
                               label=label)
     print("new run %d in %s" % (run_id, conn.path))
     store.save_settings(conn, run_id, conf)
-    save_datasets(conn, run_id, conf)
+    add_dataset.save_all(conn, run_id, conf)
     return run_id, conf
-
-
-# The settings each split of the dataset is named by. Only the training one is
-# read by the search -- it is the eval set every generated script asks and every
-# fitness number is earned on; the other two are stored when they are named and
-# nothing reads them yet.
-DATASET_SETTINGS = {"training": "TRAINING_SET",
-                    "validation": "VALIDATION_SET",
-                    "testing": "TESTING_SET"}
-
-
-def save_datasets(conn, run_id, conf):
-    """Store the sweep's dataset -> datasets, at the moment it is created.
-
-    Alongside the settings and for the same reason: a fitness number means
-    "this blend, under these knobs, on these questions", and a settings table
-    that records the *path* of the eval set records only where the questions
-    were, not what they said. The files go on being edited, repointed and
-    regenerated; a sweep read back in a month should still be able to say what
-    it was actually asked.
-
-    Every record of each file, uncapped -- TRAINING_COUNT decides how many of
-    the training records an individual is judged on, and that is already stored
-    as a setting. A split whose setting is None is simply not part of this
-    sweep and leaves no rows; a split that names a file that cannot be read
-    stops the sweep here, at its first second, rather than an hour into it.
-    """
-    for split in store.SPLITS:
-        where = conf.get(DATASET_SETTINGS[split])
-        if not where:
-            continue
-        records = generate_runs.dataset_records(where)
-        path = generate_runs.training_set_path(where)
-        count = store.save_dataset(conn, run_id, split, path, records)
-        with_reference = sum(1 for one in records if one["reference"])
-        print("%-10s %3d record(s), %d with a reference answer, from %s"
-              % (split, count, with_reference, path))
 
 
 # --- the steps -------------------------------------------------------------

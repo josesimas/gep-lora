@@ -1,25 +1,32 @@
 """
-add_dataset.py - Put a dataset file into an existing sweep's `datasets` table.
+add_dataset.py - Put a dataset file into a sweep's `datasets` table.
 
-`main.save_datasets()` stores the three splits a sweep was created with, once,
-at the moment it is created. This is the same act performed afterwards, by
-hand: point it at a database, a dataset file and one of the split names and it
-reads the file the way the pipeline reads it and files the records under a run.
+The one way records get into that table, from either end of a sweep's life:
 
-    python add_dataset.py datasets/validation.json --split validation
-    python add_dataset.py extra.json --split testing --db run_db1/gep.sqlite3 --run 3
+  * `save_all()` stores the splits a sweep's settings name, and is what
+    `main.new_sweep()` calls as the sweep is created -- alongside the settings
+    and for the same reason. A fitness number means *this blend, under these
+    knobs, on these questions*, and a settings table that records TRAINING_SET
+    records only **where** the questions were; the files go on being edited,
+    repointed and regenerated.
+  * `add()`, and the command line over it, is the same act performed
+    afterwards, by hand -- for a split the sweep was never given, a validation
+    or testing set decided on after it started, so a later pass has the
+    questions beside the run they belong to:
 
-It is for the splits a sweep was never given -- a validation or testing set
-decided on after the sweep started, so a later pass has the questions beside
-the run they belong to. Replacing a split that already holds rows is possible
-but not the default: those rows are what the sweep says it was built on, and a
-dataset changing under a finished sweep is the thing the table exists to
-prevent, so it takes --replace to say that is meant.
+        python add_dataset.py datasets/validation.json --split validation
+        python add_dataset.py extra.json --split testing --db run_db1/gep.sqlite3 --run 3
 
-Nothing here parses or stores anything itself: `generate_runs.dataset_records()`
-reads the file (same two shapes, same 1-based positions, uncapped -- the cap is
-a fact about the sweep, not about the file) and `store.save_dataset()` writes
-it, so a dataset added here is indistinguishable from one the driver stored.
+Both go through `add()`, so a split added by hand is stored exactly as one the
+driver stored -- there is no second reader of a dataset file and no second
+INSERT. Replacing a split that already holds rows is possible but never the
+default: those rows are what the sweep says it was built on, and a dataset
+changing under a finished sweep is the thing the table exists to prevent.
+
+Nothing here parses or stores anything itself either: `generate_runs`
+`.dataset_records()` reads the file (same two shapes, same 1-based positions,
+uncapped -- the cap is a fact about the sweep, not about the file) and
+`store.save_dataset()` writes it.
 """
 
 import argparse
@@ -58,6 +65,10 @@ def add(conn, run_id, split, path, replace=False, say=print):
 
     -> (records written, how many carry a reference answer).
 
+    `path` is absolute or relative to this file, the way a settings value is;
+    save_all() passes TRAINING_SET straight in and the command line passes what
+    it resolved against the cwd first.
+
     Refuses a split that already holds rows unless `replace`, and refuses a
     file with no records at all: save_dataset() writes a split whole, so an
     empty read would quietly leave the sweep with no dataset rather than with
@@ -78,6 +89,10 @@ def add(conn, run_id, split, path, replace=False, say=print):
             "--replace to overwrite it; those rows say what that sweep was "
             "built on." % (run_id, split, entry["records"], entry["source"]))
 
+    # Absolute already (the command line resolves before calling), or a
+    # settings value like "datasets/x.json", which means what it means to every
+    # other reader of one: beside this file, never beside the cwd.
+    path = generate_runs.training_set_path(path)
     records = generate_runs.dataset_records(path)
     if not records:
         raise SystemExit("%s holds no records; nothing to store." % path)
@@ -90,6 +105,39 @@ def add(conn, run_id, split, path, replace=False, say=print):
         say("           replaced %d record(s) that split already held"
             % held[0]["records"])
     return count, with_reference
+
+
+# The setting each split of the dataset is named by. Only the training one is
+# read by the search -- it is the eval set every generated script asks and every
+# fitness number is earned on; the other two are stored when they are named and
+# nothing reads them yet.
+SPLIT_SETTINGS = {"training": "TRAINING_SET",
+                  "validation": "VALIDATION_SET",
+                  "testing": "TESTING_SET"}
+
+
+def save_all(conn, run_id, conf, say=print):
+    """Store every split a sweep's settings name -> datasets. -> how many.
+
+    Called by main.new_sweep() the moment a sweep is created, before its first
+    step: the files a sweep was judged on are half of what its fitness numbers
+    mean, and they are not going to sit still.
+
+    Every record of each file, uncapped -- TRAINING_COUNT decides how many of
+    the training records an individual is judged on, and that is already stored
+    as a setting. A split whose setting is None is simply not part of this
+    sweep and leaves no rows; a split naming a file that cannot be read, or one
+    with nothing in it, stops the sweep here, at its first second, rather than
+    an hour into it.
+    """
+    stored = 0
+    for split in store.SPLITS:
+        where = conf.get(SPLIT_SETTINGS[split])
+        if not where:
+            continue
+        count, _ = add(conn, run_id, split, where, say=say)
+        stored += count
+    return stored
 
 
 def main(argv=None):

@@ -181,8 +181,8 @@ plus `fitness_history` hanging off `runs`, plus `baselines`, which hangs off not
 see the evaluate section), its
 helpers, and `--list/--show/--export`. Nothing else imports sqlite3.
 
-`main.save_datasets()` runs inside `new_sweep()`, before the first step: it stores the
-dataset the sweep was given into `datasets`, alongside the settings and for the same
+`add_dataset.save_all()` runs inside `main.new_sweep()`, before the first step: it stores
+the dataset the sweep was given into `datasets`, alongside the settings and for the same
 reason -- the settings table records *where* the questions were, and the files go on being
 edited. One row per record, with the question (the user turn), the reference (the
 assistant turn, when there is one) and the line it was read from. `store.SPLITS` and the
@@ -195,6 +195,25 @@ many an individual is judged on, which is a fact about the sweep and already a s
 not a fact about the dataset. `generate_runs.dataset_records()` is that uncapped read;
 `eval_records()` is the same parse with the cap applied. Only a *new* sweep saves one:
 `continue_run.py` resumes a sweep that already recorded its dataset, which is the point.
+
+[add_dataset.py](add_dataset.py) is where that storing lives, and is the **only** path into
+the table -- `save_all(conn, run_id, conf)` for the splits a sweep's settings name (what
+`new_sweep()` calls, with `SPLIT_SETTINGS` mapping split -> setting), `add(conn, run_id,
+split, path)` for one file, and a command line over `add()` for the split a sweep was never
+given:
+
+```bash
+python add_dataset.py datasets/medical_validation_lora_dataset.json --split validation
+```
+
+`--db` picks the database (default `DB_PATH`), `--run` the sweep (`0`, the default, is the
+latest). Both entry points go through `add()`, so a split added by hand is stored exactly
+as one the driver stored; there is no second reader of a dataset file and no second INSERT.
+It **refuses a split the run already holds** unless `--replace` -- those rows are what that
+sweep was built on -- and refuses an empty file, since `store.save_dataset()` writes a split
+whole and an empty read would leave the sweep with no dataset rather than the one meant. A
+path is resolved the way a setting is (absolute, or beside the repo); only the command line
+tries the cwd first, because a path typed at a shell means what the shell means by it.
 
 `generate_population.py` is the root module — it owns the alphabet (`BINARY_OPS`,
 `UNARY_OPS`, `VARIABLES`, `ARITY`), the `Node` type, and `decode`/`encode`/`levels`.
@@ -274,8 +293,8 @@ ranks is expected and is culled by the usual `BAD` path.
   ask under; the reference is the part they never see.
 - `dataset_records(dataset)` — one dataset file, whole, as
   `{position, question, reference, content}` records, with no `TRAINING_COUNT` cap and the
-  line it came from kept. `eval_records()` is this plus the cap; `main.save_datasets()`
-  uses it for all three splits.
+  line it came from kept. `eval_records()` is this plus the cap;
+  `add_dataset.save_all()` uses it for all three splits.
 - `training_set_path()` / `training_count()` / `lora_slots()` / `base_model_name()` — the
   eval prompts file, the cap on how many of its records are used, the five adapter
   paths and the model they attach to, from `TRAINING_SET`, `TRAINING_COUNT`, `LORA_SLOTS`
