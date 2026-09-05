@@ -14,6 +14,14 @@ run them, judge them, score them, keep the best, breed from the fit, and vary
 the offspring. The population that comes out is the one the next generation
 goes in with.
 
+The last generation stops after fitness. Its final three steps build the next
+generation -- elitism names the individual mutation must spare, selection fills
+the population, mutation varies it -- and the last generation has no next one,
+so running them would leave the sweep holding a population nothing has scored
+in place of the one it just did. Stopping at fitness leaves every individual
+still described by the script that earned its transcript, which is the state
+store.py --export, the HTML report and test_run_with_dataset.py all read.
+
 Everything comes out of the database
 ------------------------------------
 There is no population step here and no new sweep: this driver continues one
@@ -80,14 +88,23 @@ GENERATION = ("trees", "runs", "process", "evaluate", "fitness", "elitism",
               "selection", "mutation")
 
 
-def generation_steps():
-    """The steps of one generation, in pipeline order."""
+def generation_steps(last=False):
+    """The steps of one generation, in pipeline order.
+
+    `last` trims the tail that builds the *next* generation
+    (main.NEXT_GENERATION: elitism, selection, mutation), because the last
+    generation of a run has no next generation to build. The sweep then comes
+    to rest on the population that was actually scored, each individual still
+    described by the script that earned its transcript -- rather than on a
+    population selection has half-replaced and mutation has rewritten, which is
+    the state every reader of a finished sweep used to have to work around.
+    """
     wanted = set(GENERATION)
     steps = [step for step in main.STEPS if step.name in wanted]
     missing = wanted - {step.name for step in steps}
     if missing:
         raise SystemExit("main.py has no step(s) named: %s" % ", ".join(sorted(missing)))
-    return steps
+    return main.without_next_generation(steps) if last else steps
 
 
 def projection(size, generations, selection_count):
@@ -187,21 +204,27 @@ def evolve(conn, run_id, conf, generations, options):
     generation grown out of a broken one is not a result.
     """
     steps = generation_steps()
+    final = generation_steps(last=True)
     context = main.context_for(conn, run_id, conf, options)
     started = time.time()
 
     for number in range(1, generations + 1):
         size = len(store.individuals(conn, run_id))
+        # The last generation stops at fitness: what follows builds the next
+        # generation, and after this one there is none. See generation_steps().
+        this_one = final if number == generations else steps
         # Which generation this is, for the step banners inside it: the header
         # below scrolls away during process, which is the part that takes the
         # hours. It is display only -- no step reads it, and nothing stores it.
         context.generation = "%d/%d" % (number, generations)
         print("#" * 70)
-        print("# generation %d of %d -- population %d" % (number, generations, size))
+        print("# generation %d of %d -- population %d%s"
+              % (number, generations, size,
+                 ", the last: it stops after fitness" if this_one is final else ""))
         print("#" * 70)
         print()
 
-        code = main.run(steps, context)
+        code = main.run(this_one, context)
         if code:
             print()
             print("stopped in generation %d of %d, after %.1fs"
@@ -212,6 +235,10 @@ def evolve(conn, run_id, conf, generations, options):
 
         grown = len(store.individuals(conn, run_id))
         print("# generation %d done: population %d -> %d" % (number, size, grown))
+        if this_one is final:
+            print("# stopped after fitness: %s build the next generation and there"
+                  % ", ".join(main.NEXT_GENERATION))
+            print("# is none, so the population is the one that was just scored")
         print()
 
     summarise(conn, run_id, generations, time.time() - started)

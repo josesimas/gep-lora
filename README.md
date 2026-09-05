@@ -159,16 +159,33 @@ Run everything from `project/`.
 python main.py
 ```
 
-Runs every step in order — population, trees, runs, process, evaluate,
-fitness, elitism, selection, mutation — stopping at the first failure, since
-each step builds on the one before it.
+Runs the steps in order — population, trees, runs, process, evaluate,
+fitness — stopping at the first failure, since each step builds on the one
+before it.
+
+**It stops after `fitness`**, and the three steps after it are the reason:
+`elitism`, `selection` and `mutation` do not describe this generation, they
+build the *next* one, and `main.py` on its own is a run of one generation with
+no next one. Stopping there leaves the sweep holding the individuals that were
+actually scored, each still described by the script that earned its transcript
+— which is what `store.py --export`, the HTML report and
+`test_run_with_dataset.py` all want to read.
+
+```bash
+python main.py --next-generation
+```
+
+runs them anyway, leaving a population bred and varied for another generation.
+That is what `full_run.py` passes, and what you want before carrying a sweep on
+by hand. Naming steps explicitly always runs exactly those: `python main.py
+selection` selects, flag or no flag.
 
 `process` and `evaluate` are the slow ones: `process` executes the generated
 scripts, one base-model load per individual — `PROCESS_RUN_BATCH_SIZE` of them
 at a time — and `evaluate` then makes one grading call per answer. A full `python main.py` is therefore a long operation,
 and `python main.py population trees runs` stops short of both. `fitness`,
-`elitism`, `selection` and `mutation`, which follow them, work over what they
-stored and cost nothing.
+and `elitism`, `selection` and `mutation` behind it, work over what they stored
+and cost nothing.
 
 Run it with the **venv's python** — `process` launches each generated script
 with `sys.executable`, so the wrong interpreter fails every individual. It now
@@ -1360,6 +1377,19 @@ describe the chromosomes, build them, run them, judge them, score them, keep the
 best, breed from the fit, vary the offspring. The population that comes out is
 the one the next generation goes in with.
 
+**The last generation stops after `fitness`.** The three steps behind it build
+the next generation, and the last one has none, so the sweep comes to rest on
+the population that was just scored rather than on one selection has half
+replaced and mutation has rewritten. The banner says which generation that is
+and the driver says so again when it gets there:
+
+```
+# generation 3 of 3 -- population 10, the last: it stops after fitness
+...
+# stopped after fitness: elitism, selection, mutation build the next generation
+# and there is none, so the population is the one that was just scored
+```
+
 **Everything comes out of the database.** There is no `population` step here and
 no new sweep: this continues one that already exists, reads the settings *that
 sweep* was created with, and writes back into it. Nothing is taken from
@@ -1946,8 +1976,9 @@ Three things it deliberately does:
   opened offline.
 - **It says what the numbers do not.** A best individual that is `BAD`, that has
   never run, or that mutation has rewritten since it was scored gets a note
-  saying so — because a finished sweep ends in `mutation`, and the chromosome an
-  individual holds then is usually not the one its transcript belongs to.
+  saying so. A run that finishes normally no longer produces the last of those —
+  its final generation stops after `fitness` — but a sweep stopped
+  mid-generation, or driven a step at a time, still can.
 
 `quality` and `fitness` are shown side by side in the population table for the
 same reason: the first is the mean over the latest execution's answers, the

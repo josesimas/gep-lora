@@ -874,6 +874,36 @@ STEPS = [
 ]
 
 
+# The tail of the pipeline: the three steps that do not describe this
+# generation but build the *next* one. `elitism` names the individual mutation
+# must not touch, `selection` fills the population the next generation runs,
+# and `mutation` varies what it filled it with -- none of them reads a
+# transcript or writes a score, and all three leave the population describing a
+# generation that has not happened yet.
+#
+# So the last generation of a run stops before them, at `fitness`: the sweep
+# comes to rest holding the individuals that were actually scored, each one
+# still described by the script that earned it and the transcript it earned it
+# with. That is the state store.py --export, the HTML report and
+# test_run_with_dataset.py all want, and the state a sweep used to have to be
+# walked back into by re-running `trees runs process evaluate`.
+NEXT_GENERATION = ("elitism", "selection", "mutation")
+
+
+def without_next_generation(steps):
+    """`steps` up to the point where they stop being about this generation.
+
+    Trims NEXT_GENERATION off the end rather than filtering it out anywhere it
+    appears, so a step list that never had a tail comes back unchanged and one
+    that does keeps everything before it -- including a `fitness` that somebody
+    asked for by name.
+    """
+    trimmed = list(steps)
+    while trimmed and trimmed[-1].name in NEXT_GENERATION:
+        trimmed.pop()
+    return trimmed
+
+
 # --- driver ----------------------------------------------------------------
 
 
@@ -972,6 +1002,14 @@ def main(argv=None):
                         help="seconds to allow each script (default 900)")
     parser.add_argument("--force", action="store_true",
                         help="re-score answers that already have a quality")
+    parser.add_argument("--next-generation", action="store_true",
+                        help="also run %s -- the steps that build the next "
+                             "generation. Without it a full run stops after "
+                             "fitness, because main.py's one generation is the "
+                             "whole run and there is no next generation to "
+                             "build. continue_run.py passes it for every "
+                             "generation but its last."
+                             % ", ".join(NEXT_GENERATION))
     args = parser.parse_args(argv)
 
     known = {step.name: step for step in STEPS}
@@ -997,9 +1035,13 @@ def main(argv=None):
             parser.error("unknown step(s): %s. Known steps: %s"
                          % (", ".join(unknown), ", ".join(known)))
         # Keep the order the pipeline defines, not the order they were typed.
+        # Named steps are run as named: asking for `selection` and being given
+        # something else would be worse than any default.
         selected = [step for step in STEPS if step.name in set(args.steps)]
     else:
         selected = list(STEPS)
+        if not args.next_generation:
+            selected = without_next_generation(selected)
 
     conn = store.connect(args.db)
 
@@ -1019,6 +1061,14 @@ def main(argv=None):
                              % (run_id, conn.path))
         conf = store.get_settings(conn, run_id)
         print("resuming run %d in %s\n" % (run_id, conn.path))
+
+    if not args.steps and not args.next_generation:
+        print("this run is one generation, so it is the last one and stops after "
+              "fitness.")
+        print("    %s are what build the next generation, and there is none."
+              % ", ".join(NEXT_GENERATION))
+        print("    Add --next-generation to run them anyway.")
+        print()
 
     context = context_for(conn, run_id, conf, args)
     try:

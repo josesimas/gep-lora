@@ -218,6 +218,12 @@ One generation is:
 population -> trees -> runs -> process -> evaluate -> fitness -> elitism -> selection -> mutation
 ```
 
+The last generation of a run stops after `fitness`. The three steps behind it
+build the *next* generation, so a finished run leaves the population that was
+actually scored, each individual still described by the script that earned its
+transcript. `python main.py` on its own is a one-generation run and stops there
+too; `--next-generation` runs them anyway.
+
 ### 3a. Dry run
 
 Set in `settings.py`:

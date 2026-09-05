@@ -47,9 +47,11 @@ The testing pass at the end runs only when the sweep has a TESTING_SET, because
 that setting is the only statement anyone has made about which questions the
 search was not judged on. It costs a base-model load per individual above
 TESTING_MIN_QUALITY, so --no-test skips it and --test-min-quality changes how
-many that is. It is deliberately the *last* thing: a search that has finished
-ends in mutation, and the individuals worth testing are the ones that were
-actually scored -- which is what their stored scripts still describe.
+many that is. It is deliberately the *last* thing, and it is why the search's last
+generation stops after `fitness`: the individuals worth testing are the ones
+that were actually scored, and stopping there is what leaves the population
+holding exactly those rather than a generation selection and mutation have
+already moved on to.
 
     python full_run.py --no-test                 # search only, as before
     python full_run.py --test-min-quality 0.7    # test fewer of them
@@ -129,7 +131,14 @@ def cli(argv=None):
     print("=" * 70)
     print()
 
-    first = ["--label", options.label] if options.label else []
+    # --next-generation because main.py's generation is this run's *first*,
+    # not its last: continue_run.py has at least one more to run (--generations
+    # is refused below 1), and it needs a population selection and mutation
+    # have moved on. Only the run's last generation stops after fitness, and
+    # that one belongs to continue_run.py.
+    first = ["--next-generation"]
+    if options.label:
+        first += ["--label", options.label]
     code = call(main.main, first + forwarded(options))
     if code:
         print()

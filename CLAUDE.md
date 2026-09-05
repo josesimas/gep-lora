@@ -55,9 +55,15 @@ ones skipped as `BAD` or held back by `--limit` stay.
 python continue_run.py --generations 3
 ```
 
-`main.py` runs a sweep through **one** generation; `continue_run.py` carries an existing one
+`main.py` runs a sweep through **one** generation, and because that generation is the whole
+run it stops after `fitness`: `main.NEXT_GENERATION` (`elitism`, `selection`, `mutation`)
+is the tail that builds the *next* generation, and there is none. `--next-generation` runs
+them anyway, which is what `full_run.py` passes and what you want before continuing a sweep
+by hand. Naming steps explicitly (`python main.py selection`) always runs exactly those.
+`continue_run.py` carries an existing sweep
 on, running `trees -> runs -> process -> evaluate -> fitness -> elitism -> selection ->
-mutation` per generation (`GENERATIONS` in `settings.py`, default 10). It never draws a
+mutation` per generation -- **except its last, which stops after `fitness`** for the same
+reason (`GENERATIONS` in `settings.py`, default 10). It never draws a
 population and never creates a sweep -- it resumes one from the database (`--db`, `--run`)
 under the settings that sweep was created with, reusing `main.STEPS` and `main.run()` rather
 than a second copy of the driver. The `_run` suffix is forced: `continue` is a keyword, so a
@@ -168,9 +174,10 @@ empty sweep and a report about nothing. It **inlines everything** -- no CDN, no
 fonts, charts hand-drawn as SVG coloured through the page's CSS variables, so
 one drawing serves light and dark and the page survives being mailed or
 archived. And it **says what the numbers do not**: a best individual that is
-`BAD`, has never run, or was mutated since it was scored carries a note, because
-a finished sweep ends in `mutation` and the chromosome an individual holds then
-is usually not the one its stored transcript belongs to. The population table
+`BAD`, has never run, or was mutated since it was scored carries a note -- the
+last of which a run that finished normally no longer produces, since its last
+generation stops after `fitness`, but a sweep stopped mid-generation or driven a
+step at a time still can. The population table
 shows `quality` (the mean over the latest execution) beside `fitness` (the
 column the search reads) for the same reason.
 
@@ -271,11 +278,14 @@ pre-scored**, as a mocked sweep does, so `settle()` gives those rows the mean th
 scores come to rather than leaving them looking ungraded. `test_answers` (a view over the
 JSON transcript) reads any of it back one answer at a time.
 
-Mind the state a finished sweep is in: `mutation` runs last, so most individuals hold a
-chromosome their stored script no longer describes. The pass runs the script and records
-the chromosome the *script* builds (`script_chromosome()`, from the `EXPRESSION` line),
-counts how many rows that applies to and says so. Re-run `trees runs process evaluate`
-first to test the current population.
+The state a finished sweep is in is what the last generation stopping after `fitness` is
+for: the population is the one that was scored, each individual still described by the
+script that earned its transcript, so the pass tests what the search actually found. That
+stops being true for a sweep stopped mid-generation, driven a step at a time, or run under
+an older version that ended in `mutation`; the pass runs the script and records the
+chromosome the *script* builds (`script_chromosome()`, from the `EXPRESSION` line), counts
+how many rows have moved on from it and says so. Re-run `trees runs process evaluate` first
+to test the current population in that case.
 
 The `evaluate` step scores answers the way `EVALUATOR` in `settings.py` says. Two of the
 six registered evaluators are local (`similarity`, `heuristic`); the other four

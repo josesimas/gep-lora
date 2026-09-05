@@ -611,12 +611,14 @@ def main(argv=None):
     if args.limit:
         rows = rows[:args.limit]
 
-    # A sweep that has just finished ends in mutation, so this is the normal
-    # state of one rather than an odd case: the chromosome column has moved on
-    # while the script, the rank and the quality that picked it all still
-    # describe the individual as it was when it last ran. The pass tests what
-    # it can actually run, and says so rather than reporting a mutant's number
-    # against an ancestor's answers without comment.
+    # A run that finishes normally now stops after `fitness`, so its population
+    # is the one that was scored and this list is usually empty. It stops being
+    # empty when the sweep was stopped mid-generation, or its steps were run by
+    # hand, or an older sweep ran to the end of mutation: the chromosome column
+    # has then moved on while the script, the rank and the quality that picked
+    # it all still describe the individual as it was when it last ran. The pass
+    # tests what it can actually run, and says so rather than reporting a
+    # mutant's number against an ancestor's answers without comment.
     moved = [row for row in rows
              if (script_chromosome(row["script_source"]) or row["chromosome"])
              != row["chromosome"]]

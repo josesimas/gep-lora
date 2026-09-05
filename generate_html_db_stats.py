@@ -1024,9 +1024,11 @@ def individual_panel(data, best, seen, chosen):
         notices.append(
             "<strong>Mutated since it was scored.</strong> The chromosome above is "
             "the one this individual holds now; the transcript and the script "
-            "below belong to the one it held when it last ran. A finished sweep "
-            "ends in mutation, so this is the normal state of one - re-run "
-            "<code>trees runs process evaluate</code> to score what it is now.")
+            "below belong to the one it held when it last ran. A run that "
+            "finished normally stops after <code>fitness</code>, so this means "
+            "the sweep was stopped mid-generation or its steps were run by hand "
+            "- re-run <code>trees runs process evaluate</code> to score what it "
+            "is now.")
 
     notices_html = "".join('<div class="callout warn-note">%s</div>' % text
                            for text in notices)
