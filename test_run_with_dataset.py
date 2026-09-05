@@ -62,6 +62,7 @@ import threading
 import time
 
 import add_dataset
+import db_datasets
 import evaluators
 import generate_runs
 import process_run
@@ -124,6 +125,21 @@ def script_chromosome(source):
     """
     found = _EXPRESSION.search(source or "")
     return found.group(1) if found else None
+
+
+def _minimum(args, conf):
+    """The training quality an individual has to beat to be worth testing.
+
+    --min-quality, then the sweep's own TESTING_MIN_QUALITY, then settings.py's.
+    The sweep's before settings.py's for the reason every other knob is read
+    that way -- the individuals being tested were selected under it. The last
+    fallback is for a sweep stored before the setting existed, which recorded
+    none of its own.
+    """
+    if args.min_quality is not None:
+        return args.min_quality
+    stored = conf.get("TESTING_MIN_QUALITY")
+    return config.TESTING_MIN_QUALITY if stored is None else float(stored)
 
 
 def candidates(conn, run_id, minimum):
@@ -505,16 +521,17 @@ def report(conn, run_id, dataset, say=print):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Run a sweep's best individuals against another dataset.")
-    parser.add_argument("dataset",
+    parser.add_argument("dataset", nargs="?", default=None,
                         help="the dataset to test on, JSON Lines or one prompt "
-                             "per line")
+                             "per line (omit it with --from-db)")
     parser.add_argument("--db", default=None,
                         help="database file (default: settings.DB_PATH)")
     parser.add_argument("--run", type=int, default=0, metavar="RUN",
                         help="the sweep to test (0 = the most recent, default)")
     parser.add_argument("--min-quality", type=float, default=None, metavar="Q",
                         help="test the individuals scoring above this on the "
-                             "training split (default: settings.TESTING_MIN_QUALITY)")
+                             "training split (default: the sweep's own "
+                             "TESTING_MIN_QUALITY, falling back to settings.py's)")
     parser.add_argument("--count", type=int, default=0, metavar="N",
                         help="ask only the first N questions of the dataset "
                              "(0 = all of them, the default)")
@@ -532,6 +549,12 @@ def main(argv=None):
     parser.add_argument("--replace", action="store_true",
                         help="overwrite a different testing split already "
                              "stored for this sweep")
+    parser.add_argument("--from-db", action="store_true",
+                        help="test on the sweep's own stored testing split "
+                             "rather than a file: the rows are written out "
+                             "beside the database and used as the dataset. "
+                             "Takes no dataset argument, and records nothing -- "
+                             "those rows are already what it read.")
     parser.add_argument("--evaluator", default=None, metavar="NAME",
                         help="score with this evaluator instead of the sweep's "
                              "own EVALUATOR (python main.py --evaluators lists them)")
@@ -548,6 +571,13 @@ def main(argv=None):
     if args.no_score and args.score_only:
         raise SystemExit("--no-score and --score-only ask for opposite halves "
                          "of the same pass; pick one.")
+    if args.from_db and args.dataset:
+        raise SystemExit("--from-db takes the questions from the sweep's stored "
+                         "testing split, so it cannot also be given %s. Drop one "
+                         "of the two." % args.dataset)
+    if not args.from_db and not args.dataset:
+        raise SystemExit("say which dataset to test on, or pass --from-db to use "
+                         "the sweep's own stored testing split.")
 
     if args.db is None:
         args.db = config.DB_PATH
@@ -571,11 +601,25 @@ def main(argv=None):
     # fall back to settings.py, since a sweep created before they existed
     # recorded neither.
     conf = store.get_settings(conn, run_id)
-    minimum = (config.TESTING_MIN_QUALITY if args.min_quality is None
-               else args.min_quality)
+    minimum = _minimum(args, conf)
 
-    dataset = add_dataset.resolve_dataset(args.dataset)
     print("sweep %d in %s" % (run_id, conn.path))
+    if args.from_db:
+        # The sweep's questions, out of the sweep. repoint() writes every split
+        # it holds beside the database and points the settings at them, which is
+        # also what the evaluators need: three of the six read the eval set's
+        # own answers, and testing_conf() below swaps in whichever dataset this
+        # pass is actually asking.
+        conf = db_datasets.repoint(conn, run_id, conf)
+        dataset = conf.get("TESTING_SET")
+        if not dataset:
+            raise SystemExit(
+                "run %d holds no testing split, so --from-db has nothing to test "
+                "on. Store one first: python add_dataset.py <file> --db %s --run "
+                "%d --split testing" % (run_id, conn.path, run_id))
+        print()
+    else:
+        dataset = add_dataset.resolve_dataset(args.dataset)
     # Asked before the dataset is recorded, because --score-only with --replace
     # would otherwise overwrite a stored split on the way to finding out it has
     # nothing to grade -- a write for a pass that never happened.
@@ -583,10 +627,21 @@ def main(argv=None):
         raise SystemExit(
             "run %d has no testing results on %s to score. Run the pass first, "
             "without --score-only." % (run_id, dataset))
-    records = record_dataset(conn, run_id, dataset, replace=args.replace)
+    if args.from_db:
+        # Nothing to record: these rows *are* the stored split, and re-storing a
+        # sweep's dataset from a copy of itself would only overwrite the source
+        # column with the name of the cache.
+        records = store.dataset(conn, run_id, "testing")
+    else:
+        records = record_dataset(conn, run_id, dataset, replace=args.replace)
     prompts = len(records) if not args.count else min(args.count, len(records))
 
-    run_dir = args.into or conf.get("TESTING_RUN_DIR") or config.TESTING_RUN_DIR
+    # A --from-db pass keeps to the sweep's own folder beside the database, the
+    # way the search it is testing did; TESTING_RUN_DIR is where an ordinary
+    # pass goes. --into still wins over both.
+    run_dir = (args.into
+               or (db_datasets.testing_folder(conn, run_id) if args.from_db else None)
+               or conf.get("TESTING_RUN_DIR") or config.TESTING_RUN_DIR)
     if not os.path.isabs(run_dir):
         run_dir = os.path.join(_HERE, run_dir)
     run_dir = os.path.abspath(run_dir)

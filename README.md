@@ -221,6 +221,7 @@ processed. They are a cache of what the database already holds.
 | `--db` | `run_db/gep.sqlite3` | which database |
 | `--run` | new, or the latest | the sweep to work on (`0` = the latest) |
 | `--label` | none | a note stored with the sweep, to find it again later |
+| `--from-db` | off | read the eval prompts from the sweep's own stored dataset rows rather than the files its settings name (needs `--run`) |
 | `--run-dir` | `run_db` | where the generated scripts go |
 | `--limit` | 0 (all) | process only the first N individuals |
 | `--include-blocked` | off | also run the ones marked `BAD` |
@@ -1393,8 +1394,16 @@ and the driver says so again when it gets there:
 **Everything comes out of the database.** There is no `population` step here and
 no new sweep: this continues one that already exists, reads the settings *that
 sweep* was created with, and writes back into it. Nothing is taken from
-`settings.py` as it stands today except `GENERATIONS`, which is a property of
-the invocation rather than of the sweep.
+`settings.py` as it stands today — `GENERATIONS` included: `generation_count()`
+reads `--generations` first, then the sweep's own stored `GENERATIONS`, and only
+then `settings.py`'s, which is the fallback for a sweep stored before the setting
+existed. A sweep continued a week later therefore runs the search it was set up
+to run, not the one whoever last edited `settings.py` had in mind; `--set
+GENERATIONS=N` changes it in writing, like any other knob.
+
+`--from-db` goes one step further and takes the *questions* out of the database
+too, rather than out of the files the sweep's settings name —
+[see §11](#--from-db-and-how-the-rows-become-questions).
 
 Which also means **editing `settings.py` does nothing to a sweep already under
 way** — a sweep created before you changed a knob stored the old value and goes
@@ -1420,7 +1429,8 @@ python continue_run.py --db run_real/gep.sqlite3 --run 3 --generations 5
 |---|---|---|
 | `--db` | `run_db/gep.sqlite3` | the database holding the sweep |
 | `--run` | `0` (the latest) | which sweep to continue |
-| `--generations` | `GENERATIONS` (10) | how many turns to run |
+| `--generations` | the sweep's `GENERATIONS`, then `settings.py`'s | how many turns to run |
+| `--from-db` | off | read the eval prompts from the sweep's stored dataset rows |
 | `--set NAME=VALUE` | none | change one of the sweep's stored settings, e.g. `--set SELECTION_COUNT=3` |
 
 `--limit`, `--include-blocked`, `--include-unchanged`, `--keep-scripts`,
@@ -1544,6 +1554,143 @@ python full_run.py --test-min-quality 0.7     # test fewer of them
 The pass runs only if the search itself finished — a half-finished sweep's best
 individual is not what the search found. If the search finishes and the pass
 does not, that is said in as many words and the exit code is the pass's.
+
+#### Running a database that is already a sweep
+
+```bash
+python full_run.py --db dbtemplates/test_new_run.sqlite3
+```
+
+A database can be **prepared** rather than produced: a run row, its settings, its
+dataset, and no individuals. Everything a search needs, and none of the search.
+`dbtemplates/test_new_run.sqlite3` is one of those — 49 settings and a 60-record
+`training` split, waiting for a population.
+
+Handed one of those, `full_run.py` **runs it** rather than starting a second sweep
+beside it. `--db <a prepared database>` means "run this"; the alternative would be
+a stranger's sweep turning up in somebody's experiment file. `--run 0` (or
+`--run N`) says the same thing out loud and takes any sweep by id.
+
+The rule is **the latest sweep having no individuals**. Anything else is a
+database to start a new sweep in, exactly as before — one that does not exist
+yet, one holding no sweeps, one whose latest sweep has a population — so
+`full_run.py --db run_real/gep.sqlite3` goes on meaning what it meant. `--label`
+suppresses it too, since only a sweep being created can be given one.
+
+From there the database is the only thing the run reads itself out of:
+
+* **the settings are the sweep's stored ones**, which is what resuming already
+  meant — so the evaluator, the base model, the adapters, the seeds, the batch
+  size and `GENERATIONS` are the ones written down beside the questions;
+* **the questions are the sweep's stored dataset rows**, not the files those
+  settings name.
+
+`settings.py` and the files under `datasets/` are never opened, and the results
+go back into the same file, because `--db` is where the sweep lives. So a
+prepared database is a whole experiment in one file: hand it to another machine
+and the search it runs there is the one it describes, rather than the one that
+machine's `settings.py` happens to say.
+
+```
+======================================================================
+full run: main.py, then continue_run.py for 5 more generation(s)
+======================================================================
+
+run 1 in dbtemplates/test_new_run.sqlite3 is prepared -- settings and a dataset, no individuals -- so this runs it
+    rather than starting a second sweep beside it. Its settings and its questions, not settings.py's.
+    49 stored setting(s); evaluator similarity, base model unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit
+    training    60 record(s), 60 with a reference answer
+
+resuming run 1 in dbtemplates/test_new_run.sqlite3
+
+datasets from the database (run 1 in test_new_run.sqlite3):
+  training    60 record(s) -> dbtemplates\test_new_run_run1\training.jsonl
+```
+
+##### It is isolated on disk too
+
+Everything a run of this kind writes goes into **one folder beside the database**,
+named for it and the sweep:
+
+```
+dbtemplates/
+    test_new_run.sqlite3
+    test_new_run_run1/
+        training.jsonl        the questions, out of the rows
+        run_001.py ...        the generated scripts, until they have run
+        testing_scripts/      the testing pass's re-pointed copies
+```
+
+`run_db/`, `run_testing/` and the rest of the repo are untouched; two prepared
+databases cannot tread on each other; and the caches the child processes drop in
+their working directory land there as well, since each script is launched with
+the run folder as its cwd. The folder is chosen in `main.context_for()` — the one
+place both drivers build a `Context` — so whichever of them is turning the crank
+keeps to it. `--run-dir` (and `--into` for the testing pass) still overrides.
+
+All of it is derived: delete the folder and the sweep is still whole, because the
+scripts, the transcripts and the questions are all in the database.
+
+Two things are refused rather than guessed past. **A sweep that already holds
+individuals**: `population` appends, so joining a started search would draw a
+second population beside the first — the message points at `continue_run.py
+--from-db`, which is what carries one of those on. Only `--run` can reach that
+refusal, since a sweep with a population is never adopted on its own. And
+**`--run` together with `--label`**, which names a sweep as it is created; that
+one already exists, so label it when you prepare the database. A `--db` that
+`--run` names and that is not already a database is refused too, since
+`store.connect()` creates what it cannot open and a typo would otherwise become
+an empty sweep.
+
+The testing pass is then gated on the sweep **holding a `testing` split** rather
+than on `TESTING_SET` naming a file — the same question, asked of the rows.
+
+#### `--from-db`, and how the rows become questions
+
+`--from-db` is the flag underneath all of this, and the three drivers take it on
+their own:
+
+```bash
+python main.py --db <prepared> --run 1 --from-db
+python continue_run.py --db <prepared> --run 1 --from-db
+python test_run_with_dataset.py --db <prepared> --run 1 --from-db
+```
+
+It needs a sweep (`--run`), because a *new* sweep is the moment those rows are
+read out of the files and stored — there is nothing to read back yet.
+`test_run_with_dataset.py` takes no dataset argument alongside it, and records
+nothing: the rows it reads already are the stored split.
+
+[`db_datasets.py`](db_datasets.py) is the mechanism, and the counterpart of
+[`add_dataset.py`](add_dataset.py): that one is the only way
+*into* the `datasets` table, this is the way back *out*.
+`repoint(conn, run_id, conf)` writes each split the sweep holds into the run
+folder above — `training.jsonl`, with `.jsonl` or `.txt` chosen from the records
+themselves — and hands back the settings with the three `*_SET` values pointing at
+what it wrote.
+
+Every existing reader then works unchanged: `generate_runs.eval_records()`, the
+evaluators that grade against a reference, the control
+`llm_judge_baseline` loads, and above all the generated scripts, which are handed
+a path as a literal and open it at startup. Nothing had to learn about sqlite to
+be fed from it.
+
+Three things about that are deliberate:
+
+* It writes **from the `content` column** — the line as it was read — so what
+  comes out is what went in, parsed by the same readers into the same questions
+  and the same references. Rewritten from the rows every time: a cache of them,
+  never read back into them.
+* It repoints the settings **in memory only**. The `settings` table goes on
+  saying where the questions originally came from, which is the provenance those
+  rows exist to keep; a sweep that rewrote its own `TRAINING_SET` to name a cache
+  would lose the one record of what it was built on.
+* A split the sweep does **not** hold has its setting **cleared** rather than left
+  alone. The point of the mode is that local files are not consulted, so a
+  `TESTING_SET` naming a file no testing rows ever came from names nothing, and
+  saying so beats quietly reading it. A sweep with no `training` rows at all is
+  refused outright, before a population is drawn — that is a sweep from before
+  the `datasets` table existed, and `add_dataset.py` is how it gets some.
 
 ### 12. `test.py` → `run/test_*`
 
@@ -1770,11 +1917,22 @@ Four things happen, in order:
    pass asked is stored beside what the search asked. Running the same file
    again is not a conflict; a *different* file over a split already stored
    needs `--replace`.
+
+   Unless it came *from* there. `--from-db` takes the dataset argument's place
+   and tests on the sweep's own stored `testing` split, written out beside the
+   database by `db_datasets.repoint()`
+   ([§11](#--from-db-and-how-the-rows-become-questions)), into `testing_scripts/`
+   under the sweep's own folder. Nothing is recorded in
+   that case: those rows already are the split, and re-storing them from a copy
+   of themselves would only overwrite the `source` column with the name of the
+   cache. Passing both a file and `--from-db` is refused rather than resolved.
 2. **The individuals are chosen** by mean quality on the training split, above
    `TESTING_MIN_QUALITY` (0.5; `--min-quality` for one pass, `--limit` for the
-   best few). That number comes from the `individual_quality` view rather than
-   `individuals.fitness`, so a sweep whose fitness step never ran still has an
-   answer.
+   best few). The bar is the sweep's own stored `TESTING_MIN_QUALITY` before
+   `settings.py`'s, the way every other knob is read — those individuals were
+   selected under it. The quality itself comes from the `individual_quality`
+   view rather than `individuals.fitness`, so a sweep whose fitness step never
+   ran still has an answer.
 3. **Each one's own script is re-pointed**, into `run_testing/`. Not
    re-rendered — the stored `script_source` is taken as it is and exactly two
    assignments are rewritten, `TRAINING_SET` and `TRAINING_COUNT`. Same
@@ -2180,6 +2338,7 @@ warning — the effective cap is unchanged.
 | `store.py` | the database: schema, helpers, `--list/--show/--export` |
 | `generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database |
 | `add_dataset.py` | the only way into the `datasets` table: every split as a sweep is created, or one afterwards from the command line |
+| `db_datasets.py` | the way back out: a sweep's stored splits written beside its database, for `--from-db` |
 | `run_db/gep.sqlite3` | every sweep ever run, with its settings, seeds, transcripts and scores |
 | `run_db/run_001.py` … | the generated combination scripts, until `process` has run them |
 | `generate_population.py` | the alphabet, `encode`/`decode`, and the random draw |
@@ -2243,6 +2402,10 @@ test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builder
 
 continue_run.py  -->  that whole column again, once per generation
 full_run.py      -->  main.py, continue_run.py, then the testing pass
+full_run.py --db <a prepared database>
+                 -->  the same, into the sweep that database already holds:
+                      its settings and its stored dataset, nothing local, and
+                      everything on disk in one folder beside the database
 ```
 
 Running the whole thing:

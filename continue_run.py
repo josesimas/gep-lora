@@ -77,6 +77,7 @@ import json
 import sys
 import time
 
+import db_datasets
 import main
 import settings as config
 import store
@@ -272,8 +273,12 @@ def parse(argv):
     parser.add_argument("--run", type=int, default=0, metavar="ID",
                         help="which sweep to continue (default 0 = the latest)")
     parser.add_argument("--generations", type=int, default=None, metavar="N",
-                        help="how many generations to run (default GENERATIONS in "
-                             "settings.py, currently %d)" % config.GENERATIONS)
+                        help="how many generations to run (default: the sweep's "
+                             "own stored GENERATIONS, falling back to "
+                             "settings.py's, currently %d)" % config.GENERATIONS)
+    parser.add_argument("--from-db", action="store_true",
+                        help="read the eval prompts from the sweep's own stored "
+                             "dataset rows instead of the files its settings name")
     parser.add_argument("--run-dir", default=None,
                         help="folder for the generated scripts (default: the "
                              "sweep's own DB_RUN_DIR)")
@@ -301,12 +306,30 @@ def parse(argv):
     return parser.parse_args(argv)
 
 
-def cli(argv=None):
-    options = parse(argv)
-    generations = (config.GENERATIONS if options.generations is None
-                   else options.generations)
+def generation_count(options, conf):
+    """How many generations to run: --generations, the sweep's, settings.py's.
+
+    The sweep's own GENERATIONS before settings.py's, for the reason every step
+    reads stored settings: a sweep continued a week later should run the search
+    it was set up to run, not the one whoever last edited settings.py had in
+    mind. --generations still wins, and so does --set GENERATIONS=N, which goes
+    through override() and is therefore written into the sweep.
+
+    settings.py is the last fallback, for a sweep stored before the setting
+    existed and so recording none of its own.
+    """
+    if options.generations is not None:
+        generations = options.generations
+    else:
+        stored = conf.get("GENERATIONS")
+        generations = config.GENERATIONS if stored is None else int(stored)
     if generations < 1:
         raise SystemExit("--generations is %d; there is nothing to run" % generations)
+    return generations
+
+
+def cli(argv=None):
+    options = parse(argv)
 
     conn = store.connect(options.db)
     try:
@@ -323,6 +346,14 @@ def cli(argv=None):
         conf = store.get_settings(conn, run_id)
         # ...unless you say otherwise, in writing, into the sweep itself.
         override(conn, run_id, conf, options.settings)
+        # And the questions from the sweep too, rather than from the files its
+        # settings name, which may have moved or never have been on this
+        # machine. In memory only: the settings table keeps saying where they
+        # originally came from.
+        if options.from_db:
+            conf = db_datasets.repoint(conn, run_id, conf)
+            print()
+        generations = generation_count(options, conf)
         # What it will cost is printed, not asked about: the projection is there
         # to be read, and stopping to wait for an answer would make the driver
         # useless to anything that is not a person at a terminal.

@@ -79,6 +79,7 @@ from collections import namedtuple
 
 import add_dataset
 import calculate_fitness
+import db_datasets
 import draw_trees
 import elitism
 import evaluators
@@ -907,22 +908,34 @@ def without_next_generation(steps):
 # --- driver ----------------------------------------------------------------
 
 
-def resolve_run_dir(conf, override=None):
+def resolve_run_dir(conf, override=None, default=None):
     """Absolute path of the folder the generated scripts live in.
 
     Absolute from here on: each script is launched with cwd set to this folder,
     so a relative path would be resolved against itself a second time.
+
+    `default` displaces DB_RUN_DIR when the run has a folder of its own -- a
+    --from-db run works entirely beside its database, see db_datasets. --run-dir
+    still wins over both: it is the one thing that was asked for out loud.
     """
-    run_dir = override or conf.get("DB_RUN_DIR") or config.DB_RUN_DIR
+    run_dir = override or default or conf.get("DB_RUN_DIR") or config.DB_RUN_DIR
     if not os.path.isabs(run_dir):
         run_dir = os.path.join(_HERE, run_dir)
     return os.path.abspath(run_dir)
 
 
 def context_for(conn, run_id, conf, args):
-    """The Context a step gets. One place, so every driver builds the same one."""
+    """The Context a step gets. One place, so every driver builds the same one.
+
+    Which is also why the --from-db run folder is chosen here rather than in
+    each driver: main.py and continue_run.py both come through this, so a run
+    driven from a database keeps to its own folder whichever of them is turning
+    the crank.
+    """
+    isolated = (db_datasets.run_folder(conn, run_id)
+                if getattr(args, "from_db", False) else None)
     return Context(conn, run_id, conf,
-                   resolve_run_dir(conf, getattr(args, "run_dir", None)),
+                   resolve_run_dir(conf, getattr(args, "run_dir", None), isolated),
                    _template_path(conf.get("TEMPLATE")), args)
 
 
@@ -984,6 +997,12 @@ def main(argv=None):
                         help="resume this sweep instead of starting one (0 = the latest)")
     parser.add_argument("--label", default=None,
                         help="a note stored with the sweep, to find it again later")
+    parser.add_argument("--from-db", action="store_true",
+                        help="read the eval prompts from the sweep's own stored "
+                             "dataset rows instead of the files its settings name "
+                             "(needs --run; the rows are written out beside the "
+                             "database and the *_SET settings point at them for "
+                             "this run only)")
     parser.add_argument("--run-dir", default=None,
                         help="folder for the generated scripts (default %s)"
                              % config.DB_RUN_DIR)
@@ -1043,6 +1062,15 @@ def main(argv=None):
         if not args.next_generation:
             selected = without_next_generation(selected)
 
+    # Before connect(), which creates the database it cannot open: a usage
+    # error should not leave an empty one behind. A *new* sweep is the moment a
+    # dataset is read out of the files its settings name and stored, so there
+    # are no rows for --from-db to read back yet -- it needs one that exists.
+    if args.from_db and args.run is None:
+        raise SystemExit("--from-db reads a sweep's stored dataset, so it needs a "
+                         "sweep: pass --run (0 = the latest). A new sweep is where "
+                         "those rows come from.")
+
     conn = store.connect(args.db)
 
     # A sweep that draws a population is a new sweep; one that does not is
@@ -1061,6 +1089,12 @@ def main(argv=None):
                              % (run_id, conn.path))
         conf = store.get_settings(conn, run_id)
         print("resuming run %d in %s\n" % (run_id, conn.path))
+        # The sweep's settings already come from the sweep; --from-db is the
+        # other half of that -- its questions too, rather than whatever the
+        # files those settings name hold now.
+        if args.from_db:
+            conf = db_datasets.repoint(conn, run_id, conf)
+            print()
 
     if not args.steps and not args.next_generation:
         print("this run is one generation, so it is the last one and stops after "

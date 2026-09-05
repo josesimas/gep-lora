@@ -328,6 +328,36 @@ python full_run.py --label "poem blends 1"
 
 Editing `settings.py` does not affect a sweep already created. Use `--set`.
 
+### 3g. Full run from a prepared database
+
+```bash
+python full_run.py --db dbtemplates/test_new_run.sqlite3
+```
+
+A *prepared* database is one holding a sweep with settings, a dataset and no
+individuals. Point `full_run.py` at one and it runs that sweep rather than
+starting a second one beside it — its stored settings *and* its stored dataset
+rows, so `settings.py` and `datasets/` are not read, and the results go back into
+the same file.
+
+Everything it writes on disk goes in one folder beside the database:
+
+```
+dbtemplates/test_new_run.sqlite3
+dbtemplates/test_new_run_run1/training.jsonl      the questions, out of the rows
+dbtemplates/test_new_run_run1/run_001.py ...      until they have run
+dbtemplates/test_new_run_run1/testing_scripts/    the testing pass
+```
+
+`run_db/` and `run_testing/` are untouched. `--run 0` (or `--run N`) says the same
+thing explicitly; `--label` turns it off, since only a new sweep can be labelled.
+Prepare a database by creating a sweep and adding its splits with
+`add_dataset.py`, or copy `dbtemplates/test_new_run.sqlite3` and edit its
+`settings` table.
+
+The flag underneath it is `--from-db`, which `main.py`, `continue_run.py` and
+`test_run_with_dataset.py` each take with `--run`.
+
 Resume:
 
 ```bash
