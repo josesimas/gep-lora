@@ -23,14 +23,107 @@ What it must have:
 An NVIDIA GPU is assumed. The base model is `unsloth/Qwen2.5-1.5B-Instruct`,
 downloaded on first use.
 
-Create it once, from wherever you want it:
+Create it once, from wherever you want it. The two walkthroughs below build the
+same environment; the only part that really varies by machine is the torch build,
+so if your GPU wants a different CUDA version take that line from unsloth's own
+instructions instead.
+
+### Windows
 
 ```bash
-python -m venv .venv
+py -3.11 -m venv .venv
 ```
 
-Then install into it — follow unsloth's own instructions for the torch build
-matching your CUDA version, since that is the part that varies by machine.
+```bash
+.venv\Scripts\activate.bat
+```
+
+```bash
+python -m pip install --upgrade pip setuptools wheel
+```
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+```bash
+pip install unsloth
+```
+
+On the reference machine `create_env.bat` and `setup_torch.bat` (one level above
+the repo) do exactly this, with a local wheelhouse so a second machine can
+install offline.
+
+### Linux (Ubuntu)
+
+Ubuntu does not ship Python 3.11 — 22.04 has 3.10 and 24.04 has 3.12, and unsloth
+supports neither — so take it from deadsnakes:
+
+```bash
+sudo add-apt-repository ppa:deadsnakes/ppa && sudo apt update
+```
+
+```bash
+sudo apt install -y python3.11 python3.11-venv python3.11-dev build-essential git
+```
+
+What you need next is the **NVIDIA driver**, not the CUDA toolkit: the torch
+wheels carry their own CUDA runtime, and `cu128` wants a driver of 525 or later.
+Check what is there:
+
+```bash
+nvidia-smi
+```
+
+If that prints nothing, install a driver before going further — torch installs
+happily without one and simply reports `torch.cuda.is_available()` as `False`:
+
+```bash
+sudo ubuntu-drivers install
+```
+
+Reboot, then build the venv wherever you want it:
+
+```bash
+python3.11 -m venv .venv
+```
+
+```bash
+source .venv/bin/activate
+```
+
+```bash
+python -m pip install --upgrade pip setuptools wheel
+```
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+```bash
+pip install unsloth
+```
+
+That last install is the whole rest of the stack — `unsloth_zoo`, `peft`,
+`transformers`, `trl`, `datasets`, `accelerate`, `bitsandbytes`, `xformers` — so
+there is nothing else to name. Two Linux-only notes. **Do not** install
+`triton-windows`; it is in the Windows environment only because Windows has no
+triton wheel, and on Linux triton comes with torch. And run `pip` from anywhere
+except the repo folder — the repo's own `datasets/` directory shadows the
+`datasets` library, which is the `cannot import name 'load_dataset'` in
+[Problems](#problems).
+
+The repo itself needs no porting: `LORA_SLOTS`, `TRAINING_SET` and `DB_PATH` in
+`settings.py` are relative and already written with forward slashes, and every
+path the pipeline generates goes through `pathlib`. Two things do not carry over
+from a Windows machine, though. Adapter folder names are **case-sensitive** here,
+so `loras/Lora001` has to be exactly that if you copy trained adapters across
+rather than training them again. And `JUDGE_BASE_URL`'s default
+(`http://172.22.208.1:1234/v1`) is a WSL address for an LMStudio running on the
+Windows host — on native Linux, with the judge on the same box, that is
+`http://localhost:1234/v1`.
+
+### Either way
 
 **Which commands need it.** Everything under [1. Train](#1-train-the-adapters),
 `test_lora.py`, and the `process` and `evaluate` steps — so in practice all of
@@ -38,22 +131,18 @@ matching your CUDA version, since that is the part that varies by machine.
 `main.py population trees runs`, anything with the mocked template) runs on any
 Python 3.
 
-Activate the venv before those commands. On Windows:
+Activate the venv before those commands — `.venv\Scripts\activate.bat` on
+Windows, `source .venv/bin/activate` on Linux — and check it took:
 
 ```bash
-.venv\Scripts\activate.bat
+python -c "import torch, unsloth, peft; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-Check it took:
-
-```bash
-python -c "import torch, unsloth, peft; print(torch.cuda.is_available())"
-```
-
-`True` means you are ready. `ModuleNotFoundError` means the activation did not
-stick — a `(.venv)` prompt does not prove it. `where python` shows what is
-actually resolving; the venv's full path to `python.exe` always works regardless
-of PATH.
+A version and `True` means you are ready. `ModuleNotFoundError` means the
+activation did not stick — a `(.venv)` prompt does not prove it. `where python`
+(Windows) or `which python` (Linux) shows what is actually resolving; the venv's
+full path to the interpreter — `.venv\Scripts\python.exe` or `.venv/bin/python` —
+always works regardless of PATH.
 
 This matters more than it looks: `main.py process` launches every generated
 script with `sys.executable`, so the wrong interpreter fails the whole population
@@ -196,11 +285,15 @@ In `settings.py`:
 | --- | --- | --- |
 | `COUNT` | 4 | starting population; one model load each |
 | `TRAINING_COUNT` | 20 | eval prompts per individual per generation |
-| `SELECTION_COUNT` | 2 | individuals added per generation |
+| `SELECTION_COUNT` | 2 | copies added per generation; the same number plus one is culled, so the population holds its size |
 | `GENERATIONS` | 5 | generations after the first |
 | `PROCESS_RUN_BATCH_SIZE` | 4 | scripts running at once; each holds a copy of the base model |
 
-`SELECTION_COUNT = None` doubles the population every generation.
+A round appends `SELECTION_COUNT` copies plus one brand-new individual and
+culls that many of the weakest, so the population stays at `COUNT` and what
+turns over is its membership. `SELECTION_COUNT = None` is the exception: it
+asks for as many copies as the population holds, one more than the cull can
+take, so it grows the population by two a generation.
 
 ### 3e. Smoke test
 
@@ -275,11 +368,13 @@ python run_db\run_003.py "Help me plan my week."
 
 | Symptom | Cause |
 | --- | --- |
-| `No module named 'unsloth'` | venv not active; check `where python` |
+| `No module named 'unsloth'` | venv not active; check `where python` / `which python` |
 | `cannot import name 'load_dataset'` | same — the repo's `datasets/` folder shadowed the library |
 | every individual failed | same — `process` runs the scripts under `sys.executable` |
 | all fitness 0.0 | judge unreachable; fix it and re-run `evaluate fitness` |
 | most individuals `BAD` | rank spread makes `LIN` illegal; use repeated ranks or `--vary learning-rate` |
 | JSON array rejected | eval set must be one record per line |
 | out of memory | lower `PROCESS_RUN_BATCH_SIZE` |
-| population exploding | set `SELECTION_COUNT` to a number |
+| `python3.11: command not found` | Ubuntu ships 3.10 or 3.12; install 3.11 from deadsnakes |
+| `torch.cuda.is_available()` is `False` | no NVIDIA driver; `nvidia-smi`, then `sudo ubuntu-drivers install` and reboot |
+| population growing when it should not | `SELECTION_COUNT = None`, or a population too small to spare `SELECTION_COUNT + 1` non-elite individuals; set it to a number well below `COUNT` |

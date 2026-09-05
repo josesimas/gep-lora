@@ -61,9 +61,12 @@ mutation` per generation (`GENERATIONS` in `settings.py`, default 10). It never 
 population and never creates a sweep -- it resumes one from the database (`--db`, `--run`)
 under the settings that sweep was created with, reusing `main.STEPS` and `main.run()` rather
 than a second copy of the driver. The `_run` suffix is forced: `continue` is a keyword, so a
-`continue.py` could never be imported. **Mind the growth** -- selection appends, so with
-`SELECTION_COUNT = None` the population doubles every generation; the driver prints the
-projection before starting, and carries straight on -- it never prompts. Because a sweep reads its own stored settings, editing
+`continue.py` could never be imported. **The population is static** -- selection appends `n`
+copies plus one newcomer and culls that many again, so a generation ends the size it began
+and `SELECTION_COUNT` sets the turnover rather than the size. The exception is `None`,
+which asks for as many copies as the population holds, one more than the cull can take, and
+so still grows it by two a generation; the driver prints the projection before starting,
+and carries straight on -- it never prompts. Because a sweep reads its own stored settings, editing
 `settings.py` does nothing to one already under way -- `--set NAME=VALUE` (JSON values,
 repeatable, name must already exist) writes the change into the sweep's settings table
 instead, which is how SELECTION_COUNT gets fixed mid-run without the sweep losing track of
@@ -147,7 +150,8 @@ fitness as they were in that generation. *Replay the search* wipes the fitness
 plot in from the left behind a playhead, captioning each generation as it
 passes; *Play the evolution* walks the population forward a generation at a time
 (bars growing and shrinking, chromosomes changing under mutation, new bars
-arriving as selection appends), with a slider to scrub. **Neither is a second
+arriving as selection appends its copies and its newcomer, bars vanishing where
+the cull took them), with a slider to scrub. **Neither is a second
 chart drawn in JavaScript**: Python renders both whole and the script only
 widens a clip rectangle over one and moves widths and labels on the other, so
 the no-script and print states are the finished pictures. Keep it that way -- a
@@ -372,13 +376,17 @@ population's scores to `fitness_history` -- one row per individual per generatio
 with `recorded_at` -- because `individuals.fitness` only ever holds *now*: the next
 generation overwrites it and mutation clears it outright, so without the history a sweep
 cannot say whether the search went anywhere. Each history row keeps the chromosome and
-state **as they were then**, so reading the past never goes through the present population.
-Nothing in the schema counts generations (neither driver stores one), so
-`store.fitness_generation()` derives it from population size -- which selection grows by
-appending and never shrinks, the same thing `selection` and `mutation` seed their
-generators from: grown since the last snapshot means a new generation, unchanged means the
-same one restated, which is what keeps a re-run of the cheap `fitness` step from inventing
-a generation. `assign()` returns a `Snapshot(generation, recorded_at, rows)`.
+state **as they were then**, so reading the past never goes through the present population
+-- which is also what lets a culled individual stay in the history of the generations it
+lived through. Nothing in the schema counts generations (neither driver stores one), so
+`store.fitness_generation()` derives it from `store.high_number()` -- the highest
+individual number the population holds, which selection always leaves higher than it found
+it, and the same watermark `selection` and `mutation` seed their generators from: risen
+since the last snapshot means a new generation, unchanged means the same one restated,
+which is what keeps a re-run of the cheap `fitness` step from inventing a generation. It
+was the population *size* until the cull arrived; a static population would have filed
+every generation as a restatement of the first, and seeding on it would have spun the
+identical wheel and mutated the identical positions every round. `assign()` returns a `Snapshot(generation, recorded_at, rows)`.
 `store.fitness_by_generation()` / `best_of_generation()` are the read side, printed by the
 step, by `store.py --show`, and exported as `fitness_history.txt`.
 
@@ -391,21 +399,52 @@ or nothing scored, and neither has an elite worth keeping. It reads the stored `
 column and never the transcripts -- one definition of "best", living in
 [calculate_fitness.py](calculate_fitness.py).
 
-`selection.py` is roulette wheel sampling: `select(conn, run_id, count, rng)` gives each
-individual a slice of the wheel as wide as its `fitness`, spins it `count` times **with
-replacement**, and **appends** the picks -- it deletes nothing and overwrites nothing, so an
-existing individual keeps its number, script, executions and transcripts either way. A pick
-is a new row that copies its parent **field for field** (`store.append_copies`, whose column
-list comes from the table so a new field is copied too): only `id`, `number` and `is_best`
-are its own -- `is_best` picks one individual out of the population rather than describing
-one, so no copy inherits it and every copy starts at 0. It does inherit the parent's
-`script_name`, `weight_seed` and `fitness` -- transient, and cleared up by the next run of
-`runs` (names and seeds, re-derived from the number) and `fitness`. That inheritance is meant
-to be spent by whatever varies the copy, not kept. The step is therefore **not idempotent**: running it twice is two
-generations, not one done twice. Fitness 0.0 is a zero-width slice and is never picked; an
-all-zero population has no wheel, selects nobody and writes nothing. Each round derives its
-generator from `SELECTION_MASTER_SEED` and the size of the population it spins over, the way
-weight seeds derive from `WEIGHT_MASTER_SEED` and an individual's number.
+`selection.py` is roulette wheel sampling plus a cull and one stranger:
+`select(conn, run_id, count, rng, conf)` gives each individual a slice of the wheel as wide
+as its `fitness`, spins it `count` times **with replacement**, and does three writes --
+**appends** `n` copies of the picks, **deletes** the `n+1` weakest individuals of the
+population as it was before the round, and **appends one brand-new individual** drawn from
+`generate_population.build_population()` under the sweep's own `MAX_DEPTH`/`BRANCH_PROB`/
+`UNIQUE`. `n+1` in and `n+1` out, so **a generation ends exactly the size it began** and
+`SELECTION_COUNT` sets the turnover rather than the size -- the cull is `n+1` and not `n`
+because a round appends the copies *and* the newcomer, and it is that total that has to
+come back out. A pick is a new row that copies its parent **field for field**
+(`store.append_copies`, whose column list comes from the table so a new field is copied
+too): only `id`, `number` and `is_best` are its own -- `is_best` picks one individual out of
+the population rather than describing one, so no copy inherits it and every copy starts at
+0. It does inherit the parent's `script_name`, `weight_seed` and `fitness` -- transient, and
+cleared up by the next run of `runs` (names and seeds, re-derived from the number) and
+`fitness`. That inheritance is meant to be spent by whatever varies the copy, not kept. The
+newcomer inherits nothing at all: a chromosome and no tree, script, seed or fitness, exactly
+as a member of the first population, and `trees`/`runs` are what make it runnable.
+
+**The newcomer is what makes the cull safe.** Selection can only pick chromosomes the
+population already holds and mutation only swaps a symbol for a sibling of its own class, so
+a search that culls and copies is one whose gene pool can only narrow; one fresh draw a
+generation is the floor under that. `UNIQUE` is honoured against the chromosomes the
+population held going into the round, culled ones included, and exhausting the attempts
+yields a duplicate rather than failing a generation.
+
+**The cull reads the stored `fitness` column and nothing else** -- weakest means what best
+means to `elitism.py`, NULL as 0.0, ties broken on the lowest number so a re-run culls the
+same rows. `is_best` is never eligible, and a population too small to spare `n+1` non-elite
+rows gives up as many as it has and grows by the difference -- which is what
+`SELECTION_COUNT = None` does every round. `store.delete_individuals()` takes the individual whole:
+executions, exchanges and test_results cascade with the row. Two things survive -- the
+number, retired rather than reused (`store.next_number()` counts from `MAX(number)`), and
+its `fitness_history` rows, which hang off the *run* and are the only record of what each
+generation was. A culled individual's script file is deleted by `main.py` from the rows the
+cull handed back (`store.discard_scripts()`), since `remove_scripts()` works from the
+population and those rows are gone.
+
+The step is **not idempotent**: running it twice is two generations, not one done twice.
+Fitness 0.0 is a zero-width slice and is never picked; an all-zero population has no wheel,
+selects nobody, **culls nobody**, draws no newcomer and writes nothing -- a round that
+cannot say which individuals are fit cannot be trusted to say which are weak. Each round
+derives its generator from `SELECTION_MASTER_SEED` and the size of the population it spins
+over, the way weight seeds derive from `WEIGHT_MASTER_SEED` and an individual's number; the
+newcomer is drawn from that same generator, after the spins, and the cull consumes no
+randomness at all.
 
 `mutation.py` is point mutation with the grammar built in: `mutate(chromosome, rate, rng)`
 gives each symbol probability `rate` of becoming a *different symbol of its own class*

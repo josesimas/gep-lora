@@ -139,8 +139,12 @@ def generations(conn, run_id, history, champions):
     -- so the animations replay those rows rather than reconstructing a past out
     of the present population, which mutation and selection have both moved on
     from. One frame per generation, each carrying its own membership: the
-    population grows as selection appends, and an individual that did not exist
-    yet is simply absent from the earlier frames.
+    population holds its size while the individuals in it turn over, so a frame
+    is the same width as the last one and made of partly different bars -- one
+    that did not exist yet is simply absent from the earlier frames, and one the
+    cull took is absent from the later ones. The history keeps its rows for the
+    generations an individual lived through, which is why a cull can be read
+    here at all.
     """
     members = {}
     for row in store.fitness_history(conn, run_id):

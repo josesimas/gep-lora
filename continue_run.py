@@ -40,16 +40,20 @@ ran under rather than being read past.
 
 Watch the size
 --------------
-Selection appends: it adds picks without removing anyone. With SELECTION_COUNT
-left at None it adds as many individuals as the population already holds, so the
-population *doubles* every generation -- 10 becomes 20, 40, 80, and after ten
-generations 10240 -- and process loads the base model once per individual, every
-generation, for the whole population and not only the part of it that changed.
-The driver prints that projection before it starts anything, so the cost is on
-screen rather than discovered three hours in. It prints and carries on -- there
-is no prompt to answer, so this stays runnable from a script or a scheduled job.
-Fixing SELECTION_COUNT to a number makes the growth linear instead: on this
-sweep with --set, since editing settings.py only reaches the next one.
+Selection appends `SELECTION_COUNT` copies plus one newcomer and culls that
+many again, so **the population stays the size it was drawn at** -- what turns
+over is its membership. The cost per generation is therefore flat, and it is
+the whole population: process loads the base model once per individual, every
+generation, for all of it and not only the part that changed. The driver prints
+the projection before it starts anything, so that cost is on screen rather than
+discovered three hours in. It prints and carries on -- there is no prompt to
+answer, so this stays runnable from a script or a scheduled job.
+
+SELECTION_COUNT is therefore a knob on the *turnover* rather than on the size:
+at 2 it swaps three individuals a generation. The exception is None, which asks
+for as many copies as the population holds -- one more than the cull can take,
+so that setting alone still grows the population, by two a generation. Change it on this sweep
+with --set, since editing settings.py only reaches the next one.
 
 Why the name
 ------------
@@ -89,13 +93,17 @@ def generation_steps():
 def projection(size, generations, selection_count):
     """What the population grows to, generation by generation.
 
-    Selection appends `selection_count` individuals, or as many as the
-    population holds when that is None -- which is a doubling, and worth seeing
-    written out before it happens rather than after.
+    One round of selection appends `selection_count` copies (as many as the
+    population holds, when that is None) plus one newcomer, and culls that many
+    again -- so the arithmetic here is the one in selection.select(), written
+    out ahead of time: a flat line, at the size the sweep was drawn at. It
+    rises only where the cull runs out of non-elite individuals to take, which
+    is what SELECTION_COUNT = None does every round.
     """
     sizes = [size]
     for _ in range(generations):
-        size += size if selection_count is None else selection_count
+        picks = size if selection_count is None else selection_count
+        size += picks + 1 - min(picks + 1, max(size - 1, 0))
         sizes.append(size)
     return sizes
 
@@ -152,11 +160,17 @@ def announce(conn, run_id, conf, generations):
     print()
     print("population by generation: %s" % " -> ".join(str(size) for size in sizes))
     print("individuals through process in total: %d" % sum(sizes[:-1]))
+    print("selection appends %s cop(y/ies) plus one newcomer and culls that many"
+          % ("as many as the population holds" if selection_count is None
+             else str(selection_count)))
+    print("again, so the population holds its size and its membership turns over.")
     if selection_count is None:
-        print("that is a doubling each time: this sweep stored SELECTION_COUNT as")
-        print("None, so selection appends as many individuals as the population")
-        print("already holds. Editing settings.py will not change that -- a sweep")
-        print("keeps the settings it was created with. To change it for this one:")
+        print()
+        print("except at None, which is what this sweep stored: it asks for as many")
+        print("copies as the population holds, which is one more than the cull can")
+        print("take, so the population still grows by two a generation. Editing")
+        print("settings.py will not change that -- a sweep keeps the settings it")
+        print("was created with. To change it for this one:")
         print()
         print("    python continue_run.py --set SELECTION_COUNT=3")
     if conf.get("TEMPLATE") != "template_code_mocked.py":

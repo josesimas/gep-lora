@@ -492,6 +492,87 @@ def add_individuals(conn, run_id, chromosomes):
     conn.commit()
 
 
+def next_number(conn, run_id):
+    """The number the next individual appended to this population gets.
+
+    One place, because three things append now -- the copies selection makes,
+    the newcomer it draws, and nothing else may ever guess. Numbering continues
+    from the highest ever stored rather than from the size of the population,
+    so a number freed by a deletion is never handed out again and every number
+    an old script, execution, transcript or fitness_history row refers to goes
+    on meaning the individual it meant.
+    """
+    return high_number(conn, run_id) + 1
+
+
+def high_number(conn, run_id):
+    """The highest number in this population. 0 when it holds nobody.
+
+    The sweep's clock. Population *size* used to serve as one -- it grew a
+    generation at a time and never shrank, so it dated a round -- and it stopped
+    being able to the moment selection started culling as many individuals as it
+    appends. This number cannot stop: numbers are handed out from the top and
+    never reused, a round always appends before it culls, and it only ever culls
+    individuals that were in the population before the round, so every round
+    ends on a number strictly higher than the one it began on. A step that only
+    reads (a re-run of `fitness`) leaves it exactly where it was, which is the
+    other half of what a clock has to do.
+    """
+    return conn.execute("SELECT MAX(number) AS top FROM individuals WHERE run_id = ?",
+                        (run_id,)).fetchone()["top"] or 0
+
+
+def append_individual(conn, run_id, chromosome):
+    """Append one brand-new individual to a population. -> the number it got.
+
+    A chromosome and nothing else: no tree, no script, no seed, no fitness --
+    the state a member of the very first population is in before `trees` and
+    `runs` have been near it, which is exactly what a newcomer is. The contrast
+    with append_copies() is the point: that one arrives holding its parent's
+    answers, this one arrives holding none.
+    """
+    number = next_number(conn, run_id)
+    conn.execute(
+        "INSERT INTO individuals (run_id, number, chromosome) VALUES (?, ?, ?)",
+        (run_id, number, chromosome))
+    conn.commit()
+    return number
+
+
+def delete_individuals(conn, run_id, numbers):
+    """Remove individuals from a population. -> the rows that went.
+
+    The one place anything leaves a population mid-sweep, and it takes the
+    individual whole: `PRAGMA foreign_keys` is on and the schema cascades, so a
+    deleted individual's executions, its exchanges and its test_results go with
+    it. That is the intended reading of a cull -- what is being discarded is a
+    blend the search has finished with, and its transcripts are the record of
+    that blend and of nothing else.
+
+    Two things deliberately survive. `fitness_history` hangs off the *run* and
+    keeps the chromosome, state and fitness as they were in each generation, so
+    a culled individual stays in the history of the generations it lived
+    through -- which is the only place a sweep says what it used to be, and
+    would say much less if a cull could rewrite it. And the number is retired
+    rather than freed: see next_number().
+
+    The rows are read before they go, so a caller can report what it culled and
+    clean up the script files those individuals owned.
+    """
+    wanted = list(numbers)
+    if not wanted:
+        return []
+    marks = ", ".join("?" * len(wanted))
+    rows = conn.execute(
+        "SELECT * FROM individuals WHERE run_id = ? AND number IN (%s) ORDER BY number"
+        % marks, [run_id] + wanted).fetchall()
+    conn.execute(
+        "DELETE FROM individuals WHERE run_id = ? AND number IN (%s)" % marks,
+        [run_id] + wanted)
+    conn.commit()
+    return rows
+
+
 def append_copies(conn, run_id, rows):
     """Add a copy of each of `rows` to a population. -> the numbers they got.
 
@@ -520,9 +601,8 @@ def append_copies(conn, run_id, rows):
         return []
     columns = [column["name"] for column in conn.execute("PRAGMA table_info(individuals)")
                if column["name"] not in ("id", "number")]
-    top = conn.execute("SELECT MAX(number) AS top FROM individuals WHERE run_id = ?",
-                       (run_id,)).fetchone()["top"] or 0
-    numbers = list(range(top + 1, top + 1 + len(rows)))
+    first = next_number(conn, run_id)
+    numbers = list(range(first, first + len(rows)))
     conn.executemany(
         "INSERT INTO individuals (number, %s) VALUES (%s)"
         % (", ".join(columns), ", ".join("?" * (len(columns) + 1))),
@@ -834,18 +914,28 @@ def set_fitness(conn, run_id, number, fitness):
 # --- fitness, generation by generation ------------------------------------
 
 
-def fitness_generation(conn, run_id, population):
-    """Which generation a fitness snapshot over `population` individuals is.
+def fitness_generation(conn, run_id):
+    """Which generation the fitness snapshot being taken now is.
 
-    Nothing in the schema counts generations, because until now nothing needed
-    to: a sweep is a population that keeps being rewritten in place. The count
-    is derived here instead, from the one thing that dates a round -- the size
-    of the population, which selection grows by appending and never shrinks.
-    The same derivation selection and mutation seed their generators from.
+    Nothing in the schema counts generations, because nothing needs to: a sweep
+    is a population that keeps being rewritten in place. The count is derived
+    here instead, from the one thing that dates a round -- the highest
+    individual number the population holds, which selection always leaves
+    higher than it found it. See high_number(); the same watermark selection
+    and mutation seed their generators from.
+
+    It used to be the size of the population, which worked only while selection
+    grew it. Now that a round culls as many individuals as it appends the size
+    can sit at exactly COUNT forever, and dating a round by it would file every
+    generation of a static sweep as a restatement of the first -- one row in
+    the history, overwritten five times, and no curve at all. The watermark
+    says the same thing about a growing population and goes on saying it about
+    a static one.
 
     So: the first snapshot is generation 1, and a later one is a new generation
-    if the population has grown since the last was taken, and the *same*
-    generation restated if it has not. That is what makes re-running
+    if the population has taken on a higher number since the last was taken,
+    and the *same* generation restated if it has not. That is what makes
+    re-running
 
         python main.py fitness
 
@@ -853,19 +943,21 @@ def fitness_generation(conn, run_id, population):
     after a re-scored `evaluate` -- rewrite the current generation rather than
     invent another one.
 
-    The blind spot is a generation that appends nobody: SELECTION_COUNT at 0,
-    or a wheel with nothing to spin. Such a round is indistinguishable from the
-    one before it here and is recorded as a restatement of it. Both cases are
+    The blind spot is a generation that selects nobody: SELECTION_COUNT at 0,
+    or a wheel with nothing to spin -- selection writes nothing at all in
+    either case, culls and newcomer included. Such a round is indistinguishable
+    from the one before it here and is recorded as a restatement of it. Both cases are
     already dead ends for the search -- an all-zero population stops at the
     elitism step -- so the history losing a row there costs nothing a running
     sweep would have wanted.
     """
     row = conn.execute(
-        "SELECT generation, population FROM fitness_history WHERE run_id = ?"
-        " ORDER BY generation DESC LIMIT 1", (run_id,)).fetchone()
+        "SELECT generation, MAX(number) AS high FROM fitness_history"
+        " WHERE run_id = ? GROUP BY generation ORDER BY generation DESC LIMIT 1",
+        (run_id,)).fetchone()
     if row is None:
         return 1
-    return row["generation"] + (0 if row["population"] == population else 1)
+    return row["generation"] + (0 if row["high"] == high_number(conn, run_id) else 1)
 
 
 def record_fitness(conn, run_id, generation, entries):
@@ -1035,10 +1127,23 @@ def remove_scripts(conn, run_id, run_dir, names=None):
     happens to be sitting in run_dir.
     """
     wanted = None if names is None else set(names)
+    return discard_scripts(
+        run_dir,
+        [row["script_name"] for row in individuals(conn, run_id)
+         if row["script_name"] and (wanted is None or row["script_name"] in wanted)])
+
+
+def discard_scripts(run_dir, names):
+    """Delete these script files from run_dir. Returns how many went.
+
+    The half of remove_scripts() that does not need the database, split out for
+    the one caller that cannot use it: selection culls individuals, and by the
+    time the files want deleting the rows that named them are gone. The caller
+    is holding those rows, so it can hand the names straight over.
+    """
     gone = 0
-    for row in individuals(conn, run_id):
-        name = row["script_name"]
-        if not name or (wanted is not None and name not in wanted):
+    for name in names:
+        if not name:
             continue
         try:
             os.remove(os.path.join(run_dir, name))

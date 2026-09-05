@@ -1002,16 +1002,25 @@ before the sweep is done, so a history read through a join back to
 sweep is a population that keeps being rewritten in place, and neither
 `main.py` nor `continue_run.py` stores a generation number. The count is
 derived in `store.fitness_generation()` from the one thing that dates a round
-— the size of the population, which selection grows by appending and never
-shrinks, the same derivation `selection` and `mutation` seed their generators
-from. The first snapshot is generation 1; a later one is a **new** generation
+— the **highest individual number** the population holds, which selection
+always leaves higher than it found it. Numbers are handed out from the top and
+never reused, and a round appends before it culls, so it always ends on a
+higher number than it began on. The same watermark `selection` and `mutation`
+seed their generators from.
+
+It used to be the *size* of the population, which worked only while selection
+grew it. Now that a round culls as many individuals as it appends the size sits
+at `COUNT` forever, and dating a round by it would file every generation as a
+restatement of the first — one history row, overwritten once a generation, and
+no curve at all. The first snapshot is generation 1; a later one is a **new** generation
 if the population has grown since the last, and the **same** generation
 restated if it has not. That is what makes `python main.py fitness` — cheap,
 and a reasonable thing to redo after a re-scored `evaluate` — rewrite the
 current generation instead of inventing another one.
 
-The blind spot is a generation that appends nobody: `SELECTION_COUNT = 0`, or a
-wheel with nothing to spin. Such a round is indistinguishable from the one
+The blind spot is a generation that selects nobody: `SELECTION_COUNT = 0`, or a
+wheel with nothing to spin — selection writes nothing at all in either case,
+culls and newcomer included. Such a round is indistinguishable from the one
 before it and is recorded as a restatement of it. Both are already dead ends
 for the search — an all-zero population stops at the `elitism` step — so
 nothing a running sweep wanted is lost there.
@@ -1032,8 +1041,10 @@ recorded generation 4 in fitness_history at 2026-08-28T11:12:06
 `worst` as well), and `--export` writes it out as `fitness_history.txt`
 alongside the per-individual rows — the one exported file that is not a view of
 the population as it stands now. Note that a rising `mean` with a flat `best`
-is the population *growing*, not improving: selection appends copies of the
-fit, so the average climbs on its own.
+is often the *turnover*, not improvement: selection appends copies of the fit
+and culls the weakest, so the average climbs on its own — the population it is
+averaged over is the same size as last generation's but several weak ones
+lighter.
 
 ```sql
 -- the curve, straight out of the database
@@ -1084,7 +1095,7 @@ transcripts again here would be a second, quietly different definition of
 "best": when the fitness rule changes it changes in `calculate_fitness.py`, and
 this step follows it without knowing that it did.
 
-### 8. `selection.py` → more `individuals`
+### 8. `selection.py` → copies in, the weakest out, one stranger
 
 Fitness-proportionate selection, the classic roulette wheel:
 
@@ -1099,22 +1110,84 @@ individual keeps a real chance, which is what stops the search collapsing onto
 the first good blend it finds.
 
 ```
-spun the wheel 3 time(s) over 3 individual(s)
+spun the wheel 3 time(s) over 5 individual(s)
     parent    fitness picked chromosome
-    3         0.685   2      CAT.L5.L2.w5.w4
-    2         0.604   1      CAT.L5.SVD.w1.L1.L1.w2.w2
-appended 3 individual(s) as #4-#6; the population is now 6, up from 3
+    3         0.745   1      CAT.L4.CAT.w4.L3.L4.w5.w1
+    4         0.536   1      CAT.CAT.CAT.CAT.SVD.CAT.L1.L2.L2.L1.L4.L4.L4.w4.w1.w5.w2.w3.w3.w1
+    2         0.296   1      CAT.L5.SVD.w3.L4.L5.w2.w5
+2 individual(s) the wheel never landed on: 1, 5 -- being missed is not what gets an individual culled; being weakest is
+appended 3 copy/copies as #6-#8
+culled the 2 weakest individual(s), transcripts and all:
+    1         0.000   CAT.L4.LIN.w2.LIN.LIN.L1.CAT.LIN.L5.w4.L4.L5.L2.L5.w1.w5.w1.w1.w1
+    5         0.000   CAT.SVD.L1.LIN.CAT.w4.L4.L2.L5.L2.w4.w5.w2.w2
+    and 2 of their script file(s) from run_db
+drew #9 fresh from the same rules the first population came from: CAT.CAT.CAT.L1.SVD.L5.L3.w2.L3.L4.w1.w5.w4.w2
+the population is now 7, up from 5
 ```
 
 **Picks are drawn with replacement** — the same individual can come up several
 times in one round. That is the mechanism, not a flaw in it: it is how a fit
 chromosome comes to have several descendants.
 
-**Nothing is deleted.** The picks are *appended*. This step does not thin a
-generation down to its survivors and it never overwrites a row: an individual
-already in the sweep keeps its number, its script, its executions and its
-transcripts whether or not the wheel ever landed on it. What it leaves behind is
-a larger population whose newest members are copies of its fittest.
+**A round is three writes**, and the arithmetic is the point:
+
+| | |
+|---|---|
+| appends | `n` copies of whoever the wheel landed on, `n` being `SELECTION_COUNT` |
+| culls | the `n+1` weakest individuals of the population as it was before the round |
+| appends | one brand-new individual, drawn the way the first population was |
+
+`n + 1` in and `n + 1` out, so a generation ends **exactly the size it began**:
+a sweep drawn at `COUNT = 10` is still ten individuals after ten generations.
+The cull is `n+1` and not `n` because a round appends `n+1` rows — the copies
+*and* the newcomer — and it is that total that has to come back out. What moves
+is not the size but the membership: the fit are duplicated, the weak are gone,
+and one member of every generation owes nothing to either.
+
+`SELECTION_COUNT` is therefore a knob on the **turnover**, not on the size — at
+2 over a population of 10, three individuals in and three out each generation.
+The one exception is `None`, which asks for as many copies as the population
+holds: that is one more row than the cull can take, so it is the only setting
+that still grows the population, by two a generation.
+
+**The newcomer is what makes the cull safe.** Selection can only pick
+chromosomes the population already holds, and mutation only nudges a symbol
+into a sibling of its own class, so a search that culls and copies is a search
+whose gene pool can only narrow. One fresh draw per generation is a floor under
+that: however far the population has converged, every generation still contains
+one tree grown from nothing. It comes from
+`generate_population.build_population()` under the sweep’s own `MAX_DEPTH`,
+`BRANCH_PROB` and `UNIQUE` — the same draw, the same grammar, the same
+`check()`, no second copy of any of it. `UNIQUE` is honoured against the
+chromosomes the population held going into the round, culled ones included,
+since re-drawing what the search just discarded is the one draw that achieves
+nothing; a converged sweep that cannot find a new one after a hundred tries
+gets a duplicate rather than a failed generation.
+
+**A cull takes the individual whole** — its executions, its exchanges and its
+`test_results` all cascade away with the row, because they are the record of a
+blend the search has finished with. Two things survive it: the number, which is
+retired rather than reused, so no old script, execution or history row is ever
+re-pointed at somebody else; and its rows in `fitness_history`, which hang off
+the *run* and keep the chromosome, state and fitness as they were in each
+generation. A sweep can still say that #7 scored 0.04 in generation 3 and was
+culled at the end of it.
+
+**Weakest means the lowest `fitness`**, NULL read as 0.0 the way every other
+reader of that column reads it, ties broken on the **lowest number** — so
+between two equally weak individuals the longer-standing one goes, and
+re-running the step culls the same rows rather than a coin-flip’s worth of
+different ones. The elite is never eligible: culling it would discard the one
+thing [elitism](#7-elitismpy--individualsis_best) exists to protect. A
+population too small to spare `n+1` non-elite rows gives up as many as it has,
+grows by the difference, and says so. And a parent the wheel just landed on can itself be culled — weak
+individuals do occasionally get picked — which needs no special case: the copy
+it produced carries its chromosome, its script and its fitness forward, which
+is all the parent had to pass on.
+
+Nothing is *overwritten*, though. An individual that survives the round keeps
+its number, its script, its executions and its transcripts, whether or not the
+wheel ever landed on it.
 
 A copy is **the parent field for field** — its tree, its state, its rank, its
 script, its weight seed and its fitness, not merely its chromosome. Only the
@@ -1153,21 +1226,24 @@ relevant step clears up, and neither of which is a reason to hold the copy back:
   [mutation](#9-mutationpy--individualschromosome-individualshas_changed)
   changes its chromosome, which clears the inherited score.
 
-**Because it appends, the step is not idempotent.** Running it twice runs two
-rounds and the population grows twice. That is what a second generation *is*, so
-it is deliberate — but `python main.py selection` is something you do on
-purpose, not something you repeat to be sure it took.
+**Because it appends more than it removes, the step is not idempotent.**
+Running it twice runs two rounds, and the second culls what the first left.
+That is what a second generation *is*, so it is deliberate — but `python
+main.py selection` is something you do on purpose, not something you repeat to
+be sure it took.
 
 An individual whose fitness is `0.0` has a slice of width zero and can never be
 picked — correct for roulette, and worth saying out loud since `fitness`
 defaults to `0.0`, so an individual that has never been through `process` and
 `evaluate` sits out until it has. A population where *everything* is `0.0` has
-no wheel at all; that case selects nobody, writes nothing and stops.
+no wheel at all; that case selects nobody, **culls nobody**, draws no newcomer,
+writes nothing and stops. A round that cannot say which individuals are the fit
+ones cannot be trusted to say which are the weak ones either.
 
 | Where | Setting | Default | Meaning |
 |---|---|---|---|
 | `settings.py` | `SELECTION_MASTER_SEED` | `None` | where the spins come from; `None` draws one and records it |
-| `settings.py` | `SELECTION_COUNT` | `None` | how many picks per round; `None` means as many as the population holds |
+| `settings.py` | `SELECTION_COUNT` | `None` | how many picks per round — and so how many are culled, one fewer; `None` means as many as the population holds |
 
 Each round derives its own generator from the master seed and the size of the
 population it is spinning over — the same idiom as `WEIGHT_MASTER_SEED` and an
@@ -1323,17 +1399,22 @@ python continue_run.py --db run_real/gep.sqlite3 --run 3 --generations 5
 
 #### Watch the size
 
-**Selection appends.** With `SELECTION_COUNT` at `None` it adds as many
-individuals as the population already holds, so the population *doubles* every
-generation — and `process` loads the base model once per individual, every
-generation — though only for the part of it that actually changed, since
-`process` skips individuals whose chromosome has not moved since their last
-execution. Ten generations from a population of 10:
+**Selection appends `n` copies plus one newcomer and culls that many again**,
+so the population stays the size it was drawn at and the cost per generation is
+flat. `process` still loads the base model once per individual, every
+generation, though only for the part of the population that actually changed,
+since `process` skips individuals whose chromosome has not moved since their
+last execution. Ten generations from a population of 10:
 
 ```
-population by generation: 10 -> 20 -> 40 -> ... -> 10240
-individuals through process in total: 10230
+population by generation: 10 -> 10 -> 10 -> ... -> 10
+individuals through process in total: 100
 ```
+
+`SELECTION_COUNT` is a knob on the **turnover**, not on the size. The exception
+is `None`, which asks for as many copies as the population holds — one more
+than the cull can take, so that setting alone still grows it, by two a
+generation.
 
 The driver prints that projection, and the total, **before it starts anything**,
 so the cost is on screen rather than discovered three hours in. It prints and
@@ -1841,8 +1922,9 @@ rather than leaving you looking at an empty chart.
   size and its fittest chromosome.
 - *Play the evolution*, under the population, walks the population forward one
   generation at a time: bars grow and shrink to each generation's scores, the
-  chromosome beside each bar changes as mutation rewrites it, and new bars
-  arrive as selection appends copies. A slider scrubs to any generation.
+  chromosome beside each bar changes as mutation rewrites it, new bars arrive
+  as selection appends its copies and its newcomer, and bars disappear where
+  the cull took them. A slider scrubs to any generation.
 
 Both replay `fitness_history`, which is the only place a sweep says what it
 *used to be* — every row keeps the chromosome, the state and the fitness **as
@@ -2083,7 +2165,7 @@ warning — the effective cap is unchanged.
 | `evaluators/common.py` | what they share: the registry, the judge transport, the reference answers, the tokeniser |
 | `calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
 | `elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
-| `selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent |
+| `selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent, culls the weakest, draws one newcomer |
 | `mutation.py` | point-mutates every chromosome but the elite's, within its grammar; clears the fitness it invalidates |
 | `test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
 | `run_testing/` | where those scripts run, and are deleted from; `TESTING_RUN_DIR` in `settings.py` |
@@ -2113,7 +2195,8 @@ evaluators.get(EVALUATOR).score      -->  exchanges.quality
 calculate_fitness.assign              -->  individuals.fitness
                                            + fitness_history (per generation)
 elitism.elect                         -->  individuals.is_best
-selection.select                      -->  more individuals (appended)
+selection.select                      -->  individuals (n copies + 1 drawn
+                                           fresh, the n+1 weakest deleted)
 mutation.apply                        -->  individuals.chromosome + has_changed
                                            (and fitness back to NULL)
 

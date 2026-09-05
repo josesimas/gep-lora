@@ -674,6 +674,13 @@ def step_elitism(context):
                  ", ".join(str(number) for number in tied)))
 
 
+def _span(numbers):
+    """"#4-#6", or "#4" when there is only one of them."""
+    if len(numbers) == 1:
+        return "#%d" % numbers[0]
+    return "#%d-#%d" % (numbers[0], numbers[-1])
+
+
 def _master_seed(context, name):
     """The sweep's seed called `name`, drawing and recording one if it has none.
 
@@ -692,7 +699,8 @@ def _master_seed(context, name):
 
 
 def step_selection(context):
-    """Spin the roulette wheel -> more individuals, none of them replaced."""
+    """Spin the roulette wheel -> the n+1 weakest replaced by n copies and one
+    newcomer, leaving the population the size it was."""
     conn, run_id = context.conn, context.run_id
     master = _master_seed(context, "SELECTION_MASTER_SEED")
     before = store.individuals(conn, run_id)
@@ -700,13 +708,15 @@ def step_selection(context):
         raise SystemExit("run %d holds no individuals. Run the population step first."
                          % run_id)
 
-    # Derived from the sweep's seed and the size of the population being spun
-    # over, so a second round draws its own parents rather than the first
-    # round's again, and re-running a sweep from its stored seed reproduces
-    # every round of it.
-    rng = random.Random("%s:%d" % (master, len(before)))
+    # Derived from the sweep's seed and the population's high-water number, so
+    # a second round draws its own parents rather than the first round's again,
+    # and re-running a sweep from its stored seed reproduces every round of it.
+    # The number and not the size: a round now culls as many individuals as it
+    # appends, so the size is the same every generation and seeding on it would
+    # spin the identical wheel every time.
+    rng = random.Random("%s:%d" % (master, store.high_number(conn, run_id)))
     count = context.conf.get("SELECTION_COUNT")
-    picked = selection.select(conn, run_id, count, rng)
+    picked = selection.select(conn, run_id, count, rng, context.conf)
 
     if not picked.parents:
         raise SystemExit("every individual in run %d has fitness 0.0 -- there is no "
@@ -731,20 +741,58 @@ def step_selection(context):
     missed = [row["number"] for row in before if row["number"] not in
               {row["number"] for row in picked.parents}]
     if missed:
-        print("%d individual(s) the wheel never landed on: %s -- they stay in the "
-              "population regardless" % (len(missed),
-                                         ", ".join(str(number) for number in missed)))
-    print("appended %d individual(s) as %s; the population is now %d, up from %d"
-          % (len(picked.numbers),
-             "#%d-#%d" % (picked.numbers[0], picked.numbers[-1])
-             if len(picked.numbers) > 1 else "#%d" % picked.numbers[0],
-             len(before) + len(picked.numbers), len(before)))
+        print("%d individual(s) the wheel never landed on: %s -- being missed is "
+              "not what gets an individual culled; being weakest is"
+              % (len(missed), ", ".join(str(number) for number in missed)))
+    print("appended %d copy/copies as %s"
+          % (len(picked.numbers), _span(picked.numbers)))
+
+    # The cull is the other half of a round: n copies and one newcomer in, the
+    # n+1 weakest out, so the population comes out the size it went in and what
+    # moved is its membership. The elite is never eligible, and a population
+    # too small to spare that many gives up what it can and grows by the rest.
+    if picked.culled:
+        print("culled the %d weakest individual(s), transcripts and all:"
+              % len(picked.culled))
+        for row in picked.culled:
+            print("    %-9d %-7.3f %s"
+                  % (row["number"], row["fitness"] or 0.0, row["chromosome"]))
+        # Their rows are gone, so remove_scripts() can no longer find the files
+        # they owned -- the names have to come from the rows the cull handed
+        # back. The scripts were only ever a cache of script_source, and the
+        # source went with the row.
+        stale = store.discard_scripts(context.run_dir,
+                                      [row["script_name"] for row in picked.culled])
+        if stale:
+            print("    and %d of their script file(s) from %s"
+                  % (stale, context.run_dir))
+    else:
+        print("culled nobody: the population had no non-elite individual to spare")
+    short = len(picked.parents) + 1 - len(picked.culled)
+    if short > 0:
+        print("that is %d fewer than the %d a round of %d appends, so the population "
+              "grows by %d this generation -- there was no other non-elite "
+              "individual to spare"
+              % (short, len(picked.parents) + 1, len(picked.parents), short))
+
+    # And the one individual per round that is nobody's copy: the floor under a
+    # gene pool that copying and mutation can only ever narrow.
+    print("drew #%d fresh from the same rules the first population came from: %s"
+          % (picked.newcomer.number, picked.newcomer.chromosome))
+
+    after = len(before) + len(picked.numbers) - len(picked.culled) + 1
+    if after == len(before):
+        print("the population is still %d, as it went in -- %d out, %d in"
+              % (after, len(picked.culled), len(picked.numbers) + 1))
+    else:
+        print("the population is now %d, up from %d" % (after, len(before)))
     # Each copy is its parent field for field, so it arrives holding the
     # parent's script name, weight seed and fitness as well as its chromosome.
     # Those are the parent's answers, and stay right only while the chromosome
-    # is still the parent's; trees and runs re-derive them for everyone.
-    print("each one is a copy of its parent, field for field -- re-derive their "
-          "trees, scripts and seeds with: python main.py trees runs")
+    # is still the parent's; the newcomer has none of them to begin with;
+    # trees and runs re-derive them for everyone either way.
+    print("each copy is its parent field for field and the newcomer is bare -- "
+          "re-derive their trees, scripts and seeds with: python main.py trees runs")
 
 
 def step_mutation(context):
@@ -761,10 +809,12 @@ def step_mutation(context):
         raise SystemExit("run %d holds no individuals. Run the population step first."
                          % run_id)
 
-    # Derived the way selection's is, and for the same reason: the population
-    # grows a generation at a time, so its size dates the round, and a sweep
-    # replayed from its stored seed mutates exactly as it did the first time.
-    rng = random.Random("%s:%d" % (master, len(before)))
+    # Derived the way selection's is, and for the same reason: the population's
+    # highest number rises a generation at a time, so it dates the round, and a
+    # sweep replayed from its stored seed mutates exactly as it did the first
+    # time. Seeding on the size instead would mutate the same positions of the
+    # same individuals every generation, now that the size does not move.
+    rng = random.Random("%s:%d" % (master, store.high_number(conn, run_id)))
     changes, rows = mutation.apply(conn, run_id, rate, rng)
 
     elite = [row["number"] for row in rows if row["is_best"]]
@@ -813,10 +863,11 @@ STEPS = [
     # Cheap too, and reads nothing but the column fitness just wrote.
     Step("elitism", step_elitism,
          "mark the fittest individual as the one to keep -> individuals.is_best"),
-    # Appends: it grows the population rather than replacing it, so running it
-    # twice is two generations of selection, not one done twice.
+    # Appends more than it removes, so running it twice is two generations of
+    # selection, not one done twice.
     Step("selection", step_selection,
-         "roulette wheel sampling -> the picks, appended to the population"),
+         "roulette wheel sampling -> copies of the fit appended, the weakest"
+         " culled, one newcomer drawn"),
     # Leaves the elite alone, so the best result found so far survives intact.
     Step("mutation", step_mutation,
          "point-mutate every other chromosome -> chromosome, has_changed"),

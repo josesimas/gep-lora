@@ -97,7 +97,7 @@ def assign(conn, run_id):
     if not rows:
         return Snapshot(0, None, rows)
 
-    generation = store.fitness_generation(conn, run_id, len(rows))
+    generation = store.fitness_generation(conn, run_id)
     recorded_at = store.record_fitness(conn, run_id, generation,
                                        [entry_for(row) for row in rows])
     return Snapshot(generation, recorded_at, rows)

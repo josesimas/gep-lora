@@ -12,7 +12,7 @@ Change a value and re-run; nothing else needs editing.
 # --- the population --------------------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 5
+COUNT = 10
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time -- and, since a sweep records what it drew,
@@ -37,10 +37,11 @@ BRANCH_PROB = 0.6
 # selection -> mutation over the population already in the database.
 #
 # Mind what this costs: process loads the base model once per individual, and
-# selection *appends* its picks, so with SELECTION_COUNT left at None the
-# population doubles every generation and the work of a run grows with it. Fix
-# SELECTION_COUNT to a number to grow by that much per generation instead.
-GENERATIONS = 2
+# every generation is the whole population again -- and it is the same size
+# every generation, since selection culls as many individuals as it appends.
+# SELECTION_COUNT changes the turnover inside the population rather than the
+# size of it.
+GENERATIONS = 5
 
 # --- where things go -------------------------------------------------------
 
@@ -87,7 +88,7 @@ TRAINING_SET = "datasets/medical_training_lora_dataset.json"
 # individual per generation, so halving it halves the eval half of a sweep --
 # worth turning down while iterating and back up for a real search, remembering
 # that a short eval set makes a noisier fitness signal.
-TRAINING_COUNT = 20
+TRAINING_COUNT = 5
 
 # The other two splits of the same dataset, recorded beside the training one.
 #
@@ -105,7 +106,7 @@ TRAINING_COUNT = 20
 # and mind that they have to be splits of the same dataset -- a validation set
 # from another task would be recorded as this sweep's, and mean nothing.
 VALIDATION_SET = None
-TESTING_SET = "datasets/medical_testing_lora_dataset.json"
+TESTING_SET = None #"datasets/medical_testing_lora_dataset.json"
 
 # How good an individual has to have been on the training split before
 # test_run_with_dataset.py will spend a base-model load asking it the testing
@@ -187,8 +188,12 @@ WEIGHT_MASTER_SEED = None
 # start; None draws a master seed at run time and stores it.
 SELECTION_MASTER_SEED = None
 
-# How many individuals each spin of the wheel adds. None means as many as the
-# population already holds, which doubles it: N parents in, N offspring out.
+# How many copies a round of selection appends. It also draws one newcomer and
+# culls that many again -- n+1 in, n+1 out -- so the population stays the size
+# COUNT drew it at and this sets the turnover instead: at 2, three individuals
+# in and three out a generation. None is the exception, asking for as many
+# copies as the population holds, which is one more than the cull can take, so
+# it is the only value that still grows the population.
 SELECTION_COUNT = 2
 
 
@@ -283,7 +288,7 @@ PROCESS_RUN_PROGRESS_SECONDS = 5
 # it does nothing to a sweep already running, which is what keeps every fitness
 # number in one sweep comparable with the others. `python main.py --evaluators`
 # lists what is registered.
-EVALUATOR = "llm_judge"
+EVALUATOR = "similarity"
 
 
 # --- the judge model, for the evaluators that ask one -----------------------
