@@ -7,6 +7,11 @@ shown the question and the answer, and grades it against
 JUDGE_SYSTEM_PROMPT -- which is therefore the criterion the whole search
 optimises toward.
 
+Where that model runs is JUDGE_BACKEND's business, not this file's: an
+OpenAI-compatible endpoint, or a model loaded here with unsloth the way the
+generated scripts load theirs. Everything below goes through common.ask_judge()
+either way, so the rubric and the score are the same instrument on both.
+
 The other two judging evaluators beside it are this one plus a bigger prompt:
 llm_judge_reference and llm_judge_baseline both call prepare() and, when they
 have nothing extra to show the judge, score() from here.
@@ -57,15 +62,14 @@ Reply with JSON and nothing else, with the score FIRST:
 
 
 def prepare(conf, pending, context=None):
-    settings = common.endpoint_settings(conf)
-    if common.needs_grading(pending) and not settings["model"]:
-        settings["model"] = common.discover_model(
-            settings["base_url"], settings["api_key"], settings["timeout"])
+    settings = common.judge_settings(conf)
+    grading = common.needs_grading(pending)
+    # An endpoint can be asked what it has loaded; a local judge has to be
+    # named. Either way nothing is asked when there is nothing to grade.
+    common.resolve_model(settings, grading)
     label = settings["model"] or "llm_judge"
-    note = ("judge: %s at %s" % (settings["model"], settings["base_url"])
-            if common.needs_grading(pending) else
-            "judge: not contacted -- no answer needs grading")
-    return common.Prepared(conf, label, settings=settings, notes=[note])
+    return common.Prepared(conf, label, settings=settings,
+                           notes=[common.judge_note(settings, grading)])
 
 
 def score(item, prepared):
@@ -78,5 +82,5 @@ def score(item, prepared):
 common.register(common.Evaluator(
     "llm_judge",
     "a judge model grades each answer on its own merits (JUDGE_SYSTEM_PROMPT)",
-    prepare, score, needs_endpoint=True,
+    prepare, score, needs_judge=True,
 ))

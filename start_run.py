@@ -130,7 +130,10 @@ def new_sweep(conn, label):
     conf = config.snapshot()
     # Fail on an unknown EVALUATOR here rather than an hour later, when the
     # process step has finished and there is a transcript nobody can score.
+    # Same for an unknown JUDGE_BACKEND, which is the other half of that
+    # question: which evaluator grades, and where its judge runs.
     evaluators.get(conf.get("EVALUATOR"))
+    evaluators.backend_of(conf)
     if conf.get("SEED") is None:
         conf["SEED"] = random.randrange(_SEED_LIMIT)
     if conf.get("WEIGHT_MASTER_SEED") is None:
@@ -457,7 +460,20 @@ def step_evaluate(context):
     is scored the way it was created to be scored even if settings.py has moved
     on -- two individuals graded by different rubrics would not be comparable,
     and comparing them is the whole point of a fitness number.
+
+    A wrapper around the work for one reason: a judge graded with
+    JUDGE_BACKEND = 'unsloth' is a model resident in *this* process, and the
+    step is done with it however it ends. main.py carries straight on into the
+    next generation, whose scripts each load the base model, so a judge left on
+    the card would be VRAM taken from every one of them.
     """
+    try:
+        _evaluate(context)
+    finally:
+        evaluators.release_models()
+
+
+def _evaluate(context):
     conn, run_id, options = context.conn, context.run_id, context.options
     pending = store.exchanges_to_score(conn, run_id, options.force)
     if not pending:
@@ -495,13 +511,13 @@ def step_evaluate(context):
           % (len(pending), " (--force: re-scoring)" if options.force else ""))
 
     # Giving up early is only ever worth it when a score costs something to
-    # get: a local evaluator would spend nothing finishing an individual, and
-    # stopping short would only lose detail. The rows arrive ordered by
-    # individual and then by position, so each group below is one individual's
-    # answers in the order they were asked -- which is what "the first 10%"
-    # means.
+    # get -- a request, or a generate() on this machine. A local scorer would
+    # spend nothing finishing an individual, and stopping short would only lose
+    # detail. The rows arrive ordered by individual and then by position, so
+    # each group below is one individual's answers in the order they were asked
+    # -- which is what "the first 10%" means.
     limit_fraction = (context.conf.get("JUDGE_ABANDON_FRACTION")
-                      if evaluator.needs_endpoint else None)
+                      if evaluator.needs_judge else None)
     if limit_fraction:
         print("giving up on an individual once its first %g%% of graded answers "
               "have all scored 0" % (100 * limit_fraction))
@@ -580,8 +596,8 @@ def step_evaluate(context):
 
     if failed and not scored:
         raise SystemExit("nothing could be scored by the %s evaluator -- check "
-                         "its settings, and the judge endpoint if it uses one"
-                         % evaluator.name)
+                         "its settings, and the judge it asks (JUDGE_BACKEND) "
+                         "if it asks one" % evaluator.name)
 
 
 def step_fitness(context):
@@ -1038,6 +1054,17 @@ def main(argv=None):
         print("\n* is EVALUATOR in settings.py, which a *new* sweep is created "
               "with.\n  A sweep already in the database keeps the one it was "
               "created with.")
+        # Where the judge runs is the other half of "how will this be scored",
+        # and it is a setting the same way: named here, frozen into the sweep.
+        backend = evaluators.backend_of(config.snapshot())
+        print("\n  The four judging evaluators ask their judge through "
+              "JUDGE_BACKEND = %r:\n  %s"
+              % (backend,
+                 "loaded here with unsloth, %s"
+                 % (config.JUDGE_MODEL or "and JUDGE_MODEL must name one")
+                 if backend == evaluators.UNSLOTH else
+                 "%s at %s" % (config.JUDGE_MODEL or "whatever it has loaded",
+                               config.JUDGE_BASE_URL)))
         return 0
 
     if args.steps:

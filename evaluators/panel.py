@@ -1,13 +1,19 @@
 """
 evaluators/panel.py - Several judge models, aggregated.
 
-Less noise per score, N times the cost. PANEL_MODELS are the members, all served
-by one endpoint (PANEL_BASE_URL, or JUDGE_BASE_URL); everything else about a
-member -- temperature, token budget, timeouts, the rubric -- comes from the
-JUDGE_* settings, so a panel is several models grading identically rather than
-several differently configured judges. PANEL_AGGREGATE folds their scores into
-one, and PANEL_USE_REFERENCE decides which of the two shared rubrics they grade
-under.
+Less noise per score, N times the cost. PANEL_MODELS are the members, all
+reached the same way -- one endpoint (PANEL_BASE_URL, or JUDGE_BASE_URL), or one
+machine when JUDGE_BACKEND is "unsloth"; everything else about a member --
+temperature, token budget, timeouts, the rubric -- comes from the JUDGE_*
+settings, so a panel is several models grading identically rather than several
+differently configured judges. PANEL_AGGREGATE folds their scores into one, and
+PANEL_USE_REFERENCE decides which of the two shared rubrics they grade under.
+
+**On the unsloth backend a panel is N models resident at once**, since each
+member is asked about every answer in turn and unloading between them would
+reload the whole panel per answer. That is the same bargain PROCESS_RUN_BATCH_SIZE
+strikes with base models, and prepare() prints the count so the cost is on the
+console before it is on the card.
 """
 
 import statistics
@@ -108,21 +114,28 @@ def prepare(conf, pending, context=None):
     models = list(conf.get("PANEL_MODELS") or [])
     grading = common.needs_grading(pending)
     if grading and not models:
-        # Nothing named: fall back to whatever the endpoint has loaded, so a
-        # panel of one still runs rather than failing on an empty list.
-        models = [common.discover_model(base_url, common.API_KEY,
-                                        conf.get("JUDGE_TIMEOUT", 300))]
+        # Nothing named: fall back to the one model the judge would have used --
+        # whatever the endpoint has loaded, or a refusal from the local backend,
+        # which has nothing to ask -- so a panel of one still runs rather than
+        # failing on an empty list.
+        one = common.judge_settings(conf, base_url=base_url)
+        models = [common.resolve_model(one, grading)]
 
-    members = [common.endpoint_settings(conf, model=model, base_url=base_url)
+    members = [common.judge_settings(conf, model=model, base_url=base_url)
                for model in models]
     references = None
     if conf.get("PANEL_USE_REFERENCE", False):
         references = common.prepare_references(conf, "panel")
 
     label = "panel:" + ",".join(models) if models else "panel"
-    note = ("panel: %s at %s, aggregated by %s"
-            % (", ".join(models), base_url, how) if grading else
-            "panel: not contacted -- no answer needs grading")
+    if not grading:
+        note = "panel: not contacted -- no answer needs grading"
+    elif members[0]["backend"] == common.UNSLOTH:
+        note = ("panel: %s, loaded here with unsloth -- %d model(s) resident at "
+                "once, aggregated by %s" % (", ".join(models), len(models), how))
+    else:
+        note = ("panel: %s at %s, aggregated by %s"
+                % (", ".join(models), base_url, how))
     prepared = common.Prepared(conf, label[:200], references=references, notes=[note])
     prepared.settings = {"members": members, "aggregate": how}
     return prepared
@@ -133,8 +146,9 @@ def score(item, prepared):
 
     A member that fails is dropped rather than fatal: a panel that loses one
     model still has a score, and losing the whole exchange because one endpoint
-    hiccupped would cost the individual an answer its rivals kept. Only a panel
-    where *nobody* answered fails, which start_run.py counts like any other failure.
+    hiccupped -- or one local generate() ran out of memory -- would cost the
+    individual an answer its rivals kept. Only a panel where *nobody* answered
+    fails, which start_run.py counts like any other failure.
     """
     conf = prepared.conf
     reference = common.reference_for(item, prepared) if prepared.references else None
@@ -174,5 +188,5 @@ common.register(common.Evaluator(
     "panel",
     "several judge models score each answer and the scores are aggregated "
     "(PANEL_MODELS, PANEL_AGGREGATE) -- less noise, N times the cost",
-    prepare, score, needs_endpoint=True,
+    prepare, score, needs_judge=True,
 ))

@@ -298,18 +298,46 @@ EVALUATOR = "llm_judge"
 # writes its settings into the database, so the key is read from the
 # JUDGE_API_KEY environment variable by evaluators/common.py instead.
 
-# Where the judge lives. The default is the local LMStudio instance; its API is
-# OpenAI-compatible, so a cloud endpoint is a drop-in replacement:
+# How the judge is reached. Two transports, one instrument: the rubrics, the
+# retries, the abandon rule and the way a score is read out of the reply are
+# shared, so which one a sweep used changes where the tokens came from and
+# nothing else about the number.
+#
+#   "endpoint"  POST to an OpenAI-compatible /v1/chat/completions. Needs a
+#               server up -- LMStudio, vLLM, OpenAI, OpenRouter -- at
+#               JUDGE_BASE_URL, and nothing of this machine's GPU.
+#   "unsloth"   load JUDGE_MODEL in the evaluate step's own process, exactly as
+#               the generated scripts load the model they blend, and generate
+#               the grading there. Needs no server at all, so a whole sweep runs
+#               on this repo and a GPU -- and needs the venv one level up, the
+#               same interpreter the process step already demands.
+#
+# What the local backend costs: the judge is loaded once per evaluate step, on
+# the first answer it grades rather than while preparing (llm_judge_baseline
+# runs the base model while preparing, and the two should not be on the card at
+# once), and released the moment the step is done -- main.py goes straight into
+# the next generation, whose scripts each want the VRAM back.
+JUDGE_BACKEND = "endpoint"
+
+# Where the judge lives, for JUDGE_BACKEND = "endpoint". The default is the
+# local LMStudio instance; its API is OpenAI-compatible, so a cloud endpoint is
+# a drop-in replacement:
 #   OpenAI      https://api.openai.com/v1
 #   OpenRouter  https://openrouter.ai/api/v1
 #   vLLM        http://<host>:8000/v1
 # Claude is not OpenAI-compatible; using a Claude model as the judge needs a
-# separate backend through the anthropic SDK.
+# separate backend through the anthropic SDK. Ignored by the unsloth backend,
+# which has no endpoint to point at.
 JUDGE_BASE_URL = "http://172.22.208.1:1234/v1"
 
-# Which model does the grading. None asks the endpoint what it has loaded, which
-# is what you want with LMStudio, and stores the answer on every exchange it
-# grades; name it explicitly for a cloud model.
+# Which model does the grading, and what is stored on every exchange it grades.
+# On the endpoint backend, None asks the endpoint what it has loaded, which is
+# what you want with LMStudio; name it explicitly for a cloud model. On the
+# unsloth backend it is a Hub repo id or a folder and it has to be named -- a
+# machine cannot be asked what it has loaded, and falling back to BASE_MODEL
+# would leave the model under test grading its own descendants. An
+# unsloth-quantised instruct model loads fastest, e.g.
+# "unsloth/qwen2.5-7b-instruct-unsloth-bnb-4bit".
 JUDGE_MODEL = None
 
 # Grading should be repeatable, so keep the temperature at zero.
@@ -329,7 +357,36 @@ JUDGE_RETRY_WAIT = 3
 
 # Ask for a JSON object back. None for an endpoint that rejects the parameter --
 # the prompt asks for JSON anyway, and a 400 falls back to that by itself.
+# Endpoint backend only: a local judge is asked for JSON by the rubric, and
+# parse_reply() recovers a score from prose either way.
 JUDGE_RESPONSE_FORMAT = {"type": "json_object"}
+
+
+# --- the local judge, for JUDGE_BACKEND = "unsloth" -------------------------
+#
+# Only these three are the local backend's own. Everything else about grading --
+# which model (JUDGE_MODEL), how hot (JUDGE_TEMPERATURE), how many tokens it may
+# spend (JUDGE_MAX_TOKENS), how many tries (JUDGE_RETRIES) and when to give up
+# on an individual (JUDGE_ABANDON_FRACTION) -- is read the same way whichever
+# backend is in use. JUDGE_BASE_URL, JUDGE_TIMEOUT, JUDGE_RESPONSE_FORMAT and
+# $JUDGE_API_KEY are the endpoint's, and are ignored here.
+
+# The context window the judge is loaded with. It has to hold the rubric, the
+# question and the answer, and for "llm_judge_reference" and
+# "llm_judge_baseline" a second answer beside it, plus JUDGE_MAX_TOKENS of
+# reply. A prompt over this is that one answer's failure, not the step's.
+JUDGE_LOCAL_MAX_SEQ_LENGTH = 4096
+
+# Load the judge quantised. True is what makes a second model fit beside
+# everything else this pipeline wants from the card; False for a judge whose
+# grading you want at full precision, and the VRAM to spare.
+JUDGE_LOCAL_LOAD_IN_4BIT = True
+
+# Which chat template to format the rubric and the answer under. None uses the
+# model's own, which is what a stock instruct model ships and what it was
+# trained to answer under. Name one unsloth knows ("qwen-2.5", "llama-3.1",
+# ...) only for a model whose tokeniser carries none, or carries a wrong one.
+JUDGE_LOCAL_CHAT_TEMPLATE = None
 
 # When to stop grading an individual that is going nowhere. A judge call is the
 # expensive part of a sweep, and an individual whose *first* graded answers all
@@ -341,9 +398,10 @@ JUDGE_RESPONSE_FORMAT = {"type": "json_object"}
 # a reason saying so, so the individual's fitness really is the mean of its own
 # scores, and a re-run does not ask about them again.
 #
-# Only the evaluators that call an endpoint (llm_judge, llm_judge_reference,
-# llm_judge_baseline, panel) abandon anything -- a local scorer costs nothing to
-# finish, and cutting it short would only lose detail.
+# Only the evaluators that ask a model (llm_judge, llm_judge_reference,
+# llm_judge_baseline, panel) abandon anything, whichever backend they ask it
+# through -- a local *scorer* like "similarity" costs nothing to finish, and
+# cutting it short would only lose detail.
 #
 # Mind how sharp this is on a small eval set: with TRAINING_COUNT = 10 the first
 # 10% is a single answer, so one zero condemns the individual. 0 or None grades
@@ -430,7 +488,11 @@ HEURISTIC_FORBID = None
 # "llm_judge" with extra steps, so name at least two to get the point of this.
 PANEL_MODELS = []
 
-# Where the panel is served, or None for JUDGE_BASE_URL. Everything else about
+# Where the panel is served, or None for JUDGE_BASE_URL. Endpoint backend only:
+# under JUDGE_BACKEND = "unsloth" the members are loaded here, all of them
+# resident at once for as long as the step lasts, the way
+# PROCESS_RUN_BATCH_SIZE holds N base models -- so keep the list short and the
+# members small. Everything else about
 # a member -- temperature, token budget, timeouts, the rubric -- comes from the
 # JUDGE_* settings above, so a panel is several models grading identically
 # rather than several differently configured judges.

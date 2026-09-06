@@ -12,8 +12,9 @@ whether the blend answered in the manner it was fine-tuned to.
 JUDGE_REFERENCE_SYSTEM_PROMPT is the rubric, and it deliberately does not
 reward copying.
 
-Everything else -- endpoint, model, timeouts, retries -- is llm_judge's, whose
-prepare() this one extends and whose score() it falls back to.
+Everything else -- backend, model, timeouts, retries -- is llm_judge's, whose
+prepare() this one extends and whose score() it falls back to, so this rubric is
+graded by an endpoint or by a locally loaded judge exactly as that one is.
 """
 
 from blends import generate_runs
@@ -105,5 +106,5 @@ common.register(common.Evaluator(
     "llm_judge_reference",
     "a judge model compares each answer with the dataset's own answer to the "
     "same question (JUDGE_REFERENCE_SYSTEM_PROMPT)",
-    prepare, score, wants_reference=True, needs_endpoint=True,
+    prepare, score, wants_reference=True, needs_judge=True,
 ))

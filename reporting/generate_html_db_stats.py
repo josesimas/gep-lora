@@ -831,6 +831,19 @@ def tile(label, value, note=None, wordy=False):
                esc(note) if note else ""))
 
 
+def judge_fact(conf):
+    """Where this sweep's judge was, in one line.
+
+    Both halves of the answer, because JUDGE_MODEL alone no longer says it: a
+    sweep graded with JUDGE_BACKEND = "unsloth" loaded that model on the machine
+    the evaluate step ran on, and one graded over an endpoint did not.
+    """
+    model = conf.get("JUDGE_MODEL")
+    if (conf.get("JUDGE_BACKEND") or "endpoint") == "unsloth":
+        return "%s (unsloth, loaded locally)" % (model or "-")
+    return model or conf.get("JUDGE_BASE_URL")
+
+
 def section_overview(data):
     run, conf, totals_ = data["run"], data["settings"], data["totals"]
     people, quality = data["people"], data["quality"]
@@ -868,7 +881,7 @@ def section_overview(data):
              ("commit", run["git_commit"]),
              ("interpreter", run["interpreter"]),
              ("base model", conf.get("BASE_MODEL")),
-             ("judge", conf.get("JUDGE_MODEL") or conf.get("JUDGE_BASE_URL"))]
+             ("judge", judge_fact(conf))]
 
     return ('<section id="overview"><h2>Overview</h2>'
             '<div class="tiles">%s</div>'

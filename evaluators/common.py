@@ -5,9 +5,10 @@ One file rather than six copies. Everything here is used by at least two of the
 evaluators beside it, and nothing here is an evaluator itself:
 
     the registry        Prepared, Evaluator, register(), get(), available()
-    the judge transport ask_judge(), endpoint_settings(), discover_model(),
-                        parse_reply() -- llm_judge, llm_judge_reference,
-                        llm_judge_baseline and panel all speak to a model
+    the judge transport ask_judge(), judge_settings(), resolve_model(),
+                        discover_model(), parse_reply(), judge_note() --
+                        llm_judge, llm_judge_reference, llm_judge_baseline and
+                        panel all speak to a model
     the references      load_references(), reference_for(), prepare_references()
                         -- llm_judge_reference, similarity and panel all grade
                         against the dataset's own answer
@@ -20,6 +21,13 @@ evaluators beside it, and nothing here is an evaluator itself:
 The names are public because they cross module boundaries now: a helper an
 evaluator file imports cannot be an underscore. The one that stays private,
 _request(), is the only thing here that nothing outside this file calls.
+
+**A judge is one idea with two transports.** JUDGE_BACKEND picks between them:
+"endpoint" POSTs to an OpenAI-compatible /v1/chat/completions, and "unsloth"
+loads a model in this process the way the generated scripts do -- see
+local_model.py, the only other module here that is not an evaluator. ask_judge()
+is where they meet, and everything above it is shared, so which one a sweep used
+changes where the tokens came from and nothing else about the score.
 
 **No knob lives in this package.** They are all in settings.py, prefixed by the
 evaluator that reads them (JUDGE_*, BASELINE_*, SIMILARITY_*, HEURISTIC_*,
@@ -41,6 +49,15 @@ import urllib.error
 import urllib.request
 
 from blends import generate_runs
+
+from evaluators import local_model
+
+# The two ways of reaching a judge, and what JUDGE_BACKEND names. ENDPOINT is
+# the default and what a sweep created before the setting existed reads back as
+# -- the behaviour it ran under.
+ENDPOINT = "endpoint"
+UNSLOTH = "unsloth"
+BACKENDS = (ENDPOINT, UNSLOTH)
 
 # Sent as "Authorization: Bearer <key>". LMStudio ignores it; cloud endpoints
 # require it. Deliberately not a setting: settings are written into the sweep's
@@ -89,17 +106,20 @@ class Evaluator:
     """
 
     __slots__ = ("name", "description", "prepare", "score", "wants_reference",
-                 "needs_endpoint", "wants_baseline")
+                 "needs_judge", "wants_baseline")
 
     def __init__(self, name, description, prepare, score,
-                 wants_reference=False, needs_endpoint=False,
+                 wants_reference=False, needs_judge=False,
                  wants_baseline=False):
         self.name = name
         self.description = description
         self.prepare = prepare
         self.score = score
         self.wants_reference = wants_reference
-        self.needs_endpoint = needs_endpoint
+        # Asks a model for every score, whichever backend produces it. What the
+        # abandon rule is decided on: a judge call costs a request or a
+        # generate(), and a local scorer costs neither.
+        self.needs_judge = needs_judge
         # Needs the base model's own answers, which cost a model load the first
         # time they are wanted and come out of the database ever after.
         self.wants_baseline = wants_baseline
@@ -267,39 +287,57 @@ def parse_reply(text):
 def ask_judge(system_prompt, user_content, settings):
     """One grading call. Returns (quality, reason).
 
-    `settings` is the resolved endpoint block -- base_url, api_key, model,
-    temperature, max_tokens, timeout, retries, retry_wait, response_format --
-    which the evaluators build from the sweep's stored JUDGE_*/PANEL_* values.
-    """
-    payload = {
-        "model": settings["model"],
-        "temperature": settings["temperature"],
-        "max_tokens": settings["max_tokens"],
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-    }
-    if settings.get("response_format"):
-        payload["response_format"] = settings["response_format"]
+    `settings` is the resolved judge block -- backend, base_url, api_key, model,
+    temperature, max_tokens, timeout, retries, retry_wait, response_format, and
+    the JUDGE_LOCAL_* values the unsloth backend loads under -- which the
+    evaluators build from the sweep's stored JUDGE_*/PANEL_* values through
+    judge_settings().
 
-    url = settings["base_url"].rstrip("/") + "/chat/completions"
+    The two backends meet here rather than in the evaluators, so which one is in
+    use changes only where the tokens come from: the rubric, the retries and
+    reading a quality out of the reply are one code path either way, and that is
+    what makes a sweep graded locally comparable with one graded over an API.
+    """
+    local = settings.get("backend") == UNSLOTH
+    payload, url = None, None
+    if not local:
+        payload = {
+            "model": settings["model"],
+            "temperature": settings["temperature"],
+            "max_tokens": settings["max_tokens"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+        }
+        if settings.get("response_format"):
+            payload["response_format"] = settings["response_format"]
+        url = settings["base_url"].rstrip("/") + "/chat/completions"
+
     retries = settings["retries"]
     last_error = None
     for attempt in range(retries + 1):
         try:
-            reply = _request(url, payload, settings["api_key"], settings["timeout"])
-            message = reply["choices"][0]["message"]
-            text = message.get("content") or ""
-            if not text.strip():
-                # A reasoning model that spent its whole budget thinking returns
-                # an empty content; the score may still be in the reasoning.
-                text = message.get("reasoning_content") or message.get("reasoning") or ""
+            if local:
+                text = local_model.generate(system_prompt, user_content, settings)
+            else:
+                reply = _request(url, payload, settings["api_key"], settings["timeout"])
+                message = reply["choices"][0]["message"]
+                text = message.get("content") or ""
+                if not text.strip():
+                    # A reasoning model that spent its whole budget thinking
+                    # returns an empty content; the score may still be in the
+                    # reasoning.
+                    text = message.get("reasoning_content") or message.get("reasoning") or ""
             # A blank or unparseable reply is usually a truncation, so it is
             # worth another attempt rather than losing the answer's score.
             return parse_reply(text)
         except ValueError as error:
             last_error = error
+            if local and not settings["temperature"]:
+                # Greedy decoding: the same prompt returns the same reply, so a
+                # retry would spend another generate() to fail in the same way.
+                break
         except urllib.error.HTTPError as error:
             # Some endpoints reject response_format; the prompt asks for JSON
             # anyway, so drop it and try once more rather than failing.
@@ -316,17 +354,42 @@ def ask_judge(system_prompt, user_content, settings):
 
         if attempt < retries:
             time.sleep(settings["retry_wait"])
+    if local:
+        raise RuntimeError("the local judge produced nothing gradeable: %s" % last_error)
     raise RuntimeError("judge unreachable after %d attempts: %s" % (retries + 1, last_error))
 
 
-def endpoint_settings(conf, model=None, base_url=None):
+def backend_of(conf):
+    """Which transport a sweep grades through, checked. -> ENDPOINT or UNSLOTH.
+
+    Its own function because start_run.py asks it when a sweep is *created*, an
+    hour before any answer needs grading: a misspelt backend should cost a line
+    at the top of the run, not a finished transcript nobody can score.
+    """
+    backend = conf.get("JUDGE_BACKEND") or ENDPOINT
+    if backend not in BACKENDS:
+        raise SystemExit("JUDGE_BACKEND must be %s, not %r"
+                         % (" or ".join(repr(name) for name in BACKENDS), backend))
+    return backend
+
+
+def judge_settings(conf, model=None, base_url=None):
     """The JUDGE_* block of a sweep's settings, resolved for ask_judge().
 
-    Defaults are spelled out here for one reason only: a sweep created before
-    a knob existed has no value for it stored, and resuming one must not crash
-    on a KeyError. settings.py is still where a knob is *set*.
+    Defaults are spelled out here for one reason only: a sweep created before a
+    knob existed has no value for it stored, and resuming one must not crash on
+    a KeyError. settings.py is still where a knob is *set*. It is also why a
+    sweep that predates JUDGE_BACKEND reads back as ENDPOINT -- that is the
+    behaviour it ran under.
+
+    The last three are the unsloth backend's own, and the endpoint backend
+    ignores them exactly as the local one ignores base_url, api_key, timeout and
+    response_format. One block rather than two, because a judge is one idea with
+    two transports and a caller building the block should not have to know which
+    one a sweep chose.
     """
     return {
+        "backend": backend_of(conf),
         "base_url": base_url or conf.get("JUDGE_BASE_URL"),
         "api_key": API_KEY,
         "model": model or conf.get("JUDGE_MODEL"),
@@ -336,7 +399,54 @@ def endpoint_settings(conf, model=None, base_url=None):
         "retries": conf.get("JUDGE_RETRIES", 2),
         "retry_wait": conf.get("JUDGE_RETRY_WAIT", 3),
         "response_format": conf.get("JUDGE_RESPONSE_FORMAT", {"type": "json_object"}),
+        "max_seq_length": conf.get("JUDGE_LOCAL_MAX_SEQ_LENGTH", 4096),
+        "load_in_4bit": conf.get("JUDGE_LOCAL_LOAD_IN_4BIT", True),
+        "chat_template": conf.get("JUDGE_LOCAL_CHAT_TEMPLATE"),
     }
+
+
+def resolve_model(settings, grading):
+    """Fill in the model a sweep did not name, for the backend it chose.
+
+    An endpoint can be asked what it has loaded -- that is what JUDGE_MODEL =
+    None means, and what you want with LMStudio. A machine cannot be asked, so
+    the local backend needs the name in writing; and it must not quietly fall
+    back to BASE_MODEL, which would leave the model under test grading its own
+    descendants.
+    """
+    if settings["model"] or not grading:
+        return settings["model"]
+    if settings["backend"] == UNSLOTH:
+        raise SystemExit(
+            "JUDGE_BACKEND = 'unsloth' grades with a model loaded here, so "
+            "JUDGE_MODEL has to name one -- a Hub repo id, or a folder. There "
+            "is nothing to ask what it has loaded the way an endpoint can be "
+            "asked, and falling back to BASE_MODEL would leave the model under "
+            "test marking its own homework."
+        )
+    settings["model"] = discover_model(
+        settings["base_url"], settings["api_key"], settings["timeout"])
+    return settings["model"]
+
+
+def judge_note(settings, grading, what="judge"):
+    """The line a prepare() prints to say where the grading will come from."""
+    if not grading:
+        return "%s: not contacted -- no answer needs grading" % what
+    if settings["backend"] == UNSLOTH:
+        return "%s: %s, loaded here with unsloth" % (what, local_model.describe(settings))
+    return "%s: %s at %s" % (what, settings["model"], settings["base_url"])
+
+
+def release_models():
+    """Hand back whatever grading loaded. A no-op unless a judge was loaded.
+
+    Called by the evaluate step and by the testing pass when they are done,
+    whichever evaluator ran: a step that has finished scoring has no further use
+    for a model, and `main.py` goes straight on to a generation whose scripts
+    each want the card.
+    """
+    local_model.release()
 
 
 def needs_grading(pending):
@@ -344,7 +454,8 @@ def needs_grading(pending):
 
     An all-blank set -- a sweep where every script failed -- is scored 0.0 by
     start_run.py without anyone being asked, and a mocked sweep arrives scored, so
-    neither should make the step demand an endpoint that need not be up.
+    neither should make the step demand an endpoint that need not be up, or load
+    a judge model that has nothing to grade.
     """
     return any((row["answer"] or "").strip() for row in pending)
 
@@ -360,8 +471,9 @@ def abandon_after(conf, answers):
     evaluate step over `exchanges` and the testing pass over `test_results`
     grade the same answers under the same evaluator, so an individual worth
     giving up on in one is worth giving up on in the other. Whether to apply it
-    at all is the caller's -- only an evaluator that calls an endpoint has
-    anything to save by stopping early.
+    at all is the caller's -- only an evaluator that asks a model (needs_judge)
+    has anything to save by stopping early, and it saves it either way: a
+    request not sent, or a generate() not run.
     """
     fraction = conf.get("JUDGE_ABANDON_FRACTION", 0.0) or 0.0
     if fraction <= 0 or not answers:

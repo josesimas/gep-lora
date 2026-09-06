@@ -290,11 +290,12 @@ run rather than during it. To change it in a sweep already going:
 python continue_run.py --set EVALUATOR='"similarity"'
 ```
 
-### 3c. Start the judge (for the three that need one)
+### 3c. Start the judge (for the four that need one)
 
 Defaults in `settings.py`:
 
 ```python
+JUDGE_BACKEND = "endpoint"
 JUDGE_BASE_URL = "http://172.22.208.1:1234/v1"
 JUDGE_MODEL = None
 ```
@@ -303,6 +304,23 @@ Load a model in LMStudio and start its server, then point `JUDGE_BASE_URL` at it
 For a cloud judge, use that provider's URL, name `JUDGE_MODEL`, and set
 `JUDGE_API_KEY` in the environment — the key is the one judge setting that is not
 in `settings.py`, because settings are written into the sweep's database.
+
+**Or skip the server entirely.** The judge can run the same way the blends do —
+loaded with unsloth, in the evaluate step's own process:
+
+```python
+JUDGE_BACKEND = "unsloth"
+JUDGE_MODEL = "unsloth/qwen2.5-7b-instruct-unsloth-bnb-4bit"
+```
+
+Nothing else changes: the same rubrics, the same retries, the same
+`python main.py`. It needs the venv one level up (the interpreter the `process`
+step already demands) and the VRAM for a second model, which it loads on the
+first answer it grades and releases the moment the step ends. `JUDGE_MODEL` has
+to be named here — there is no endpoint to ask what it has loaded, and grading
+with `BASE_MODEL` would have the model under test marking its own homework.
+`JUDGE_LOCAL_MAX_SEQ_LENGTH`, `JUDGE_LOCAL_LOAD_IN_4BIT` and
+`JUDGE_LOCAL_CHAT_TEMPLATE` are the only knobs it adds.
 
 `JUDGE_SYSTEM_PROMPT` (or `JUDGE_REFERENCE_SYSTEM_PROMPT`, or
 `JUDGE_BASELINE_SYSTEM_PROMPT`) is what the search optimises for. Read it first.

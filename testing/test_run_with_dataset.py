@@ -369,7 +369,18 @@ def score_pass(conn, run_id, dataset, conf, options, run_dir, say=print):
     otherwise, for the reason a sweep's steps read the sweep's settings: a
     testing quality graded by a different rubric than the training quality it
     is put beside would make the comparison meaningless.
+
+    A wrapper around the work for the reason the evaluate step is one: a judge
+    graded with JUDGE_BACKEND = 'unsloth' is a model resident in this process,
+    and a pass that has finished grading is done with it however it ended.
     """
+    try:
+        return _score_pass(conn, run_id, dataset, conf, options, run_dir, say)
+    finally:
+        evaluators.release_models()
+
+
+def _score_pass(conn, run_id, dataset, conf, options, run_dir, say=print):
     pending = store.test_results_to_score(conn, run_id, dataset, options.force)
     if not pending:
         held = store.test_results(conn, run_id, dataset)
@@ -415,7 +426,7 @@ def score_pass(conn, run_id, dataset, conf, options, run_dir, say=print):
     # spends the rest of them confirming it. A row here is one individual, so
     # "the first 10%" is of the answers this pass has left to grade for it.
     limit_fraction = (graded.get("JUDGE_ABANDON_FRACTION")
-                      if evaluator.needs_endpoint else None)
+                      if evaluator.needs_judge else None)
     if limit_fraction:
         say("giving up on an individual once its first %g%% of graded answers "
             "have all scored 0" % (100 * limit_fraction))
@@ -491,8 +502,8 @@ def score_pass(conn, run_id, dataset, conf, options, run_dir, say=print):
             % abandoned)
     if failed and not scored:
         raise SystemExit("nothing could be scored by the %s evaluator -- check "
-                         "its settings, and the judge endpoint if it uses one"
-                         % evaluator.name)
+                         "its settings, and the judge it asks (JUDGE_BACKEND) "
+                         "if it asks one" % evaluator.name)
     return scored, failed
 
 

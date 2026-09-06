@@ -143,5 +143,5 @@ common.register(common.Evaluator(
     "a judge model compares each answer with what the base model itself said, "
     "and scores the improvement (JUDGE_BASELINE_SYSTEM_PROMPT) -- 0.5 is no "
     "change; the base answers are cached in the database",
-    prepare, score, needs_endpoint=True, wants_baseline=True,
+    prepare, score, needs_judge=True, wants_baseline=True,
 ))

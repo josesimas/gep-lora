@@ -32,7 +32,7 @@ blends/       generate_runs, process_run, baseline_run -- a chromosome,
 templates/    the four template_*.py -- read and filled, never imported,
               which is why this folder is not a package
 storage/      store, add_dataset, db_datasets -- the database and its datasets
-evaluators/   one module per evaluator, plus common.py
+evaluators/   one module per evaluator, plus common.py and local_model.py
 testing/      test_run_with_dataset -- the held-out pass
 reporting/    generate_html_db_stats -- a sweep as a single HTML page
 adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
@@ -426,11 +426,39 @@ to test the current population in that case.
 
 The `evaluate` step scores answers the way `EVALUATOR` in `settings.py` says. Two of the
 six registered evaluators are local (`similarity`, `heuristic`); the other four
-(`llm_judge`, `llm_judge_reference`, `llm_judge_baseline`, `panel`) need an
-OpenAI-compatible judge endpoint (`JUDGE_BASE_URL`, defaulting to LMStudio at
-`http://172.22.208.1:1234/v1`). It is resumable either way — already-scored exchanges
+(`llm_judge`, `llm_judge_reference`, `llm_judge_baseline`, `panel`) ask a judge
+model. It is resumable either way — already-scored exchanges
 are skipped unless `--force` — and `python start_run.py --evaluators` lists what is
 registered.
+
+**Where that judge runs is `JUDGE_BACKEND`**, and the four are indifferent to it:
+`"endpoint"` POSTs to an OpenAI-compatible `/v1/chat/completions`
+(`JUDGE_BASE_URL`, defaulting to LMStudio at `http://172.22.208.1:1234/v1`), and
+`"unsloth"` loads `JUDGE_MODEL` in the evaluate step's own process, the way the
+generated scripts load the model they blend -- so a whole sweep runs on this repo
+and a GPU with nothing listening on any port. `common.ask_judge()` is where the
+two meet: the rubrics, the retries, the abandon rule and reading a score out of a
+reply are all above the split, so a sweep graded locally is comparable with one
+graded over an API. [local_model.py](evaluators/local_model.py) is the local half,
+and the second module in that package that is not an evaluator.
+
+Four things about it are deliberate. The judge is **loaded on the first answer it
+grades, not while preparing** -- `llm_judge_baseline` runs the *base* model while
+preparing, and the two should not be on the card at once. It is **released when
+the step ends**, which is why `step_evaluate` and `score_pass` are wrappers
+around the work: `main.py` carries one interpreter through a whole search, and the
+next generation's scripts each want that VRAM. A model that **will not load stops
+the step** (a SystemExit naming what it could not load) while a **failed
+generate() costs one answer**, exactly as an endpoint's 500 does. And at
+`JUDGE_TEMPERATURE = 0` an unparseable reply is not retried -- greedy decoding
+returns the same reply, so the retry would only spend another `generate()`.
+`JUDGE_MODEL` must be named on this backend: nothing can be asked what it has
+loaded, and falling back to `BASE_MODEL` would leave the model under test grading
+its own descendants. `JUDGE_LOCAL_MAX_SEQ_LENGTH`, `JUDGE_LOCAL_LOAD_IN_4BIT` and
+`JUDGE_LOCAL_CHAT_TEMPLATE` are the only knobs that are the local backend's own;
+`JUDGE_BASE_URL`, `JUDGE_TIMEOUT`, `JUDGE_RESPONSE_FORMAT` and `$JUDGE_API_KEY`
+are the endpoint's. `panel` on this backend holds every member resident at once,
+since each is asked about every answer in turn, and says how many in its note.
 
 The step also **gives up on an individual that opens badly**:
 `JUDGE_ABANDON_FRACTION` (0.1) is how much of one individual's pending answers
@@ -438,9 +466,9 @@ must be graded, and be unanimously 0.0, before `step_evaluate` stops asking abou
 it and scores the rest 0.0 unasked, with a reason saying so. Written rather than
 left NULL, because fitness is the mean over an individual's exchanges -- that is
 what makes the whole individual's fitness zero, and what stops a re-run asking
-again. Only the four evaluators that call an endpoint abandon anything
-(`needs_endpoint`); a blank answer and a failed grading call are neither
-evaluations nor zeros, so neither counts toward it. `evaluators.abandon_after()` is the
+again. Only the four evaluators that ask a model abandon anything
+(`needs_judge`, whichever backend they ask through); a blank answer and a failed
+grading call are neither evaluations nor zeros, so neither counts toward it. `evaluators.abandon_after()` is the
 arithmetic (rounded up, never fewer than one), and the rule condemns an
 individual that would have recovered later -- which on a ten-question eval set
 means one zero is enough.
@@ -743,7 +771,8 @@ appeared to manage VRAM would be claiming to test something it cannot.
   where *nothing* ran exits non-zero. Keep this when adding steps.
 - **The pipeline adapts to which template it ran.** `process` drops its unsloth check when
   the generated scripts don't import it (`process_run.imports_unsloth`), and a judging
-  `evaluate` contacts its endpoint only when some answer still lacks a quality. Both keep a mocked sweep
+  `evaluate` reaches for its judge -- an endpoint, or a model of its own -- only when
+  some answer still lacks a quality. Both keep a mocked sweep
   runnable on a plain Python 3 with nothing else up; don't reintroduce an unconditional
   check.
 - **An execution is self-contained.** Its row carries the weight seed, the full `weights`
@@ -799,6 +828,10 @@ appeared to manage VRAM would be claiming to test something it cannot.
   Two judge parsing traps already fixed: the score is requested *before* the reason (a long
   reason must not truncate it away), and `JUDGE_MAX_TOKENS` is generous because a reasoning
   judge returns an empty message if it runs out mid-thought.
+  An evaluator that asks a model asks it through `common.ask_judge()` and builds
+  its block with `common.judge_settings()`, which is what makes it work on both
+  `JUDGE_BACKEND`s for nothing, and registers with `needs_judge=True` so the
+  abandon rule applies to it.
 - **The eval file is read twice, for two different halves of it.** The generated scripts
   read the `user` turn (`template_code.py`'s `_prompt_of`); `generate_runs.eval_records()`
   reads the same lines for the `assistant` turn, which is the reference

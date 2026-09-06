@@ -463,9 +463,11 @@ as a result.
 
 Two things adjust themselves rather than needing a flag: `process` drops its venv
 check when the scripts it is about to run do not import unsloth, so a mocked
-sweep runs under any Python 3; and `evaluate` only reaches for a judge endpoint
-when some answer actually lacks a quality -- whichever `EVALUATOR` is set, and
-the local ones never reach for one at all.
+sweep runs under any Python 3; and `evaluate` only reaches for a judge when some
+answer actually lacks a quality -- whichever `EVALUATOR` is set, and whichever
+`JUDGE_BACKEND` it would have asked through, so a mocked sweep neither contacts
+an endpoint nor loads a judge model. The local scorers never reach for one at
+all.
 
 `MOCK_SEED` fixes the fake answers and scores, and `MOCK_LOAD_DELAY` /
 `MOCK_ANSWER_DELAY` buy back some fake slowness — useful for exercising
@@ -651,12 +653,18 @@ python start_run.py --evaluators     # what is registered, and which one is curr
 
 | `EVALUATOR` | What it does | Needs |
 |---|---|---|
-| `llm_judge` | a judge model grades the answer on its own merits | an endpoint |
-| `llm_judge_reference` | the same judge, shown the dataset's own answer to that question as well | an endpoint, a dataset with assistant turns |
-| `llm_judge_baseline` | the same judge, shown what the **base model** answered, scoring the improvement | an endpoint, one cached run of the base model |
+| `llm_judge` | a judge model grades the answer on its own merits | a judge |
+| `llm_judge_reference` | the same judge, shown the dataset's own answer to that question as well | a judge, a dataset with assistant turns |
+| `llm_judge_baseline` | the same judge, shown what the **base model** answered, scoring the improvement | a judge, one cached run of the base model |
 | `similarity` | token or character overlap with the dataset's answer | a dataset with assistant turns |
 | `heuristic` | local checks: length, repetition, a required and a forbidden pattern | nothing |
-| `panel` | several judge models, aggregated | an endpoint |
+| `panel` | several judge models, aggregated | a judge per member |
+
+"A judge" is a model, and `JUDGE_BACKEND` says where it runs: an
+OpenAI-compatible **endpoint**, or one loaded **here with unsloth**, the way the
+generated scripts load the model they blend. See
+[Where the judge runs](#where-the-judge-runs) — the four evaluators above are
+indifferent to it.
 
 All six produce the same thing — a `quality` in 0..1 and a short `reason` on
 each exchange — so every step downstream is unchanged. `0.0` is worst, `1.0` is
@@ -682,12 +690,16 @@ of them on its own merits. Every knob is in `settings.py`:
 
 | Setting | Default | Meaning |
 |---|---|---|
+| `JUDGE_BACKEND` | `"endpoint"` | `"endpoint"` or `"unsloth"` — where the judge runs |
 | `JUDGE_BASE_URL` | `http://172.22.208.1:1234/v1` | OpenAI-compatible endpoint |
-| `JUDGE_MODEL` | `None` — ask the endpoint | judge model id |
+| `JUDGE_MODEL` | `None` — ask the endpoint | judge model id; **required** on the unsloth backend |
 | `JUDGE_TEMPERATURE` | `0.0` | grading should repeat |
 | `JUDGE_MAX_TOKENS` | `2000` | headroom for a reasoning judge |
 | `JUDGE_TIMEOUT` / `JUDGE_RETRIES` / `JUDGE_RETRY_WAIT` | 300 / 2 / 3 | one call's patience |
 | `JUDGE_RESPONSE_FORMAT` | `{"type": "json_object"}` | `None` for an endpoint that rejects it |
+| `JUDGE_LOCAL_MAX_SEQ_LENGTH` | `4096` | the context a local judge is loaded with |
+| `JUDGE_LOCAL_LOAD_IN_4BIT` | `True` | load a local judge quantised |
+| `JUDGE_LOCAL_CHAT_TEMPLATE` | `None` — the model's own | an unsloth template name, for a model that ships none |
 | `JUDGE_ABANDON_FRACTION` | `0.1` | give up on an individual whose first 10% of graded answers all score 0 |
 | `start_run.py --force` | off | re-score answers that already have a quality |
 
@@ -737,6 +749,62 @@ JUDGE_MODEL = "gpt-4o-mini"
 
 Claude is *not* OpenAI-compatible — using a Claude model as the judge needs a
 separate backend via the `anthropic` SDK.
+
+#### Where the judge runs
+
+The blends are built and prompted with **unsloth**, in a process per individual.
+The judge need not be: `JUDGE_BACKEND` picks between two transports, and the
+four judging evaluators are indifferent to which one a sweep chose.
+
+| `JUDGE_BACKEND` | Where the tokens come from | Needs |
+|---|---|---|
+| `"endpoint"` (default) | `POST JUDGE_BASE_URL/chat/completions` | a server up — LMStudio, vLLM, OpenAI, OpenRouter |
+| `"unsloth"` | `JUDGE_MODEL`, loaded in the evaluate step's own process | the venv one level up, and VRAM |
+
+```python
+JUDGE_BACKEND = "unsloth"
+JUDGE_MODEL = "unsloth/qwen2.5-7b-instruct-unsloth-bnb-4bit"
+```
+
+That is the whole change. A sweep then runs end to end on this repo and a GPU,
+with nothing listening on any port — the same `python main.py`, and the same
+`run_db/gep.sqlite3` at the end of it.
+
+**One instrument, two transports.** The rubrics, the retries, the abandon rule,
+`judge_model` on every exchange and the way a score is read out of a reply are
+all above the split, in `common.ask_judge()`; the backend decides only where the
+tokens are produced. So a sweep graded locally is comparable with one graded
+over an API in every respect except the judge model itself — which is what
+`judge_model` records either way.
+
+**Three things about the local backend are deliberate.**
+
+*It loads on the first answer it grades, not while preparing.*
+`llm_judge_baseline` runs the **base** model while preparing, to fill its cache
+of control answers; loading the judge before that would put two models on the
+card for no reason.
+
+*It is released the moment the step is done* — the evaluate step and the testing
+pass both wrap their work so it happens however the step ends. `main.py` runs a
+whole search in one interpreter, so the next generation spawns scripts that each
+load the base model, and a judge still resident here would be VRAM taken from
+every one of them.
+
+*A model that will not load stops the step; a generation that fails costs one
+answer.* A missing `JUDGE_MODEL`, a model this machine cannot load, or a
+tokeniser with no chat template are configuration failures and say so once. An
+out-of-memory or an over-long prompt during grading fails that one answer, keeps
+its NULL quality and is picked up by the next run, exactly as an endpoint's 500
+is. And at `JUDGE_TEMPERATURE = 0` an unparseable reply is **not** retried:
+greedy decoding returns the same reply, so the retry would only spend another
+`generate()` to fail in the same way.
+
+`JUDGE_MODEL` has to be named on this backend. There is nothing to ask what it
+has loaded the way an endpoint can be asked, and falling back to `BASE_MODEL`
+would leave the model under test grading its own descendants.
+
+[`evaluators/local_model.py`](evaluators/local_model.py) is the whole of it —
+the second module in that package that is not an evaluator, beside `common.py`.
 
 #### `llm_judge_reference` — grading against the dataset's own answer
 
@@ -861,8 +929,9 @@ adapter is `HEURISTIC_REQUIRE = r"^[^a-z]*$"`.
 
 #### `panel` — several judges
 
-`PANEL_MODELS` names the members, all served by `PANEL_BASE_URL` (or
-`JUDGE_BASE_URL`); `PANEL_AGGREGATE` is `mean`, `median`, `min` or `max`; and
+`PANEL_MODELS` names the members, all reached the same way — `PANEL_BASE_URL`
+(or `JUDGE_BASE_URL`), or this machine when `JUDGE_BACKEND` is `"unsloth"`;
+`PANEL_AGGREGATE` is `mean`, `median`, `min` or `max`; and
 `PANEL_USE_REFERENCE` switches the panel onto the reference rubric. Everything
 else about a member comes from the `JUDGE_*` settings, so a panel is several
 models grading identically rather than several differently configured judges.
@@ -871,7 +940,17 @@ Less noise per score, N times the cost. A member that fails is dropped rather
 than fatal — a panel that loses one model still has a score — and only a panel
 where nobody answered fails the exchange. An empty `PANEL_MODELS` asks the
 endpoint what it has loaded and sits a panel of one on it, which is `llm_judge`
-with extra steps.
+with extra steps; on the unsloth backend there is nothing to ask, so the panel
+has to be named.
+
+**On the unsloth backend a panel is N models resident at once.** Each member is
+asked about every answer in turn, so unloading between them would reload the
+whole panel per answer — the same bargain `PROCESS_RUN_BATCH_SIZE` strikes with
+base models. The step's note prints the count before any of it reaches the card:
+
+```
+panel: judge-a, judge-b, loaded here with unsloth -- 2 model(s) resident at once, aggregated by mean
+```
 
 #### Giving up early on a hopeless individual
 
@@ -901,9 +980,11 @@ rows — see [`test_run_with_dataset.py`](#14-test_run_with_datasetpy--test_resu
 `evaluators.abandon_after()` is the one piece of arithmetic behind both.
 
 Three things it deliberately does not do. It never applies to `similarity` or
-`heuristic`: a local scorer costs nothing to finish, so stopping it short would
-only lose detail, and the rule is on for the four evaluators that call an
-endpoint. An **empty** answer scores `0.0` without a call, and is not an
+`heuristic`: a local *scorer* costs nothing to finish, so stopping it short would
+only lose detail, and the rule is on for the four evaluators that ask a model —
+whichever backend they ask it through, since a call it does not make is a
+request not sent or a `generate()` not run. An **empty** answer scores `0.0`
+without a call, and is not an
 evaluation, so it neither counts toward the first 10% nor condemns an individual
 by itself — a script that missed one question still gets its other answers
 graded. And an answer the evaluator **failed** to score is not a zero either, so
@@ -920,8 +1001,9 @@ should grade everything whatever the early answers say.
 An exchange that already has a `quality` is skipped unless `--force`, and each
 score is committed as it arrives, so an interrupted sweep keeps its work. An
 empty answer scores `0.0` without asking anyone. A sweep where nothing needs
-grading never contacts an endpoint at all — which is what lets a mocked sweep,
-already scored by its own template, run on a machine with nothing up.
+grading never contacts an endpoint and never loads a judge — which is what lets
+a mocked sweep, already scored by its own template, run on a machine with
+nothing up and no GPU.
 
 An evaluator that cannot score one answer fails **that answer** and no more: it
 keeps its NULL quality, the step counts it, and a re-run picks it up again. Only
@@ -969,7 +1051,10 @@ Its `label` is what lands in `exchanges.judge_model`. `context` is the step's ow
 ignore it otherwise. Knobs go in `settings.py` under a prefix of their own and
 reach `score()` as `prepared.conf`, which is the sweep's *stored* settings, never
 `settings.py` as it stands now. Anything a second evaluator would also want
-belongs in `evaluators/common.py`.
+belongs in `evaluators/common.py`. An evaluator that asks a model should ask it
+through `common.ask_judge()` and build its block with `common.judge_settings()`,
+which is what makes it work on both backends for free, and should be registered
+with `needs_judge=True` so the abandon rule applies to it.
 
 ### 6. `search/calculate_fitness.py` → `individuals.fitness`, `fitness_history`
 
@@ -2037,9 +2122,9 @@ alone and do not count — and once that many graded answers have all come back
 `0.0`, the rest of that individual's answers are written as `0.0` with the
 reason saying so. The row's mean is then the mean of the whole individual, which
 is what makes a testing quality comparable with the training quality it is
-printed beside. As in the evaluate step, only the evaluators that call an
-endpoint abandon anything, and neither an empty answer nor a failed grading call
-counts toward it.
+printed beside. As in the evaluate step, only the evaluators that ask a model
+abandon anything, and neither an empty answer nor a failed grading call counts
+toward it.
 
 `test_answers` reads the graded transcripts back one answer at a time:
 
@@ -2404,6 +2489,7 @@ tools/        dev aids that are not part of the pipeline
 |---|---|
 | `evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_baseline.py`, `similarity.py`, `heuristic.py`, `panel.py` |
 | `evaluators/common.py` | what they share: the registry, the judge transport, the reference answers, the tokeniser |
+| `evaluators/local_model.py` | the other half of the judge transport: the judge loaded here with unsloth, for `JUDGE_BACKEND = "unsloth"` |
 
 ### The database, and reading it back
 

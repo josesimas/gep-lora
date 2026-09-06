@@ -30,6 +30,17 @@ a stored sweep can say how:
     common.py                the registry, the judge transport, the reference
                              answers, the tokeniser -- everything two of the
                              six would otherwise both own
+    local_model.py           the other half of the judge transport: the judge
+                             loaded here with unsloth, for JUDGE_BACKEND =
+                             "unsloth". Not an evaluator either
+
+**Where the judge runs is not which evaluator ran.** JUDGE_BACKEND picks between
+an OpenAI-compatible endpoint and a model loaded in this process with unsloth --
+the same way the generated scripts load theirs -- and the four judging
+evaluators above are indifferent to it: they build a prompt and call
+common.ask_judge(), which is where the two backends meet. So a sweep can be run
+with no server up at all, and a sweep graded locally is graded by the same
+rubrics, retries and abandon rule as one graded over an API.
 
 Each module ends in a register() call, and importing this package is what runs
 them: the imports at the foot of this file are the registration, which is why
@@ -70,8 +81,9 @@ Usage, which is all start_run.py does with it:
     quality, reason = evaluator.score(item, prepared)
 """
 
-from evaluators.common import (API_KEY, DEFAULT, Evaluator, Prepared,
-                               abandon_after, available, get, register)
+from evaluators.common import (API_KEY, BACKENDS, DEFAULT, ENDPOINT, UNSLOTH,
+                               Evaluator, Prepared, abandon_after, available,
+                               backend_of, get, register, release_models)
 
 # Importing each module is what registers its evaluator, so these are the
 # registry itself rather than unused imports. Listed in the order --evaluators
@@ -83,5 +95,6 @@ from evaluators import similarity               # noqa: F401,E402
 from evaluators import heuristic                # noqa: F401,E402
 from evaluators import panel                    # noqa: F401,E402
 
-__all__ = ["API_KEY", "DEFAULT", "Evaluator", "Prepared", "abandon_after",
-           "available", "get", "register"]
+__all__ = ["API_KEY", "BACKENDS", "DEFAULT", "ENDPOINT", "Evaluator",
+           "Prepared", "UNSLOTH", "abandon_after", "available", "backend_of",
+           "get", "register", "release_models"]
