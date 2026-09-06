@@ -129,8 +129,8 @@ start_run.py calls this as a library:
 import bisect
 from collections import namedtuple
 
-import generate_population
-import store
+from search import generate_population
+from storage import store
 
 # What one round of selection came to: the rows the wheel landed on, in the
 # order it landed on them; the numbers their copies were appended under; the

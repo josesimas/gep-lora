@@ -47,9 +47,9 @@ Usage as a module:
 
 Usage from the command line:
 
-    python store.py --list                  # the sweeps in the database
-    python store.py --show 3                # one sweep, summarised
-    python store.py --export 3 --into dump  # write it back out as text files
+    python -m storage.store --list                  # the sweeps in the database
+    python -m storage.store --show 3                # one sweep, summarised
+    python -m storage.store --export 3 --into dump  # write it back out as text files
 """
 
 import argparse
@@ -60,7 +60,10 @@ import subprocess
 import sys
 import time
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# The repo folder, one above this one. Every path a setting names is
+# resolved against it, so nothing here depends on the cwd a driver was
+# started from, or on which sub-folder this module ended up in.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 # --- schema ----------------------------------------------------------------
@@ -330,7 +333,7 @@ class Database(sqlite3.Connection):
 
 def connect(db_path):
     """Open (creating if need be) the database, with the schema in place."""
-    path = db_path if os.path.isabs(db_path) else os.path.join(_HERE, db_path)
+    path = db_path if os.path.isabs(db_path) else os.path.join(_ROOT, db_path)
     folder = os.path.dirname(path)
     if folder:
         os.makedirs(folder, exist_ok=True)
@@ -358,7 +361,7 @@ def _git_commit():
     """
     try:
         done = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                              cwd=_HERE, capture_output=True, text=True, timeout=10)
+                              cwd=_ROOT, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout.strip() or None if done.returncode == 0 else None
@@ -1348,7 +1351,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.db is None:
-        import settings as _settings
+        from config import settings as _settings
         args.db = _settings.DB_PATH
     conn = connect(args.db)
 

@@ -14,8 +14,8 @@ The one way records get into that table, from either end of a sweep's life:
     or testing set decided on after it started, so a later pass has the
     questions beside the run they belong to:
 
-        python add_dataset.py datasets/validation.json --split validation
-        python add_dataset.py extra.json --split testing --db run_db1/gep.sqlite3 --run 3
+        python -m storage.add_dataset datasets/validation.json --split validation
+        python -m storage.add_dataset extra.json --split testing --db run_db1/gep.sqlite3 --run 3
 
 Both go through `add()`, so a split added by hand is stored exactly as one the
 driver stored -- there is no second reader of a dataset file and no second
@@ -33,10 +33,13 @@ import argparse
 import os
 import sys
 
-import generate_runs
-import store
+from blends import generate_runs
+from storage import store
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# The repo folder, one above this one. Every path a setting names is
+# resolved against it, so nothing here depends on the cwd a driver was
+# started from, or on which sub-folder this module ended up in.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def resolve_dataset(name):
@@ -53,7 +56,7 @@ def resolve_dataset(name):
     here = os.path.abspath(name)
     if os.path.exists(here):
         return here
-    beside = os.path.abspath(os.path.join(_HERE, name))
+    beside = os.path.abspath(os.path.join(_ROOT, name))
     if os.path.exists(beside):
         return beside
     raise SystemExit("no dataset file at %s%s"
@@ -156,12 +159,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.db is None:
-        import settings
+        from config import settings
         args.db = settings.DB_PATH
     # connect() would create an empty database with the schema in it, which for
     # a typo'd --db means being told a fresh file holds no runs instead of that
     # the file does not exist.
-    path = args.db if os.path.isabs(args.db) else os.path.join(_HERE, args.db)
+    path = args.db if os.path.isabs(args.db) else os.path.join(_ROOT, args.db)
     if not os.path.exists(path):
         raise SystemExit("no database at %s" % os.path.abspath(path))
 

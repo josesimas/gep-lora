@@ -7,8 +7,8 @@ own copy of a training script. This is the one script that makes another, so a
 new behaviour to blend costs a dataset and a command rather than a sixth folder
 of duplicated training code:
 
-    python create_lora.py loras/Lora006/poem_adapter --dataset poem
-    python create_lora.py loras/Lora007/shout_adapter --dataset uppercase --rank 8
+    python -m adapters.create_lora loras/Lora006/poem_adapter --dataset poem
+    python -m adapters.create_lora loras/Lora007/shout_adapter --dataset uppercase --rank 8
 
 The folder it writes is exactly the shape the generated scripts expect -- an
 adapter_config.json naming the same base model, an adapter_model.safetensors,
@@ -38,7 +38,10 @@ import sys
 # Match the training/inference environment: disable Xet download acceleration.
 os.environ["HF_HUB_DISABLE_XET"] = "1"
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# The repo folder, one above this one. Every path a setting names is
+# resolved against it, so nothing here depends on the cwd a driver was
+# started from, or on which sub-folder this module ended up in.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # What the existing five were trained on. Their adapter_config.json records the
 # 4-bit variant of this name, because load_in_4bit resolves it, and that
@@ -54,7 +57,7 @@ TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj",
 MAX_SEQ = 2048
 
 # Where --dataset looks when it is given a bare name rather than a path.
-DATASET_DIR = os.path.join(_HERE, "datasets")
+DATASET_DIR = os.path.join(_ROOT, "datasets")
 
 
 def check_interpreter():
@@ -165,7 +168,7 @@ def slot_line(folder, slot="L?"):
     in because it writes the whole set at once.
     """
     try:
-        relative = os.path.relpath(folder, _HERE)
+        relative = os.path.relpath(folder, _ROOT)
     except ValueError:
         # Windows: relpath refuses to relate paths on two different drives.
         relative = ".."
@@ -271,7 +274,7 @@ def parse_args(argv=None):
         description="Train one LoRA adapter into a folder the pipeline can use.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="example:\n"
-               "  python create_lora.py loras/Lora006/poem_adapter --dataset poem --rank 8",
+               "  python -m adapters.create_lora loras/Lora006/poem_adapter --dataset poem --rank 8",
     )
     parser.add_argument(
         "folder",

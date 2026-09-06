@@ -28,7 +28,7 @@ start_run.py calls this as a library:
     elitism.elect(conn, run_id)
 """
 
-import store
+from storage import store
 
 
 def best_of(rows):

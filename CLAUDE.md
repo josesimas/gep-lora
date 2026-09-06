@@ -13,6 +13,47 @@ the `evaluate` step then scores the answers, the way `EVALUATOR` in `settings.py
 `plan.txt` is the original spec. `README.md` is long and current — read it before changing
 pipeline behaviour, and update it when behaviour changes.
 
+## Layout
+
+Three drivers at the top level; every other module lives in a folder named for
+what it does. Import paths say where a thing lives, so `from storage import
+store` is also the answer to "where is the schema?".
+
+```
+main.py           the whole search in one command
+start_run.py      the pipeline driver: STEPS, Context, the parser
+continue_run.py   the generation loop over a sweep already in the database
+
+config/       settings.py -- every knob the pipeline reads
+search/       generate_population, draw_trees, calculate_fitness,
+              elitism, selection, mutation -- the GEP search itself
+blends/       generate_runs, process_run, baseline_run -- a chromosome,
+              turned into a script and run
+templates/    the four template_*.py -- read and filled, never imported,
+              which is why this folder is not a package
+storage/      store, add_dataset, db_datasets -- the database and its datasets
+evaluators/   one module per evaluator, plus common.py
+testing/      test_run_with_dataset -- the held-out pass
+reporting/    generate_html_db_stats -- a sweep as a single HTML page
+adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
+              a sweep blends. Not part of a sweep; what a sweep runs against
+tools/        test.py, combination.py -- dev aids, not part of the pipeline
+```
+
+Every CLI below the top level is run as a module, from the repo root:
+`python -m storage.store --show 0`, `python -m tools.test <chromosome>`. The
+three drivers are run as files, as before.
+
+**Paths resolve against the repo folder, never the module's own.** Each moved
+module carries `_ROOT = dirname(dirname(abspath(__file__)))` and resolves
+`TRAINING_SET`, `LORA_SLOTS`, `DB_RUN_DIR` and the rest against that, so
+nothing depends on which folder a module ended up in or on the cwd a driver
+was started from. `blends.generate_runs.template_path()` is the one resolver
+for the four templates: a bare name like `template_code_mocked.py` -- which is
+what `settings.py` holds and what every sweep stored before the move recorded
+-- is looked for in `templates/`, so a stored sweep still names something that
+exists.
+
 ## Interpreter — read this first
 
 The generated scripts need the venv **one level up**, outside this repo:
@@ -161,7 +202,7 @@ rather than on `TESTING_SET` naming a file, which is the same question asked of 
 ```bash
 python start_run.py --db <prepared> --run 1 --from-db
 python continue_run.py --db <prepared> --run 1 --from-db
-python test_run_with_dataset.py --db <prepared> --run 1 --from-db
+python -m testing.test_run_with_dataset --db <prepared> --run 1 --from-db
 ```
 
 It needs a sweep (`--run`), because a *new* sweep is the moment those rows are read out of
@@ -169,8 +210,8 @@ the files and stored -- there is nothing to read back yet. `test_run_with_datase
 no dataset argument with it, and records nothing: the rows it reads already are the stored
 split.
 
-[db_datasets.py](db_datasets.py) is the mechanism, and the counterpart of
-[add_dataset.py](add_dataset.py) -- that one is the only way into the `datasets` table, this
+[db_datasets.py](storage/db_datasets.py) is the mechanism, and the counterpart of
+[add_dataset.py](storage/add_dataset.py) -- that one is the only way into the `datasets` table, this
 is the way back out. `repoint(conn, run_id, conf)` writes each split the sweep holds into
 the run folder above (`training.jsonl`, `.jsonl` or `.txt` chosen from the records
 themselves), and hands back the settings with the three `*_SET` values pointing at what it
@@ -191,7 +232,7 @@ rather than left alone -- the point of the mode is that local files are not cons
 training rows at all is refused outright, before a population is drawn.
 
 ```bash
-python store.py --show 0
+python -m storage.store --show 0
 ```
 
 Reads a stored sweep back: `--list` the sweeps, `--show` one (`0` = latest), `--export`
@@ -199,7 +240,7 @@ one into a folder of text files (population, trees, index, scripts, outputs, tra
 results) — a view of the sweep, derived from the database, never the sweep itself.
 
 ```bash
-python generate_html_db_stats.py run_db/gep.sqlite3
+python -m reporting.generate_html_db_stats run_db/gep.sqlite3
 ```
 
 The other reader, and the only one that produces a file: one stored sweep as a
@@ -314,7 +355,7 @@ answers, random qualities, no GPU, and no judge. Use it whenever the thing under
 the plumbing — but a mocked quality is noise, never a result.
 
 ```bash
-python test.py CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+python -m tools.test CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
 ```
 
 The closest thing to a unit test: exercises one chromosome through the same builders the
@@ -324,7 +365,7 @@ verdict, and writes `run/test_tree.txt` / `run/test_run.py` — its own folder, 
 chromosome would get as an individual. There is no pytest suite.
 
 ```bash
-python test_run_with_dataset.py datasets/medical_testing_lora_dataset.json
+python -m testing.test_run_with_dataset datasets/medical_testing_lora_dataset.json
 ```
 
 The one thing that runs **after** a sweep rather than as part of one: it records the
@@ -408,7 +449,7 @@ means one zero is enough.
 the question, what the **bare base model** answered and what the blend answered, and
 rates the improvement on a centred scale where **0.5 is "changed nothing worth
 having"** (`JUDGE_BASELINE_SYSTEM_PROMPT`). It needs a control, which
-[baseline_run.py](baseline_run.py) produces once -- fill `template_baseline.py`, run it,
+[baseline_run.py](blends/baseline_run.py) produces once -- fill `template_baseline.py`, run it,
 read its transcript with `process_run.exchanges` -- and caches in the `baselines` table,
 keyed by `(BASE_MODEL, normalised question)` and hanging off **no run**: a base-model
 answer belongs to the model and the question, so every later sweep on the same base
@@ -428,8 +469,8 @@ value it did not use.
 ## Architecture
 
 `start_run.py` is the entry point and the driver: it owns the `STEPS` list, the `Context` each
-step gets, and the argument parser. `settings.py` is the one copy of the knobs; `store.py`
-owns the sqlite schema (`runs -> settings, datasets, individuals -> executions -> exchanges`,
+step gets, and the argument parser. `config/settings.py` is the one copy of the knobs;
+`storage/store.py` owns the sqlite schema (`runs -> settings, datasets, individuals -> executions -> exchanges`,
 plus `fitness_history` and `test_results` hanging off `runs`, plus `baselines`, which hangs
 off nothing -- see the evaluate section), its
 helpers, and `--list/--show/--export`. Nothing else imports sqlite3.
@@ -449,14 +490,14 @@ not a fact about the dataset. `generate_runs.dataset_records()` is that uncapped
 `eval_records()` is the same parse with the cap applied. Only a *new* sweep saves one:
 `continue_run.py` resumes a sweep that already recorded its dataset, which is the point.
 
-[add_dataset.py](add_dataset.py) is where that storing lives, and is the **only** path into
+[add_dataset.py](storage/add_dataset.py) is where that storing lives, and is the **only** path into
 the table -- `save_all(conn, run_id, conf)` for the splits a sweep's settings name (what
 `new_sweep()` calls, with `SPLIT_SETTINGS` mapping split -> setting), `add(conn, run_id,
 split, path)` for one file, and a command line over `add()` for the split a sweep was never
 given:
 
 ```bash
-python add_dataset.py datasets/medical_validation_lora_dataset.json --split validation
+python -m storage.add_dataset datasets/medical_validation_lora_dataset.json --split validation
 ```
 
 `--db` picks the database (default `DB_PATH`), `--run` the sweep (`0`, the default, is the
@@ -468,7 +509,7 @@ whole and an empty read would leave the sweep with no dataset rather than the on
 path is resolved the way a setting is (absolute, or beside the repo); only the command line
 tries the cwd first, because a path typed at a shell means what the shell means by it.
 
-[db_datasets.py](db_datasets.py) is the way back **out**, and the only other module that
+[db_datasets.py](storage/db_datasets.py) is the way back **out**, and the only other module that
 knows those rows can become a file again: `repoint()` writes each split beside the database
 and points a sweep's `*_SET` settings at what it wrote, which is how `--from-db` feeds the
 generated scripts and the evaluators from the database. See the `main.py --run` part of
@@ -510,7 +551,7 @@ fixed rule, so re-running elects the same one. An all-zero population elects nob
 writes nothing: `fitness` defaults to 0.0, so that means either the fitness step never ran
 or nothing scored, and neither has an elite worth keeping. It reads the stored `fitness`
 column and never the transcripts -- one definition of "best", living in
-[calculate_fitness.py](calculate_fitness.py).
+[calculate_fitness.py](search/calculate_fitness.py).
 
 `selection.py` is roulette wheel sampling plus a cull and one stranger:
 `select(conn, run_id, count, rng, conf)` gives each individual a slice of the wheel as wide
@@ -767,7 +808,7 @@ appeared to manage VRAM would be claiming to test something it cannot.
   the settings form, relative with forward slashes); `test_lora.py` accepts
   `--lora Lora003` with or without the `loras/` prefix.
 - `run/`, `run_db/` and `run_real/` are gitignored, as is everything under
-  `loras/Lora00*/` except each folder's `start_run.py` and `inference.py` -- the ignore matches
+  `loras/Lora00*/` except each folder's `main.py` and `inference.py` -- the ignore matches
   the folders' *contents* (`loras/Lora00*/*`), because git cannot re-include a file whose
   parent directory is excluded. Adapter weights and the sweep database are not tracked.
   `run/` is only ever written by `test.py`.

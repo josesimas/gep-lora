@@ -17,7 +17,7 @@ Reading the rows top to bottom, left to right gives the expression back, since
 that level-order walk is exactly what the K-expression encodes.
 """
 
-from generate_population import decode, levels
+from search.generate_population import decode, levels
 
 
 def draw(expression):

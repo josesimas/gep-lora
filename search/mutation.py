@@ -64,8 +64,8 @@ start_run.py calls this as a library:
 
 from collections import namedtuple
 
-import generate_population
-import store
+from search import generate_population
+from storage import store
 
 # One individual this round touched: what it was, what it became, and how many
 # symbols differ between the two.

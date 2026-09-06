@@ -19,8 +19,8 @@ Why this works / what "one after the other" means here:
 Tune the blend with W1 / W2 below (1.0 each = apply both at full strength).
 
 Usage:
-    python combination.py                      # runs a couple of demo prompts
-    python combination.py "Help me plan my week."  # ask your own question
+    python -m tools.combination                      # runs a couple of demo prompts
+    python -m tools.combination "Help me plan my week."  # ask your own question
 """
 
 import os

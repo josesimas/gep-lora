@@ -77,10 +77,10 @@ import json
 import sys
 import time
 
-import db_datasets
-import settings as config
+from config import settings as config
 import start_run
-import store
+from storage import db_datasets
+from storage import store
 
 # One generation: every step but population, in the order start_run.py defines them.
 # Named rather than sliced, so a step inserted at the front of STEPS does not
@@ -231,7 +231,7 @@ def evolve(conn, run_id, conf, generations, options):
             print("stopped in generation %d of %d, after %.1fs"
                   % (number, generations, time.time() - started))
             print("the sweep is marked failed; what the earlier generations did is")
-            print("still in the database -- python store.py --show %d" % run_id)
+            print("still in the database -- python -m storage.store --show %d" % run_id)
             return code
 
         grown = len(store.individuals(conn, run_id))
@@ -259,7 +259,7 @@ def summarise(conn, run_id, generations, seconds):
               % (row["number"],
                  "-" if row["fitness"] is None else "%.3f" % row["fitness"]))
         print("    %s" % row["chromosome"])
-    print("run %d in %s -- python store.py --show %d" % (run_id, conn.path, run_id))
+    print("run %d in %s -- python -m storage.store --show %d" % (run_id, conn.path, run_id))
     print("=" * 70)
 
 
@@ -338,7 +338,7 @@ def cli(argv=None):
             raise SystemExit("%s holds no sweeps to continue. Start one with: "
                              "python start_run.py" % conn.path)
         if store.get_run(conn, run_id) is None:
-            raise SystemExit("no run %d in %s. Try: python store.py --list"
+            raise SystemExit("no run %d in %s. Try: python -m storage.store --list"
                              % (run_id, conn.path))
 
         # The settings the sweep was created with, never settings.py as it

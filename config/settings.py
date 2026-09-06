@@ -288,7 +288,7 @@ PROCESS_RUN_PROGRESS_SECONDS = 5
 # it does nothing to a sweep already running, which is what keeps every fitness
 # number in one sweep comparable with the others. `python start_run.py --evaluators`
 # lists what is registered.
-EVALUATOR = "similarity"
+EVALUATOR = "llm_judge"
 
 
 # --- the judge model, for the evaluators that ask one -----------------------

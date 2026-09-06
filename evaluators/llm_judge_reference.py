@@ -16,7 +16,7 @@ Everything else -- endpoint, model, timeouts, retries -- is llm_judge's, whose
 prepare() this one extends and whose score() it falls back to.
 """
 
-import generate_runs
+from blends import generate_runs
 
 from evaluators import common, llm_judge
 

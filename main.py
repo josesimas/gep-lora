@@ -88,7 +88,7 @@ their own too:
 
     python start_run.py --db <prepared> --run 1 --from-db
     python continue_run.py --db <prepared> --run 1 --from-db
-    python test_run_with_dataset.py --db <prepared> --run 1 --from-db
+    python -m testing.test_run_with_dataset --db <prepared> --run 1 --from-db
 
 --no-test and --test-min-quality go to the testing pass, and --db, --limit,
 --keep-scripts, --timeout and --force reach it too.
@@ -115,11 +115,11 @@ import os
 import sys
 import time
 
+from config import settings as config
 import continue_run
-import settings as config
 import start_run
-import store
-import test_run_with_dataset
+from storage import store
+from testing import test_run_with_dataset
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -247,7 +247,7 @@ def adopt(options, run=None):
                 "%s holds no sweeps, so there is none to run. Drop --run to "
                 "start one from settings.py." % conn.path)
         if store.get_run(conn, run_id) is None:
-            raise SystemExit("no run %d in %s. Try: python store.py --list"
+            raise SystemExit("no run %d in %s. Try: python -m storage.store --list"
                              % (run_id, conn.path))
         held = store.individuals(conn, run_id)
         if held:
@@ -375,7 +375,7 @@ def cli(argv=None):
     print("full run of %d generation(s) %s in %.1fs -- run %d in %s"
           % (generations + 1, "finished" if not code else "STOPPED",
              time.time() - started, run_id, options.db))
-    print("python store.py --show %d" % run_id)
+    print("python -m storage.store --show %d" % run_id)
     print("=" * 70)
 
     # The search is over; this is the one question it could not answer about
@@ -445,7 +445,7 @@ def test(options, run_id, adopted=False):
             print()
             print("no testing pass: run %d holds no testing split, so nothing "
                   "says which questions it was never judged on." % run_id)
-            print("    add one with: python add_dataset.py <file> --db %s "
+            print("    add one with: python -m storage.add_dataset <file> --db %s "
                   "--run %d --split testing" % (options.db, run_id))
             return 0
         dataset = "its own testing split (%d record(s))" % records

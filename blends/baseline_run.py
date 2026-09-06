@@ -36,10 +36,10 @@ answers exist.
 
 import os
 
-import generate_runs
-import process_run
-import settings as config
-import store
+from blends import generate_runs
+from blends import process_run
+from config import settings as config
+from storage import store
 
 # The one script this module ever writes, in the sweep's run folder, deleted
 # again once it has been read -- the same life cycle the individuals' scripts
@@ -49,15 +49,6 @@ SCRIPT_NAME = "baseline.py"
 
 # The mocked baseline, chosen when the sweep itself was mocked.
 MOCKED_TEMPLATE = "template_baseline_mocked.py"
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-
-
-def _resolve(name):
-    """Absolute path of a template, from a name or a path."""
-    if not os.path.isabs(name) and not os.path.exists(name):
-        return os.path.join(_HERE, name)
-    return os.path.abspath(name)
 
 
 def template_for(conf):
@@ -70,10 +61,11 @@ def template_for(conf):
     """
     named = conf.get("BASELINE_TEMPLATE", config.BASELINE_TEMPLATE)
     if named:
-        path = _resolve(named)
+        path = generate_runs.template_path(named)
         return path, "mocked" in os.path.basename(path)
     mocked = "mocked" in os.path.basename(conf.get("TEMPLATE") or "")
-    return _resolve(MOCKED_TEMPLATE if mocked else "template_baseline.py"), mocked
+    return (generate_runs.template_path(
+        MOCKED_TEMPLATE if mocked else "template_baseline.py"), mocked)
 
 
 def model_key(conf):

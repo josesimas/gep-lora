@@ -63,9 +63,9 @@ sys.executable, so the wrong interpreter fails every individual. That does not
 apply to a sweep generated from template_code_mocked.py, which loads nothing.
 
 Reading a sweep back:
-    python store.py --list
-    python store.py --show 0
-    python store.py --export 0 --into export
+    python -m storage.store --list
+    python -m storage.store --show 0
+    python -m storage.store --export 0 --into export
 """
 
 import argparse
@@ -77,19 +77,19 @@ import threading
 import time
 from collections import namedtuple
 
-import add_dataset
-import calculate_fitness
-import db_datasets
-import draw_trees
-import elitism
+from blends import generate_runs
+from blends import process_run
+from config import settings as config
 import evaluators
-import generate_population
-import generate_runs
-import mutation
-import process_run
-import selection
-import settings as config
-import store
+from search import calculate_fitness
+from search import draw_trees
+from search import elitism
+from search import generate_population
+from search import mutation
+from search import selection
+from storage import add_dataset
+from storage import db_datasets
+from storage import store
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -118,14 +118,6 @@ class Context:
 
 
 # --- the settings a sweep runs under --------------------------------------
-
-
-def _template_path(name):
-    """Absolute path of the template to fill, from a name or None."""
-    name = name or "template_code.py"
-    if not os.path.isabs(name) and not os.path.exists(name):
-        return os.path.join(_HERE, name)
-    return os.path.abspath(name)
 
 
 def new_sweep(conn, label):
@@ -287,7 +279,7 @@ def _clear_scripts(context, rows):
     gone = store.remove_scripts(context.conn, context.run_id, context.run_dir,
                                 [row["script_name"] for row in rows])
     print("removed %d spent script(s) from %s -- they are still in the database "
-          "(python start_run.py runs, or python store.py --export)"
+          "(python start_run.py runs, or python -m storage.store --export)"
           % (gone, context.run_dir))
 
 
@@ -454,7 +446,7 @@ def step_process(context):
     # A chromosome that cannot run is a result, not a pipeline failure. Only a
     # sweep where nothing at all worked points at something systemic.
     if failures == len(selected):
-        raise SystemExit("every individual failed -- try: python store.py --show %d"
+        raise SystemExit("every individual failed -- try: python -m storage.store --show %d"
                          % run_id)
 
 
@@ -936,13 +928,13 @@ def context_for(conn, run_id, conf, args):
                 if getattr(args, "from_db", False) else None)
     return Context(conn, run_id, conf,
                    resolve_run_dir(conf, getattr(args, "run_dir", None), isolated),
-                   _template_path(conf.get("TEMPLATE")), args)
+                   generate_runs.template_path(conf.get("TEMPLATE")), args)
 
 
 def run(steps, context):
     """Run `steps` in order. Returns the exit code for the process.
 
-    A sweep that stops part way is left marked 'failed', so `python store.py
+    A sweep that stops part way is left marked 'failed', so `python -m storage.store
     --list` says so rather than presenting a half-finished run as a result.
     """
     started = time.time()
@@ -973,7 +965,7 @@ def run(steps, context):
     print("=" * 70)
     print("done: %s in %.1fs" % (", ".join(step.name for step in steps),
                                  time.time() - started))
-    print("run %d in %s -- python store.py --show %d"
+    print("run %d in %s -- python -m storage.store --show %d"
           % (context.run_id, context.conn.path, context.run_id))
     print("=" * 70)
     return 0
@@ -1085,7 +1077,7 @@ def main(argv=None):
             raise SystemExit("%s holds no runs yet -- start one with the population "
                              "step." % conn.path)
         if store.get_run(conn, run_id) is None:
-            raise SystemExit("no run %d in %s. Try: python store.py --list"
+            raise SystemExit("no run %d in %s. Try: python -m storage.store --list"
                              % (run_id, conn.path))
         conf = store.get_settings(conn, run_id)
         print("resuming run %d in %s\n" % (run_id, conn.path))

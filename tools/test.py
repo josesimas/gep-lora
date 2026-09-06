@@ -19,16 +19,16 @@ generate_runs.plan/render), so what you see here is exactly what you would have
 got had this chromosome been drawn into a population.
 
 Usage:
-    python test.py                          # uses CHROMOSOME below
-    python test.py CAT.L1.L2.w5.w2          # or pass one on the command line
+    python -m tools.test                          # uses CHROMOSOME below
+    python -m tools.test CAT.L1.L2.w5.w2          # or pass one on the command line
 """
 
 import os
 import sys
 
-from draw_trees import draw
-from generate_population import decode
-from generate_runs import build_order_block, plan, render, slot_ranks
+from search.draw_trees import draw
+from search.generate_population import decode
+from blends.generate_runs import build_order_block, plan, render, slot_ranks
 
 # ---------------------------------------------------------------------------
 # The individual to try. Set this and run.
@@ -41,7 +41,10 @@ CHROMOSOME = "CAT.CAT.L1.L5.L4.w3.w3.w2"
 # scripts in run_db/.
 OUTPUT_DIR = "run"
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# The repo folder, one above this one. Every path a setting names is
+# resolved against it, so nothing here depends on the cwd a driver was
+# started from, or on which sub-folder this module ended up in.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def main():
@@ -63,7 +66,7 @@ def main():
 
     # Ranks come from each slot's adapter_config.json; they may differ. The
     # slots themselves are LORA_SLOTS in settings.py, the same ones a sweep uses.
-    out_dir = os.path.join(_HERE, OUTPUT_DIR)
+    out_dir = os.path.join(_ROOT, OUTPUT_DIR)
     steps, final = plan(root, slot_ranks())
     broken = [step for step in steps if step.broken]
 

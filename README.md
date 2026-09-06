@@ -60,7 +60,7 @@ A combined node is itself a named adapter, so it feeds its parent exactly like a
 leaf does. Its children's weights are already folded into it, so **it enters its
 own parent at weight 1.0**.
 
-This is the same idea as [combination.py](combination.py), which stacks two
+This is the same idea as [combination.py](tools/combination.py), which stacks two
 adapters with a hardcoded `combination_type="cat"`. Here the tree decides both
 the shape and the weights.
 
@@ -124,7 +124,7 @@ On this base model, measured on an A6000:
 
 360 MB a layer across 28 layers — a single `SVD` node used to add **~10 GB of
 resident VRAM** to hold about 18 MB of weights, seven times the model it
-attaches to. [template_code.py](template_code.py) closes it in `combine()`:
+attaches to. [template_code.py](templates/template_code.py) closes it in `combine()`:
 `svd_full_matrices=False` asks for the thin SVD (the first `new_rank` singular
 vectors are identical either way, and the full n × n `V` is only a bigger buffer
 to compute and throw away), and `_compact()` then clones every weight still
@@ -210,7 +210,7 @@ population, every setting it ran under, every seed, every generated script, ever
 transcript and every score. The sweep itself is a row, so sweeps accumulate
 instead of replacing each other, can be queried across, and — because the seeds
 are stored rather than only the values they produced — can be *repeated*. See
-[store.py](#13-storepy--the-sweep-database) below.
+[store.py](#13-storagestorepy--the-sweep-database) below.
 
 The only thing that reaches the disk is the generated `run_NNN.py` scripts, in
 `run_db/`, and only until they have run; `process` deletes each one it has
@@ -293,7 +293,7 @@ Every record is stored, uncapped. `TRAINING_COUNT` says how many of them an
 *individual* is judged on, which is a fact about the sweep and already in the
 settings table, not a fact about the dataset.
 
-`python store.py --show` prints a line per split, and `--export` writes each one
+`python -m storage.store --show` prints a line per split, and `--export` writes each one
 back out as `dataset_<split>.txt` — the lines as they were read, so the export
 can be diffed against the file on disk today to see whether the dataset has
 moved under the sweep.
@@ -304,7 +304,7 @@ is created, and `continue_run.py` resumes a sweep that already recorded its
 dataset. The same module is that act performed afterwards, by hand:
 
 ```bash
-python add_dataset.py datasets/medical_validation_lora_dataset.json --split validation
+python -m storage.add_dataset datasets/medical_validation_lora_dataset.json --split validation
 ```
 
 ```
@@ -337,7 +337,7 @@ Step("select", step_select,
      "pick the survivors of this sweep -> individuals.selected"),
 ```
 
-### 1. `generate_population.py` → the `individuals` rows
+### 1. `search/generate_population.py` → the `individuals` rows
 
 The root module: it owns the alphabet, the `Node` type, and the
 `encode`/`decode` pair every other module reads trees with — there is no second
@@ -360,7 +360,7 @@ before being stored, so nothing lands in the database that cannot be read back.
 A population of 100 drawn with `SEED = 42` runs 5–32 symbols per individual
 (mean 9.5) at tree depths 2–5.
 
-### 2. `draw_trees.py` → `individuals.tree`
+### 2. `search/draw_trees.py` → `individuals.tree`
 
 Draws each chromosome in the layout `plan.txt` uses — the expression, a blank
 line, then one row per tree level — and the `trees` step stores that drawing on
@@ -371,7 +371,7 @@ Trailing symbols that the tree does not consume are reported as
 has two such symbols. A chromosome that cannot be drawn at all is stored with
 its complaint under a `!!` marker rather than being skipped.
 
-### 3. `generate_runs.py` + `template_code.py` → `individuals.script_source`
+### 3. `blends/generate_runs.py` + `templates/template_code.py` → `individuals.script_source`
 
 Turns every individual into a self-contained runnable script by filling in
 `template_code.py`. Which template gets filled is `TEMPLATE` in `settings.py`.
@@ -387,7 +387,7 @@ number  state  rank  chromosome
 73      BAD    48    CAT.L1.LIN.w5.CAT.L3.L5.L1.w2.w4.w5
 ```
 
-`python store.py --show 0` prints that table for a stored sweep.
+`python -m storage.store --show 0` prints that table for a stored sweep.
 
 Each generated script carries its tree and build plan in its docstring, then:
 loads the base model once, attaches each leaf adapter under its own name, folds
@@ -432,7 +432,7 @@ To change what every generated script looks like, edit `template_code.py` and
 re-run `python start_run.py runs`. Only add code to the generator itself when the new
 part varies per individual.
 
-#### `template_code_mocked.py` — the dry run
+#### `templates/template_code_mocked.py` — the dry run
 
 Which template gets filled is `TEMPLATE` in `settings.py`, so the same generator
 produces a different kind of script from the same population:
@@ -471,7 +471,7 @@ the local ones never reach for one at all.
 `MOCK_ANSWER_DELAY` buy back some fake slowness — useful for exercising
 `--timeout`.
 
-### 4. `process_run.py` → `executions`, `exchanges`
+### 4. `blends/process_run.py` → `executions`, `exchanges`
 
 The `runs` step writes the scripts; this one runs them. `start_run.py` hands each
 script to `process_run.launch()` and files what it said back into the database.
@@ -952,7 +952,7 @@ reach `score()` as `prepared.conf`, which is the sweep's *stored* settings, neve
 `settings.py` as it stands now. Anything a second evaluator would also want
 belongs in `evaluators/common.py`.
 
-### 6. `calculate_fitness.py` → `individuals.fitness`, `fitness_history`
+### 6. `search/calculate_fitness.py` → `individuals.fitness`, `fitness_history`
 
 The evaluate step scores answers, not chromosomes. Selection needs the opposite — one
 comparable number per individual — so this step folds each transcript into its
@@ -1055,7 +1055,7 @@ recorded generation 4 in fitness_history at 2026-08-28T11:12:06
     4     2026-08-28T11:12:06  12     0.834   0.478   CAT.SVD.L3.L1.SVD.w2.w3.L2.L4.w2.w3
 ```
 
-`python store.py --show` prints the same table for a stored sweep (with
+`python -m storage.store --show` prints the same table for a stored sweep (with
 `worst` as well), and `--export` writes it out as `fitness_history.txt`
 alongside the per-individual rows — the one exported file that is not a view of
 the population as it stands now. Note that a rising `mean` with a flat `best`
@@ -1070,7 +1070,7 @@ SELECT generation, recorded_at, population, MAX(fitness) AS best, AVG(fitness) A
   FROM fitness_history WHERE run_id = 3 GROUP BY generation ORDER BY generation;
 ```
 
-### 7. `elitism.py` → `individuals.is_best`
+### 7. `search/elitism.py` → `individuals.is_best`
 
 Names the one individual this generation carries forward:
 
@@ -1113,7 +1113,7 @@ transcripts again here would be a second, quietly different definition of
 "best": when the fitness rule changes it changes in `calculate_fitness.py`, and
 this step follows it without knowing that it did.
 
-### 8. `selection.py` → copies in, the weakest out, one stranger
+### 8. `search/selection.py` → copies in, the weakest out, one stranger
 
 Fitness-proportionate selection, the classic roulette wheel:
 
@@ -1268,7 +1268,7 @@ population it is spinning over — the same idiom as `WEIGHT_MASTER_SEED` and an
 individual's number. One recorded seed, every draw repeatable, and a second
 round still draws its own parents rather than the first round's again.
 
-### 9. `mutation.py` → `individuals.chromosome`, `individuals.has_changed`
+### 9. `search/mutation.py` → `individuals.chromosome`, `individuals.has_changed`
 
 Selection makes copies; mutation is what makes them worth having.
 
@@ -1653,7 +1653,7 @@ their own:
 ```bash
 python start_run.py --db <prepared> --run 1 --from-db
 python continue_run.py --db <prepared> --run 1 --from-db
-python test_run_with_dataset.py --db <prepared> --run 1 --from-db
+python -m testing.test_run_with_dataset --db <prepared> --run 1 --from-db
 ```
 
 It needs a sweep (`--run`), because a *new* sweep is the moment those rows are
@@ -1661,8 +1661,8 @@ read out of the files and stored — there is nothing to read back yet.
 `test_run_with_dataset.py` takes no dataset argument alongside it, and records
 nothing: the rows it reads already are the stored split.
 
-[`db_datasets.py`](db_datasets.py) is the mechanism, and the counterpart of
-[`add_dataset.py`](add_dataset.py): that one is the only way
+[`db_datasets.py`](storage/db_datasets.py) is the mechanism, and the counterpart of
+[`add_dataset.py`](storage/add_dataset.py): that one is the only way
 *into* the `datasets` table, this is the way back *out*.
 `repoint(conn, run_id, conf)` writes each split the sweep holds into the run
 folder above — `training.jsonl`, with `.jsonl` or `.txt` chosen from the records
@@ -1692,7 +1692,7 @@ Three things about that are deliberate:
   refused outright, before a population is drawn — that is a sweep from before
   the `datasets` table existed, and `add_dataset.py` is how it gets some.
 
-### 12. `test.py` → `run/test_*`
+### 12. `tools/test.py` → `run/test_*`
 
 Try one chromosome by hand without starting a sweep. Set the variable at the top
 of the file and run it:
@@ -1702,13 +1702,13 @@ CHROMOSOME = "CAT.L1.L2.w5.w2.w2.w1"
 ```
 
 ```bash
-python test.py
+python -m tools.test
 ```
 
 Or pass one straight in:
 
 ```bash
-python test.py CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+python -m tools.test CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
 ```
 
 It prints the tree, the build plan and a verdict, then writes
@@ -1751,7 +1751,7 @@ Bad input is reported rather than half-processed:
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
-### 13. `store.py` → the sweep database
+### 13. `storage/store.py` → the sweep database
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
@@ -1783,11 +1783,11 @@ baselines     what the base model itself answered, per model and question --
 the scores they were given.
 
 ```bash
-python store.py --list
+python -m storage.store --list
 ```
 
 ```bash
-python store.py --show 0
+python -m storage.store --show 0
 ```
 
 `--show` takes a run id, or `0` for the most recent, and prints the settings the
@@ -1803,7 +1803,7 @@ SELECT number, chromosome, quality, weights
 ```
 
 ```bash
-python store.py --export 0 --into export
+python -m storage.store --export 0 --into export
 ```
 
 Writes a stored sweep back out as a folder of text files — `population.txt`,
@@ -1883,7 +1883,7 @@ python start_run.py runs
 Only the scripts that actually ran are removed. Ones skipped as `BAD`, or left
 out by `--limit`, are still waiting and stay where they are.
 
-### 14. `test_run_with_dataset.py` → `test_results`
+### 14. `testing/test_run_with_dataset.py` → `test_results`
 
 Everything above happens on the training split. Every fitness number, every
 election, every roulette slice is earned on those questions, so an individual
@@ -1892,7 +1892,7 @@ being unseen the moment the first generation was scored on it. This asks the
 other question: does the blend hold up on questions it was never picked for?
 
 ```bash
-python test_run_with_dataset.py datasets/medical_testing_lora_dataset.json
+python -m testing.test_run_with_dataset datasets/medical_testing_lora_dataset.json
 ```
 
 ```
@@ -1999,9 +1999,9 @@ answer with a training question's reference.
 load:
 
 ```bash
-python test_run_with_dataset.py testing.json --no-score      # answers only
-python test_run_with_dataset.py testing.json --score-only    # grade them later
-python test_run_with_dataset.py testing.json --score-only --force --evaluator similarity
+python -m testing.test_run_with_dataset testing.json --no-score      # answers only
+python -m testing.test_run_with_dataset testing.json --score-only    # grade them later
+python -m testing.test_run_with_dataset testing.json --score-only --force --evaluator similarity
 ```
 
 Scoring is resumable the way the evaluate step is — an answer that already has a
@@ -2044,11 +2044,11 @@ longer describes. The pass runs the script, records the chromosome the *script*
 builds, and says how many rows that applies to. Run `trees runs process
 evaluate` again first if you want the current population tested.
 
-`python store.py --show` lists the passes a sweep has been through.
+`python -m storage.store --show` lists the passes a sweep has been through.
 
 ---
 
-### 15. `generate_html_db_stats.py` → an HTML page beside the database
+### 15. `reporting/generate_html_db_stats.py` → an HTML page beside the database
 
 `store.py --show` prints a sweep. This writes the same sweep out as one
 self-contained HTML file, with the things a column of numbers cannot draw: the
@@ -2056,8 +2056,8 @@ best blend as a tree, fitness generation by generation, the population's spread,
 what the judge actually gave.
 
 ```bash
-python generate_html_db_stats.py run_db/gep.sqlite3
-python generate_html_db_stats.py run_db/gep.sqlite3 --run 2 --open
+python -m reporting.generate_html_db_stats run_db/gep.sqlite3
+python -m reporting.generate_html_db_stats run_db/gep.sqlite3 --run 2 --open
 ```
 
 The page lands **beside the database** — `gep_run1_stats.html` next to
@@ -2328,40 +2328,94 @@ warning — the effective cap is unchanged.
 
 ## Files
 
+Three drivers sit at the top level; everything else lives in a folder named for
+what it does, so the tree answers "where would that be?" before you open
+anything.
+
+```
+main.py  start_run.py  continue_run.py     the three drivers
+
+config/       every knob the pipeline reads
+search/       the GEP search itself
+blends/       a chromosome, turned into a script and run
+templates/    what those scripts are made from
+storage/      the database, and the datasets it keeps
+evaluators/   how an answer is scored
+testing/      the held-out pass
+reporting/    a sweep, written out as something to look at
+adapters/     making and checking the five LoRAs a sweep blends
+tools/        dev aids that are not part of the pipeline
+```
+
+### The drivers
+
+| Path | What it is |
+|---|---|
+| `main.py` | start_run.py, continue_run.py, then the testing pass — a whole search in one command |
+| `start_run.py` | the pipeline driver; add future steps to its `STEPS` list |
+| `continue_run.py` | runs the generation loop on over a sweep already in the database |
+
+### The search
+
+| Path | What it is |
+|---|---|
+| `config/settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
+| `search/generate_population.py` | the alphabet, `encode`/`decode`, and the random draw |
+| `search/draw_trees.py` | draws one chromosome as a tree → `individuals.tree` |
+| `search/calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
+| `search/elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
+| `search/selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent, culls the weakest, draws one newcomer |
+| `search/mutation.py` | point-mutates every chromosome but the elite's, within its grammar; clears the fitness it invalidates |
+
+### Building and running a blend
+
+| Path | What it is |
+|---|---|
+| `blends/generate_runs.py` | fills `template_code.py`, one runnable script per individual |
+| `blends/process_run.py` | launches a generated script and reads its transcript back |
+| `blends/baseline_run.py` | produces and caches what the base model itself answers, for `llm_judge_baseline` |
+| `templates/template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
+| `templates/template_code_mocked.py` | the same, mocked: no model load, random answers and scores |
+| `templates/template_baseline.py` | the base model alone on the eval prompts — the control a blend is measured against |
+| `templates/template_baseline_mocked.py` | the same, mocked: no model load, invented answers, cached under `mock:` |
+
+### Scoring
+
+| Path | What it is |
+|---|---|
+| `evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_baseline.py`, `similarity.py`, `heuristic.py`, `panel.py` |
+| `evaluators/common.py` | what they share: the registry, the judge transport, the reference answers, the tokeniser |
+
+### The database, and reading it back
+
+| Path | What it is |
+|---|---|
+| `storage/store.py` | the database: schema, helpers, `--list/--show/--export` |
+| `storage/add_dataset.py` | the only way into the `datasets` table: every split as a sweep is created, or one afterwards from the command line |
+| `storage/db_datasets.py` | the way back out: a sweep's stored splits written beside its database, for `--from-db` |
+| `reporting/generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database |
+| `testing/test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
+
+### The adapters, and the dev aids
+
+| Path | What it is |
+|---|---|
+| `adapters/create_lora.py` | trains one adapter into a folder |
+| `adapters/create_all_loras.py` | trains the whole set, varying rank or learning rate |
+| `adapters/test_lora.py` | asks one adapter a question, without a blend |
+| `tools/test.py` | try a single chromosome → `run/test_*` |
+| `tools/combination.py` | the original two-adapter script the generated code is modelled on |
+
+### What is on disk
+
 | Path | What it is |
 |---|---|
 | `plan.txt` | the original spec |
-| `start_run.py` | the entry point and the driver; add future steps to its `STEPS` list |
-| `continue_run.py` | runs the generation loop on over a sweep already in the database |
-| `main.py` | start_run.py, continue_run.py, then the testing pass — a whole search in one command |
-| `settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
-| `store.py` | the database: schema, helpers, `--list/--show/--export` |
-| `generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database |
-| `add_dataset.py` | the only way into the `datasets` table: every split as a sweep is created, or one afterwards from the command line |
-| `db_datasets.py` | the way back out: a sweep's stored splits written beside its database, for `--from-db` |
 | `run_db/gep.sqlite3` | every sweep ever run, with its settings, seeds, transcripts and scores |
 | `run_db/run_001.py` … | the generated combination scripts, until `process` has run them |
-| `generate_population.py` | the alphabet, `encode`/`decode`, and the random draw |
-| `draw_trees.py` | draws one chromosome as a tree → `individuals.tree` |
-| `generate_runs.py` | fills `template_code.py`, one runnable script per individual |
-| `template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
-| `template_code_mocked.py` | the same, mocked: no model load, random answers and scores |
-| `baseline_run.py` | produces and caches what the base model itself answers, for `llm_judge_baseline` |
-| `template_baseline.py` | the base model alone on the eval prompts — the control a blend is measured against |
-| `template_baseline_mocked.py` | the same, mocked: no model load, invented answers, cached under `mock:` |
-| `training_set.txt` | the eval prompts, one per line, read by every generated script; the path is `TRAINING_SET` in `settings.py` |
-| `process_run.py` | launches a generated script and reads its transcript back |
-| `evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_baseline.py`, `similarity.py`, `heuristic.py`, `panel.py` |
-| `evaluators/common.py` | what they share: the registry, the judge transport, the reference answers, the tokeniser |
-| `calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
-| `elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
-| `selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent, culls the weakest, draws one newcomer |
-| `mutation.py` | point-mutates every chromosome but the elite's, within its grammar; clears the fitness it invalidates |
-| `test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
-| `run_testing/` | where those scripts run, and are deleted from; `TESTING_RUN_DIR` in `settings.py` |
-| `test.py` | try a single chromosome → `run/test_*` |
-| `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `test.py` |
-| `combination.py` | the original two-adapter script the generated code is modelled on |
+| `datasets/training_set.txt` | the eval prompts, one per line, read by every generated script; the path is `TRAINING_SET` in `config/settings.py` |
+| `run_testing/` | where the testing pass's scripts run, and are deleted from; `TESTING_RUN_DIR` in `config/settings.py` |
+| `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `tools/test.py` |
 
 ### Pipeline
 
@@ -2376,7 +2430,7 @@ generate_population.build_population  -->  individuals (chromosome)
 draw_trees.draw                       -->  individuals.tree
 generate_runs.plan/render             -->  individuals.script_source
    +                                       + run_db/run_NNN.py  (must be files)
-template_code.py                           (the shape of those scripts)
+templates/template_code.py                 (the shape of those scripts)
 
 process_run.launch/exchanges          -->  executions, exchanges
 baseline_run.ensure                   -->  baselines (once per model+question,
@@ -2390,15 +2444,15 @@ selection.select                      -->  individuals (n copies + 1 drawn
 mutation.apply                        -->  individuals.chromosome + has_changed
                                            (and fitness back to NULL)
 
-store.py --show / --export                 reads any of it back out
-generate_html_db_stats.py             -->  <db>_run<N>_stats.html (the same,
+store --show / --export                    reads any of it back out
+generate_html_db_stats                -->  <db>_run<N>_stats.html (the same,
                                            as a page, beside the database)
-add_dataset.py --split testing        -->  datasets (a split added afterwards)
-test_run_with_dataset.py              -->  test_results (the best individuals,
+add_dataset --split testing           -->  datasets (a split added afterwards)
+test_run_with_dataset                 -->  test_results (the best individuals,
                                            re-pointed at unseen questions,
                                            then graded by the same evaluators)
 
-test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
+tools.test  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
 
 continue_run.py  -->  that whole column again, once per generation
 main.py          -->  start_run.py, continue_run.py, then the testing pass

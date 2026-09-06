@@ -43,7 +43,7 @@ start_run.py calls this as a library:
 
 from collections import namedtuple
 
-import store
+from storage import store
 
 # What one pass of this step came to: which generation it recorded, when it
 # recorded it, and the individual_quality rows it worked from, best first.

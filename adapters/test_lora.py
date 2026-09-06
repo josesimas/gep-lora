@@ -8,10 +8,10 @@ several of
 them (the whole pipeline); this just shows you the difference one makes, in the
 words the model uses.
 
-    python test_lora.py "Help me plan my week."
-    python test_lora.py                          # keep asking, model stays loaded
-    python test_lora.py --lora Lora003 "Describe autumn."   # or loras/Lora003
-    python test_lora.py --lora path/to/any_adapter "Hi there!"
+    python -m adapters.test_lora "Help me plan my week."
+    python -m adapters.test_lora                          # keep asking, model stays loaded
+    python -m adapters.test_lora --lora Lora003 "Describe autumn."   # or loras/Lora003
+    python -m adapters.test_lora --lora path/to/any_adapter "Hi there!"
 
 Both answers come out of a single base-model load. The adapter is attached once
 and switched off for the "before" answer -- `with model.disable_adapter()`, the
@@ -37,9 +37,12 @@ import sys
 # Match the training/inference environment: disable Xet download acceleration.
 os.environ["HF_HUB_DISABLE_XET"] = "1"
 
-import create_lora
+from adapters import create_lora
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# The repo folder, one above this one. Every path a setting names is
+# resolved against it, so nothing here depends on the cwd a driver was
+# started from, or on which sub-folder this module ended up in.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Where the Lora00N folders live, and the subfolder each one keeps its adapter
 # in, so `--lora Lora003` can mean the adapter inside it rather than the folder
@@ -51,7 +54,7 @@ DEFAULT_LORA = os.path.join(LORA_DIR, "Lora001", ADAPTER_NAME)
 
 MAX_SEQ = 2048
 
-# What a bare `python test_lora.py` asks, when nothing is typed at the prompt
+# What a bare `python -m adapters.test_lora` asks, when nothing is typed at the prompt
 # either. Three questions the two answers tend to differ on.
 DEMO_PROMPTS = [
     "Help me plan my week.",
@@ -71,10 +74,10 @@ def resolve_adapter(path):
     """
     candidates = [path,
                   os.path.join(path, ADAPTER_NAME),
-                  os.path.join(_HERE, path),
-                  os.path.join(_HERE, path, ADAPTER_NAME),
-                  os.path.join(_HERE, LORA_DIR, path),
-                  os.path.join(_HERE, LORA_DIR, path, ADAPTER_NAME)]
+                  os.path.join(_ROOT, path),
+                  os.path.join(_ROOT, path, ADAPTER_NAME),
+                  os.path.join(_ROOT, LORA_DIR, path),
+                  os.path.join(_ROOT, LORA_DIR, path, ADAPTER_NAME)]
     for candidate in candidates:
         if os.path.isfile(os.path.join(candidate, "adapter_config.json")):
             return os.path.abspath(candidate)
@@ -200,10 +203,10 @@ def parse_args(argv=None):
                     "LoRA, and print both answers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="examples:\n"
-               '  python test_lora.py "Help me plan my week."\n'
-               "  python test_lora.py                       # ask repeatedly\n"
-               '  python test_lora.py --lora Lora003 "Describe autumn."\n'
-               '  python test_lora.py --lora loras/Lora003 "Describe autumn."',
+               '  python -m adapters.test_lora "Help me plan my week."\n'
+               "  python -m adapters.test_lora                       # ask repeatedly\n"
+               '  python -m adapters.test_lora --lora Lora003 "Describe autumn."\n'
+               '  python -m adapters.test_lora --lora loras/Lora003 "Describe autumn."',
     )
     parser.add_argument(
         "prompt", nargs="*",

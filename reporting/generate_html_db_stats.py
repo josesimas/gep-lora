@@ -8,8 +8,8 @@ best blend actually answered. It is a *view* of the database, derived and
 disposable -- nothing here writes to the sweep, and re-running it after another
 generation simply produces a newer page.
 
-    python generate_html_db_stats.py run_db/gep.sqlite3
-    python generate_html_db_stats.py run_db/gep.sqlite3 --run 2 --open
+    python -m reporting.generate_html_db_stats run_db/gep.sqlite3
+    python -m reporting.generate_html_db_stats run_db/gep.sqlite3 --run 2 --open
 
 The page is written **beside the database** (`gep_run1_stats.html` next to
 `gep.sqlite3`), because that is where the thing it describes lives and a report
@@ -39,10 +39,13 @@ import re
 import sys
 import webbrowser
 
-import store
-from generate_population import ARITY, UNARY_OPS, decode, levels
+from storage import store
+from search.generate_population import ARITY, UNARY_OPS, decode, levels
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# The repo folder, one above this one. Every path a setting names is
+# resolved against it, so nothing here depends on the cwd a driver was
+# started from, or on which sub-folder this module ended up in.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 # --- reading the sweep -----------------------------------------------------
@@ -2033,7 +2036,7 @@ def locate(db_path):
     """
     candidates = [db_path]
     if not os.path.isabs(db_path):
-        candidates.append(os.path.join(_HERE, db_path))
+        candidates.append(os.path.join(_ROOT, db_path))
     for candidate in candidates:
         if os.path.isfile(candidate):
             return os.path.abspath(candidate)
@@ -2056,7 +2059,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.db is None:
-        import settings as _settings
+        from config import settings as _settings
         args.db = _settings.DB_PATH
     conn = store.connect(locate(args.db))
 

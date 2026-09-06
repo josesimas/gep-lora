@@ -2,8 +2,8 @@
 test_run_with_dataset.py - Put a sweep's best individuals in front of a dataset
 they were never scored on.
 
-    python test_run_with_dataset.py datasets/medical_testing_lora_dataset.json
-    python test_run_with_dataset.py testing.json --db run_db1/gep.sqlite3 --run 3
+    python -m testing.test_run_with_dataset datasets/medical_testing_lora_dataset.json
+    python -m testing.test_run_with_dataset testing.json --db run_db1/gep.sqlite3 --run 3
 
 The search judges every individual on the training split, generation after
 generation, and then selects, elects and mutates on the strength of that number.
@@ -61,15 +61,18 @@ import sys
 import threading
 import time
 
-import add_dataset
-import db_datasets
+from blends import generate_runs
+from blends import process_run
+from config import settings as config
 import evaluators
-import generate_runs
-import process_run
-import settings as config
-import store
+from storage import add_dataset
+from storage import db_datasets
+from storage import store
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# The repo folder, one above this one. Every path a setting names is
+# resolved against it, so nothing here depends on the cwd a driver was
+# started from, or on which sub-folder this module ended up in.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # The two lines a generated script carries that say which questions it asks.
 # They are whole-line blocks in template_code.py -- "TRAINING_SET = '...'" and
@@ -585,7 +588,7 @@ def main(argv=None):
     # connect() would create an empty database with the schema in it, which for
     # a typo'd --db means being told a fresh file holds no runs rather than that
     # the file does not exist.
-    where = args.db if os.path.isabs(args.db) else os.path.join(_HERE, args.db)
+    where = args.db if os.path.isabs(args.db) else os.path.join(_ROOT, args.db)
     if not os.path.exists(where):
         raise SystemExit("no database at %s" % os.path.abspath(where))
     conn = store.connect(args.db)
@@ -616,7 +619,7 @@ def main(argv=None):
         if not dataset:
             raise SystemExit(
                 "run %d holds no testing split, so --from-db has nothing to test "
-                "on. Store one first: python add_dataset.py <file> --db %s --run "
+                "on. Store one first: python -m storage.add_dataset <file> --db %s --run "
                 "%d --split testing" % (run_id, conn.path, run_id))
         print()
     else:
@@ -644,7 +647,7 @@ def main(argv=None):
                or (db_datasets.testing_folder(conn, run_id) if args.from_db else None)
                or conf.get("TESTING_RUN_DIR") or config.TESTING_RUN_DIR)
     if not os.path.isabs(run_dir):
-        run_dir = os.path.join(_HERE, run_dir)
+        run_dir = os.path.join(_ROOT, run_dir)
     run_dir = os.path.abspath(run_dir)
 
     # The second half on its own: grading answers an earlier pass stored. It
@@ -723,7 +726,7 @@ def main(argv=None):
     # adapter, a dataset no script can read -- and there is nothing to grade
     # either way, so this is said before the scoring half rather than after it.
     if failures == tested:
-        raise SystemExit("every individual failed -- try: python store.py --show %d"
+        raise SystemExit("every individual failed -- try: python -m storage.store --show %d"
                          % run_id)
 
     # The answers are stored either way; grading them is the second half of the
@@ -732,7 +735,7 @@ def main(argv=None):
     # up, or when which evaluator should grade this dataset is still a question.
     if args.no_score:
         print("\nnot scored (--no-score). Grade them later with:")
-        print("    python test_run_with_dataset.py %s --score-only"
+        print("    python -m testing.test_run_with_dataset %s --score-only"
               % os.path.basename(dataset))
     else:
         score_pass(conn, run_id, dataset, conf, args, run_dir)

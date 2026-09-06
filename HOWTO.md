@@ -3,6 +3,30 @@
 Train the adapters, test them, run the search. See `README.md` for how any of it
 works.
 
+## Where things are
+
+Three drivers at the top level; everything else is in a folder named for what
+it does.
+
+```
+main.py           a whole search in one command
+start_run.py      one sweep, through one generation
+continue_run.py   an existing sweep, carried on
+
+config/  search/  blends/  templates/  storage/
+evaluators/  testing/  reporting/  adapters/  tools/
+```
+
+The drivers are run as files. Everything below the top level is run as a
+module, from the repo root:
+
+```bash
+python -m storage.store --show 0
+```
+
+`python main.py` and the rest never need this — only the commands in sections
+1, 2 and 4 below, and the smoke tests.
+
 ## The venv
 
 Anything that loads a model needs a Python environment with the training and
@@ -162,13 +186,13 @@ list. Not a JSON array.
 Print the plan first:
 
 ```bash
-python create_all_loras.py --dataset poem --values 16 16 8 4 32 --dry-run
+python -m adapters.create_all_loras --dataset poem --values 16 16 8 4 32 --dry-run
 ```
 
 Then train (hours):
 
 ```bash
-python create_all_loras.py --dataset poem --values 16 16 8 4 32
+python -m adapters.create_all_loras --dataset poem --values 16 16 8 4 32
 ```
 
 `--values` sets the ranks explicitly and sets the count from its length. Without
@@ -182,7 +206,7 @@ you did not use the default folders.
 One extra adapter:
 
 ```bash
-python create_lora.py loras/Lora006/shout_adapter --dataset uppercase --rank 8
+python -m adapters.create_lora loras/Lora006/shout_adapter --dataset uppercase --rank 8
 ```
 
 ---
@@ -192,7 +216,7 @@ python create_lora.py loras/Lora006/shout_adapter --dataset uppercase --rank 8
 Answer one question with and without the adapter (needs the venv):
 
 ```bash
-python test_lora.py --lora Lora003 "Describe autumn."
+python -m adapters.test_lora --lora Lora003 "Describe autumn."
 ```
 
 With no question it keeps asking. `--demo` runs three built-in prompts and exits.
@@ -202,7 +226,7 @@ train.
 Check a chromosome without a GPU:
 
 ```bash
-python test.py CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+python -m tools.test CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
 ```
 
 Prints the tree, the build order, the final rank and `ok` or `BAD`. Writes
@@ -373,15 +397,15 @@ crashed individual is stored as a failed execution; the sweep continues.
 ## 4. Read the results
 
 ```bash
-python store.py --list
+python -m storage.store --list
 ```
 
 ```bash
-python store.py --show 0
+python -m storage.store --show 0
 ```
 
 ```bash
-python store.py --export 0 --into export
+python -m storage.store --export 0 --into export
 ```
 
 `--export` writes population, trees, scripts, outputs, transcripts, results and

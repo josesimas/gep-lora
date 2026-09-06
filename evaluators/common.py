@@ -40,7 +40,7 @@ import time
 import urllib.error
 import urllib.request
 
-import generate_runs
+from blends import generate_runs
 
 # Sent as "Authorization: Bearer <key>". LMStudio ignores it; cloud endpoints
 # require it. Deliberately not a setting: settings are written into the sweep's

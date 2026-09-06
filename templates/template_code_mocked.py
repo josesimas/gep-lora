@@ -2,7 +2,7 @@
 #~ same markers, same generated shape, but nothing is loaded and nothing is
 #~ generated. Fill it the same way, with the template as an argument:
 #~
-#~     python generate_runs.py --template template_code_mocked.py
+#~     python -m blends.generate_runs --template template_code_mocked.py
 #~
 #~ What it is for: exercising the pipeline -- generate_runs -> process_run ->
 #~ evaluators, or `python start_run.py` end to end -- in seconds instead of hours,

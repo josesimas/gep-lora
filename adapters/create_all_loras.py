@@ -9,9 +9,9 @@ blends score differently, the rank is the only thing that could have caused it.
 A folder per adapter, numbered the way the existing five are, so the paths
 LORA_SLOTS already holds keep working:
 
-    python create_all_loras.py --dataset poem --count 5
-    python create_all_loras.py --dataset poem --values 16 16 8 4 32
-    python create_all_loras.py --dataset poem --dry-run
+    python -m adapters.create_all_loras --dataset poem --count 5
+    python -m adapters.create_all_loras --dataset poem --values 16 16 8 4 32
+    python -m adapters.create_all_loras --dataset poem --dry-run
 
 Rank is the parameter with teeth downstream: PEFT's cat sums input ranks, svd
 takes the max, and linear refuses inputs whose ranks differ, so the spread of
@@ -45,9 +45,12 @@ import os
 import subprocess
 import sys
 
-import create_lora
+from adapters import create_lora
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# The repo folder, one above this one. Every path a setting names is
+# resolved against it, so nothing here depends on the cwd a driver was
+# started from, or on which sub-folder this module ended up in.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # The subfolder each loras/Lora00N folder keeps its adapter in. This is the name
 # the existing five use and the one settings.py's LORA_SLOTS spells out, so
@@ -57,8 +60,13 @@ ADAPTER_NAME = "my_planning_coach-lora_adapter"
 # The script this one drives, and the folders it fills: loras/Lora001,
 # loras/Lora002, ... One place for the parent, so moving the set again is one
 # line here rather than a hunt through the joins below.
-CREATE_LORA = os.path.join(_HERE, "create_lora.py")
-LORA_DIR = os.path.join(_HERE, "loras")
+#
+# create_lora.py is the sibling beside this file rather than something under
+# _ROOT, and it is launched by path rather than by -m: it imports nothing from
+# this repo, so it needs no package on sys.path to run.
+CREATE_LORA = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "create_lora.py")
+LORA_DIR = os.path.join(_ROOT, "loras")
 FOLDER_FORMAT = "Lora%03d"
 
 
@@ -199,7 +207,7 @@ def show_plan(batch, options):
           % (options.vary, len(batch)))
     for folder, value in batch:
         print("  %-14s %s" % (describe(value, options.vary),
-                              os.path.relpath(folder, _HERE)))
+                              os.path.relpath(folder, _ROOT)))
     print("\nEach one loads the base model once, in its own process.")
 
 
@@ -210,7 +218,7 @@ def train_all(batch, options):
         label = describe(value, options.vary)
         print("\n" + "=" * 72)
         print("[%d/%d] %s -> %s"
-              % (index, len(batch), label, os.path.relpath(folder, _HERE)))
+              % (index, len(batch), label, os.path.relpath(folder, _ROOT)))
         print("=" * 72, flush=True)
 
         code = subprocess.run(command(folder, value, options)).returncode
@@ -237,7 +245,7 @@ def known_slot(folder):
     the same resolution a generated script will be built with.
     """
     try:
-        import generate_runs
+        from blends import generate_runs
         slots = generate_runs.lora_slots()
     except Exception:
         # Never worth failing a finished batch over: the block is printed either
@@ -267,7 +275,7 @@ def report(results, options):
         else:
             status = "ok, rank %d" % rank
         print("  %-14s %-42s %s" % (describe(value, options.vary),
-                                    os.path.relpath(folder, _HERE), status))
+                                    os.path.relpath(folder, _ROOT), status))
 
     good = [(folder, rank) for folder, _, code, rank in results if code == 0]
     if not good:
@@ -308,9 +316,9 @@ def parse_args(argv=None):
                     "varying one parameter across them.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="examples:\n"
-               "  python create_all_loras.py --dataset poem --count 5\n"
-               "  python create_all_loras.py --dataset poem --values 16 16 8 4 32\n"
-               "  python create_all_loras.py --dataset poem --dry-run",
+               "  python -m adapters.create_all_loras --dataset poem --count 5\n"
+               "  python -m adapters.create_all_loras --dataset poem --values 16 16 8 4 32\n"
+               "  python -m adapters.create_all_loras --dataset poem --dry-run",
     )
     parser.add_argument(
         "--dataset", "-d", required=True,

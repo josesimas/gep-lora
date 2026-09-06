@@ -14,7 +14,7 @@ and caches it in the database; this file only reads that cache and writes the
 prompt. Everything about the judge itself is llm_judge's.
 """
 
-import baseline_run
+from blends import baseline_run
 
 from evaluators import common, llm_judge
 

@@ -51,8 +51,8 @@ nothing, and saying so is better than quietly reading it.
 
 import os
 
-import add_dataset
-import store
+from storage import add_dataset
+from storage import store
 
 
 def db_folder(conn):
@@ -154,7 +154,7 @@ def repoint(conn, run_id, conf, folder=None, say=print):
     if not out.get(add_dataset.SPLIT_SETTINGS["training"]):
         raise SystemExit(
             "run %d in %s holds no training dataset, so there are no questions "
-            "to read from the database. Store them first: python add_dataset.py "
+            "to read from the database. Store them first: python -m storage.add_dataset "
             "<file> --db %s --run %d --split training"
             % (run_id, conn.path, conn.path, run_id))
 

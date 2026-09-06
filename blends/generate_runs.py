@@ -59,25 +59,52 @@ front, marks the individual BAD, and stamps a warning into the script it makes.
 import json
 import os
 
-import settings
+from config import settings
 
-from generate_population import UNARY_OPS, decode, levels
+from search.generate_population import UNARY_OPS, decode, levels
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# The repo folder, one above this one. Every path a setting names is
+# resolved against it, so nothing here depends on the cwd a driver was
+# started from, or on which sub-folder this module ended up in.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 COMBINATION_TYPE = {"CAT": "cat", "SVD": "svd", "LIN": "linear"}
 
-TEMPLATE = os.path.join(_HERE, "template_code.py")
+# Where the four templates live. TEMPLATE and BASELINE_TEMPLATE hold a bare
+# name rather than a path -- "template_code_mocked.py" is what settings.py says
+# and what every stored sweep recorded -- so a name is looked for here, and a
+# sweep stored before the templates moved still names something that exists.
+TEMPLATE_DIR = "templates"
+
+TEMPLATE = os.path.join(_ROOT, TEMPLATE_DIR, "template_code.py")
 
 # The base model on its own, answering the same eval prompts -- what the
 # llm_judge_baseline evaluator measures an individual's answers against. One
 # per base model rather than one per individual, so it is filled by
 # baseline_run.py rather than by the runs step.
-BASELINE_TEMPLATE = os.path.join(_HERE, "template_baseline.py")
+BASELINE_TEMPLATE = os.path.join(_ROOT, TEMPLATE_DIR, "template_baseline.py")
 
 MARKER = "@@%s@@"
 TEMPLATE_COMMENT = "#~"
+
+
+def template_path(name=None):
+    """Absolute path of a template, from a name, a path, or None.
+
+    An absolute path, or a relative one naming a file from where the driver was
+    started, is taken as it stands. Anything else is looked for beside the repo
+    and then in templates/, so a bare name goes on meaning the template of that
+    name however the folders are arranged. One resolver rather than one per
+    caller: the runs step and the baseline both have to agree on which file a
+    stored TEMPLATE means, or a sweep and its own control would be generated
+    from different code.
+    """
+    name = name or "template_code.py"
+    if os.path.isabs(name) or os.path.exists(name):
+        return os.path.abspath(name)
+    beside = os.path.join(_ROOT, name)
+    return beside if os.path.exists(beside) else os.path.join(_ROOT, TEMPLATE_DIR, name)
 
 
 def training_set_path(value=None):
@@ -94,7 +121,7 @@ def training_set_path(value=None):
     """
     value = value or settings.TRAINING_SET
     if not os.path.isabs(value):
-        value = os.path.join(_HERE, value)
+        value = os.path.join(_ROOT, value)
     return os.path.abspath(value)
 
 
@@ -322,7 +349,7 @@ def lora_slots(slots=None):
     resolved = {}
     for slot, where in (slots or settings.LORA_SLOTS).items():
         if not os.path.isabs(where):
-            local = os.path.abspath(os.path.join(_HERE, where))
+            local = os.path.abspath(os.path.join(_ROOT, where))
             if os.path.isdir(local):
                 where = local
         resolved[slot] = where
