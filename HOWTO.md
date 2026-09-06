@@ -446,6 +446,18 @@ python run_db\run_003.py "Help me plan my week."
 
 ---
 
+### What it cost
+
+```bash
+python -m metrics.report
+python -m metrics.report --step process
+```
+
+Which step took the time, what it did for it, and where inside it the seconds
+went -- the base-model load, the answers, the svd nodes. Recorded as the sweep
+runs, so this reads the database and starts nothing. See "Where the time goes"
+in README.md.
+
 ## Problems
 
 | Symptom | Cause |

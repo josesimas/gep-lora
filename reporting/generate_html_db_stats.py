@@ -39,6 +39,7 @@ import re
 import sys
 import webbrowser
 
+from metrics import report
 from storage import store
 from search.generate_population import ARITY, UNARY_OPS, decode, levels
 
@@ -99,6 +100,13 @@ def read_sweep(conn, run_id):
         "test_rows": {row["id"]: row for row in store.test_results(conn, run_id)},
         "test_summary": store.test_summary(conn, run_id),
         "totals": totals(conn, run_id),
+        "timings": {
+            "steps": store.step_costs(conn, run_id),
+            "phases": store.phase_costs(conn, run_id),
+            "passes": store.pass_costs(conn, run_id),
+            "rows": store.step_timings(conn, run_id),
+            "executions": store.execution_costs(conn, run_id),
+        },
     }
 
 
@@ -670,6 +678,227 @@ def testing_chart(tested):
                          % (left + length + 7, y + offset + bar - 2, value))
     return ('<svg class="chart" viewBox="0 0 %d %d" role="img" '
             'aria-label="training against testing quality">%s</svg>'
+            % (width, height, "".join(parts)))
+
+
+# --- what the sweep cost ---------------------------------------------------
+#
+# The timing tables read the way every other section does: numbers gathered in
+# read_sweep(), drawn here. `metrics/report.py` prints the same rows at a
+# terminal; the two share the classification of which phases overlap which
+# (metrics.report.WHOLE / NESTED) rather than each having an opinion, because a
+# phase that is double counted in one and not the other would make the page and
+# the command line disagree about the same sweep.
+
+# Nine steps, nine tones, assigned by pipeline order so `process` is the same
+# colour in every chart on the page and in every sweep. Beyond nine it wraps --
+# there is no tenth step, and a page that invented a colour would be claiming
+# there was.
+TONES = 9
+
+
+def tone(index):
+    return "tone-%d" % (index % TONES)
+
+
+def cost_time(seconds):
+    """Like clock(), but says milliseconds rather than rounding them to 0.0s.
+
+    A mocked sweep and the cheap steps of a real one live below a second, and a
+    table of "0.0s" nine times over says nothing about which of them is worth
+    looking at.
+    """
+    if seconds is None:
+        return "-"
+    seconds = float(seconds)
+    if seconds < 1:
+        return "%dms" % round(seconds * 1000)
+    return clock(seconds)
+
+
+def share(part, whole):
+    return "-" if not whole else "%.1f%%" % (100.0 * (part or 0.0) / whole)
+
+
+def per_item(row):
+    """What one of a step's items cost, or a dash when it counted none."""
+    return (cost_time((row["seconds"] or 0.0) / row["items"])
+            if row["items"] else "-")
+
+
+def step_cost_chart(rows, order):
+    """Every step, ranked by what it cost -- the first question, drawn.
+
+    Horizontal because the labels are words and the bars are the comparison;
+    a column chart of nine named steps spends its width on the names.
+    """
+    if not rows:
+        return ""
+    peak = max((row["seconds"] or 0.0) for row in rows) or 1.0
+    total = sum((row["seconds"] or 0.0) for row in rows) or 1.0
+    width = 760
+    left, right, top = 118, width - 132, 16
+    step, bar = 30, 17
+    height = top + len(rows) * step + 12
+    parts = []
+    for index, row in enumerate(rows):
+        y = top + index * step
+        length = max(2.0, (right - left) * (row["seconds"] or 0.0) / peak)
+        parts.append('<text class="rowlabel" x="10" y="%.1f">%s</text>'
+                     % (y + bar - 3, esc(row["step"])))
+        parts.append('<rect class="track" x="%d" y="%.1f" width="%.1f" height="%d" '
+                     'rx="4"/>' % (left, y, right - left, bar))
+        parts.append('<g><title>%s: %s over %d pass(es), %d %s, %s each</title>'
+                     '<rect class="bar toned %s" x="%d" y="%.1f" width="%.1f" '
+                     'height="%d" rx="4"/></g>'
+                     % (esc(row["step"]), cost_time(row["seconds"]), row["passes"],
+                        row["items"] or 0, esc(row["unit"] or "items"), per_item(row),
+                        tone(order.get(row["step"], index)), left, y, length, bar))
+        parts.append('<text class="value" x="%.1f" y="%.1f">%s &#183; %s</text>'
+                     % (right + 8, y + bar - 4, cost_time(row["seconds"]),
+                        share(row["seconds"], total)))
+    return ('<svg class="chart" viewBox="0 0 %d %d" role="img" '
+            'aria-label="seconds by step">%s</svg>' % (width, height, "".join(parts)))
+
+
+def pass_cost_chart(passes, by_pass, order):
+    """One column per pass, stacked by step: what a generation costs, and of what.
+
+    The question the step table cannot answer -- a cost that climbs pass after
+    pass is the population growing under it, and a cost that is flat is the
+    price of the search rather than of its size. Stacked rather than grouped
+    because the total is the thing being compared and the composition is the
+    reason for it.
+    """
+    if len(passes) < 2:
+        return ""
+    peak = max(sum(by_pass.get(entry["pass_no"], {}).values())
+               for entry in passes) or 1.0
+    width = 760
+    left, right, top, bottom = 62, width - 14, 20, 210
+    slot = (right - left) / float(len(passes))
+    bar = min(46.0, slot * 0.62)
+    parts = []
+    for index in range(5):
+        value = peak * index / 4.0
+        y = bottom - (bottom - top) * index / 4.0
+        parts.append('<line class="grid" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>'
+                     % (left, y, right, y))
+        parts.append('<text class="tick" x="%.1f" y="%.1f" text-anchor="end">%s</text>'
+                     % (left - 8, y + 4, cost_time(value)))
+    for index, entry in enumerate(passes):
+        spent = by_pass.get(entry["pass_no"], {})
+        x = left + slot * index + (slot - bar) / 2.0
+        y = bottom
+        for name in sorted(spent, key=lambda name: order.get(name, 99)):
+            seconds = spent[name]
+            tall = (bottom - top) * seconds / peak
+            if tall < 0.4:
+                continue
+            y -= tall
+            parts.append('<g><title>pass %d, %s: %s</title>'
+                         '<rect class="bar toned %s" x="%.1f" y="%.1f" width="%.1f" '
+                         'height="%.1f"/></g>'
+                         % (entry["pass_no"], esc(name), cost_time(seconds),
+                            tone(order.get(name, 8)), x, y, bar, tall))
+        parts.append('<text class="value" x="%.1f" y="%.1f" text-anchor="middle">%s'
+                     '</text>' % (x + bar / 2.0, y - 6,
+                                  cost_time(sum(spent.values()))))
+        parts.append('<text class="tick faint" x="%.1f" y="%.1f" text-anchor="middle">'
+                     '%s</text>'
+                     % (x + bar / 2.0, bottom + 18,
+                        esc("gen %s" % entry["generation"] if entry["generation"]
+                            else "pass %d" % entry["pass_no"])))
+    return ('<svg class="chart" viewBox="0 0 %d %d" role="img" '
+            'aria-label="seconds by pass">%s</svg>'
+            % (width, bottom + 30, "".join(parts)))
+
+
+def stacked_bar(rows, total, tones):
+    """One bar, split by phase -- how a step's seconds divide up.
+
+    A pie would be the obvious shape and the wrong one: these are parts of a
+    duration, they are read against each other rather than as slices of a
+    circle, and a stack keeps the smallest of them visible instead of an
+    unlabelled wedge.
+    """
+    if not rows or not total:
+        return ""
+    width, height = 760, 34
+    x = 0.0
+    parts = []
+    for row in rows:
+        span = width * (row["seconds"] or 0.0) / total
+        if span <= 0:
+            continue
+        parts.append('<g><title>%s: %s of %s, %d call(s)</title>'
+                     '<rect class="bar toned %s" x="%.2f" y="0" width="%.2f" '
+                     'height="%d"/></g>'
+                     % (esc(row["phase"]), cost_time(row["seconds"]),
+                        share(row["seconds"], total), row["calls"] or 0,
+                        tones.get(row["phase"], "tone-8"), x, max(span, 0.6), height))
+        x += span
+    if x < width - 0.5:
+        parts.append('<rect class="track" x="%.2f" y="0" width="%.2f" height="%d"/>'
+                     % (x, width - x, height))
+    return ('<svg class="chart bar-only" viewBox="0 0 %d %d" preserveAspectRatio="none" '
+            'role="img" aria-label="seconds by phase">%s</svg>'
+            % (width, height, "".join(parts)))
+
+
+def legend(rows, total, tones):
+    """The names beside a stacked bar, with the numbers the bar cannot hold."""
+    return ('<div class="legend">%s</div>'
+            % "".join('<span class="key %s"><i class="swatch"></i>%s'
+                      '<b>%s</b><em>%s &#183; %d call(s)</em></span>'
+                      % (tones.get(row["phase"], "tone-8"), esc(row["phase"]),
+                         cost_time(row["seconds"]), share(row["seconds"], total),
+                         row["calls"] or 0)
+                      for row in rows))
+
+
+def execution_cost_chart(rows, tones, limit=14):
+    """What each individual's own script cost, split by phase.
+
+    The per-individual read: two blends of the same population can differ by
+    minutes, and the reason is always in the phases -- an svd node, or simply
+    more leaves to attach. Sorted by what they cost and capped, because a
+    hundred-individual sweep is a table rather than a chart.
+    """
+    if not rows:
+        return ""
+    rows = rows[:limit]
+    peak = max(entry["seconds"] for entry in rows) or 1.0
+    width = 760
+    # Wide enough on the left for "#12 gen 3" and a shortened chromosome beside
+    # it: the label says which individual and which pass, since one individual
+    # runs once a generation and its cost is not the same each time.
+    left, right, top = 206, width - 78, 14
+    step, bar = 28, 15
+    height = top + len(rows) * step + 10
+    parts = []
+    for index, entry in enumerate(rows):
+        y = top + index * step
+        parts.append('<text class="rowlabel" x="10" y="%.1f">%s</text>'
+                     % (y + bar - 2, esc("%s  gen %d" % (entry["label"],
+                                                        entry["pass_no"]))))
+        parts.append('<text class="rowchrom" x="%d" y="%.1f" text-anchor="end">%s</text>'
+                     % (left - 10, y + bar - 2, esc(shorten(entry["chromosome"] or "", 15))))
+        x = float(left)
+        for phase, seconds in entry["phases"]:
+            span = (right - left) * seconds / peak
+            if span <= 0.3:
+                continue
+            parts.append('<g><title>%s %s: %s</title>'
+                         '<rect class="bar toned %s" x="%.2f" y="%.1f" width="%.2f" '
+                         'height="%d"/></g>'
+                         % (esc(entry["label"]), esc(phase), cost_time(seconds),
+                            tones.get(phase, "tone-8"), x, y, span, bar))
+            x += span
+        parts.append('<text class="value" x="%.1f" y="%.1f">%s</text>'
+                     % (x + 8, y + bar - 3, cost_time(entry["seconds"])))
+    return ('<svg class="chart" viewBox="0 0 %d %d" role="img" '
+            'aria-label="seconds by individual">%s</svg>'
             % (width, height, "".join(parts)))
 
 
@@ -1299,6 +1528,389 @@ def section_testing(data):
                      passes, sortable=False)))
 
 
+def cost_data(data):
+    """The timing rows, arranged the way the section reads them. -> dict or None.
+
+    None when the sweep has no rows at all -- one run before the tables existed,
+    or one whose steps have never been through `run()`. The section then does
+    not appear, rather than appearing empty, which is the same rule card() keeps
+    for a chart.
+    """
+    timings = data.get("timings") or {}
+    steps = timings.get("steps") or []
+    if not steps:
+        return None
+
+    order = {name: index for index, name in enumerate(
+        ("population", "trees", "runs", "process", "evaluate", "fitness",
+         "elitism", "selection", "mutation"))}
+    phases = timings.get("phases") or []
+    named = [row for row in phases
+             if row["phase"] not in report.WHOLE + report.NESTED]
+    inner = [row for row in named if row["executions"]]
+    own = [row for row in named if not row["executions"]]
+    scripts = {row["step"]: row for row in phases if row["phase"] == "script"}
+
+    # One tone per phase, handed out by what the phase cost, so the biggest
+    # piece is the same colour wherever the page draws it and the legend is
+    # read once.
+    tones = {row["phase"]: tone(index)
+             for index, row in enumerate(sorted(
+                 named, key=lambda row: -(row["seconds"] or 0.0)))}
+
+    by_pass = {}
+    for row in timings.get("rows") or []:
+        by_pass.setdefault(row["pass_no"], {})[row["step"]] = (
+            by_pass.get(row["pass_no"], {}).get(row["step"], 0.0)
+            + (row["seconds"] or 0.0))
+
+    # One entry per execution: what its script cost, and of what. The rows come
+    # back per (execution, phase), and a culled individual's rows have no
+    # individual left to name -- see store.execution_costs().
+    people = {}
+    for row in timings.get("executions") or []:
+        # (step row, execution id), never the id on its own: sqlite reuses an
+        # execution id once the cull has freed it, so two generations' rows can
+        # carry the same one -- see store.execution_costs().
+        entry = people.setdefault((row["step_timing_id"], row["execution_id"]), {
+            "label": "?", "chromosome": None, "state": row["state"],
+            "verdict": row["verdict"], "pass_no": row["pass_no"],
+            "seconds": 0.0, "wall": None, "phases": [], "calls": {}})
+        if row["phase"] == "script":
+            entry["wall"] = row["seconds"]
+            # What the row says about itself first; the join only as the
+            # fallback for a sweep recorded before it said anything.
+            said = json.loads(row["detail"]) if row["detail"] else {}
+            number = said.get("number", row["number"])
+            entry["label"] = "#%s" % number if number else "culled"
+            entry["chromosome"] = said.get("chromosome") or row["chromosome"]
+            entry["verdict"] = said.get("verdict") or row["verdict"]
+        elif row["phase"] not in report.WHOLE + report.NESTED:
+            entry["seconds"] += row["seconds"] or 0.0
+            entry["phases"].append((row["phase"], row["seconds"] or 0.0))
+            entry["calls"][row["phase"]] = row["calls"] or 0
+
+    return {
+        "steps": steps,
+        "order": order,
+        "phases": phases,
+        "named": named,
+        "inner": inner,
+        "own": own,
+        "scripts": scripts,
+        "tones": tones,
+        "passes": timings.get("passes") or [],
+        "by_pass": by_pass,
+        "people": sorted((entry for entry in people.values() if entry["phases"]),
+                         key=lambda entry: -entry["seconds"]),
+        "total": sum((row["seconds"] or 0.0) for row in steps),
+    }
+
+
+def cost_tiles(cost, data):
+    """The six numbers a reader wants before any chart: what it cost, what took
+    it, and what one unit of the two expensive steps came to."""
+    steps = {row["step"]: row for row in cost["steps"]}
+    top = cost["steps"][0]
+    biggest = max(cost["named"], key=lambda row: row["seconds"] or 0.0,
+                  default=None)
+    process, evaluate = steps.get("process"), steps.get("evaluate")
+    script = cost["scripts"].get("process")
+
+    tiles = [
+        tile("total time", cost_time(cost["total"]),
+             "%d step row(s) over %d pass(es)"
+             % (len(data["timings"]["rows"]), len(cost["passes"]))),
+        tile("costliest step", esc(top["step"]),
+             "%s, %s of the sweep" % (cost_time(top["seconds"]),
+                                      share(top["seconds"], cost["total"])),
+             wordy=True),
+    ]
+    if process:
+        tiles.append(tile("per individual", per_item(process),
+                          "%d run, %d skipped as BAD or unchanged"
+                          % (process["items"] or 0, process["skipped"] or 0)))
+    if evaluate and evaluate["items"]:
+        tiles.append(tile("per answer", per_item(evaluate),
+                          "%d scored by %s"
+                          % (evaluate["items"] or 0,
+                             data["settings"].get("EVALUATOR", "-"))))
+    if biggest:
+        tiles.append(tile("biggest phase", esc(biggest["phase"]),
+                          "%s over %d call(s) in %s"
+                          % (cost_time(biggest["seconds"]), biggest["calls"] or 0,
+                             biggest["step"]), wordy=True))
+    if script:
+        tiles.append(tile("script time", cost_time(script["seconds"]),
+                          "%d script(s), %s each -- they overlap in a batch"
+                          % (script["calls"] or 0,
+                             cost_time((script["seconds"] or 0.0)
+                                       / (script["calls"] or 1)))))
+    return "".join(tiles)
+
+
+def cost_step_table(cost):
+    rows = "".join(
+        '<tr><td><span class="flag %s">%s</span></td><td class="numeric">%d</td>'
+        '<td class="bar-cell"><span class="bar-row">%s<span class="numeric">%s</span>'
+        '</span></td><td class="numeric">%s</td><td class="numeric">%d</td>'
+        '<td>%s</td><td class="numeric">%s</td><td class="numeric">%s</td>'
+        '<td class="numeric">%s</td><td class="numeric %s">%s</td></tr>'
+        % (tone(cost["order"].get(row["step"], 8)), esc(row["step"]), row["passes"],
+           meter(row["seconds"], cost["total"] or 1.0, tone="neutral"),
+           cost_time(row["seconds"]), share(row["seconds"], cost["total"]),
+           row["items"] or 0, esc(row["unit"] or "-"), row["skipped"] or 0,
+           per_item(row), cost_time(row["longest"]),
+           "warn" if row["failures"] else "", row["failures"] or 0)
+        for row in cost["steps"])
+    return table('<th>step</th><th class="numeric">passes</th><th>seconds</th>'
+                 '<th class="numeric">share</th><th class="numeric">items</th>'
+                 '<th>unit</th><th class="numeric">skipped</th>'
+                 '<th class="numeric">per item</th><th class="numeric">worst pass</th>'
+                 '<th class="numeric">failed</th>', rows)
+
+
+def shape_of(row, over, noun):
+    """What kind of cost a phase is, in the words metrics/report.py uses.
+
+    The one thing seconds cannot say: a phase called once is a fixed price and
+    only gets cheaper by being paid less often; one called per script or per
+    pass scales with the sweep; more calls than there are scripts is per
+    something smaller -- a prompt, a node, a leaf.
+    """
+    calls = row["calls"] or 0
+    if not over or calls <= 1:
+        return "once"
+    if calls == over:
+        return "per %s" % noun
+    if calls < over:
+        return "%d of %d %ss" % (calls, over, noun)
+    return "%.1f per %s" % (float(calls) / over, noun)
+
+
+def cost_phase_table(cost):
+    """Every phase of every step, with what it is a share of said out loud.
+
+    Two denominators, because there are two kinds of row: a step's own phase is
+    a share of that step's wall time, and a phase inside a generated script is a
+    share of script time -- PROCESS_RUN_BATCH_SIZE of them run at once, so
+    their seconds overlap each other and the step's.
+    """
+    steps = {row["step"]: row for row in cost["steps"]}
+    def weight(row):
+        """Steps in the order the step table ranks them, phases by cost inside
+        each -- so the table reads down from the step worth looking at."""
+        step = steps.get(row["step"])
+        return ((step["seconds"] or 0.0) if step else 0.0, row["seconds"] or 0.0)
+
+    rows = []
+    for row in sorted(cost["named"], key=weight, reverse=True):
+        step = steps.get(row["step"])
+        script = cost["scripts"].get(row["step"])
+        if row["executions"] and script:
+            whole, over, noun = (script["seconds"] or 0.0), script["calls"], "script"
+            against = "script time"
+        else:
+            whole = (step["seconds"] or 0.0) if step else 0.0
+            over, noun = (step["passes"] if step else 0), "pass"
+            against = "the step"
+        calls = row["calls"] or 0
+        rows.append(
+            '<tr><td>%s</td><td><span class="key %s"><i class="swatch"></i>'
+            '<code>%s</code></span></td><td class="numeric">%d</td>'
+            '<td class="bar-cell"><span class="bar-row">%s<span class="numeric">%s'
+            '</span></span></td><td class="numeric">%s</td><td class="numeric">%s</td>'
+            '<td class="numeric">%s</td><td>%s</td><td class="muted">%s</td></tr>'
+            % (esc(row["step"]), cost["tones"].get(row["phase"], "tone-8"),
+               esc(row["phase"]), calls,
+               meter(row["seconds"], whole or 1.0, tone="neutral"),
+               cost_time(row["seconds"]), share(row["seconds"], whole),
+               cost_time((row["seconds"] or 0.0) / calls) if calls else "-",
+               cost_time(row["longest"]), esc(shape_of(row, over, noun)),
+               esc(against)))
+    return table('<th>step</th><th>phase</th><th class="numeric">calls</th>'
+                 '<th>seconds</th><th class="numeric">share</th>'
+                 '<th class="numeric">mean</th><th class="numeric">worst</th>'
+                 '<th>shape</th><th>share of</th>', "".join(rows))
+
+
+def cost_people_table(cost):
+    """One row per execution: what that individual's script cost, and of what.
+
+    `wall` is what the step measured from outside and `named` what the script
+    itself accounted for; the gap between them is the interpreter starting up,
+    which is why both are here rather than one.
+    """
+    if not cost["people"]:
+        return ""
+    rows = []
+    for entry in cost["people"]:
+        spent = dict(entry["phases"])
+        rows.append(
+            '<tr><td class="numeric">%s</td><td class="numeric">%d</td>'
+            '<td><code>%s</code></td>'
+            '<td>%s</td><td class="numeric">%s</td><td class="numeric">%s</td>'
+            '<td class="numeric">%s</td><td class="numeric">%s</td>'
+            '<td class="numeric">%s</td></tr>'
+            % (esc(entry["label"]), entry["pass_no"],
+               esc(shorten(entry["chromosome"] or "-", 46)),
+               esc(entry["verdict"] or "-"), cost_time(entry["wall"]),
+               cost_time(entry["seconds"]),
+               cost_time(spent.get("model_load")),
+               cost_time(sum(seconds for phase, seconds in entry["phases"]
+                             if phase.startswith("combine"))),
+               cost_time(spent.get("generate"))))
+    return table('<th class="numeric">#</th><th class="numeric">pass</th>'
+                 '<th>chromosome</th><th>verdict</th>'
+                 '<th class="numeric">wall</th><th class="numeric">named</th>'
+                 '<th class="numeric">model load</th><th class="numeric">combining</th>'
+                 '<th class="numeric">answering</th>',
+                 "".join(rows))
+
+
+def cost_pass_table(cost):
+    if len(cost["passes"]) < 2:
+        return ""
+    rows = "".join(
+        '<tr><td class="numeric">%d</td><td>%s</td><td class="numeric">%s</td>'
+        '<td>%s</td><td class="numeric">%d</td>'
+        '<td class="bar-cell"><span class="bar-row">%s<span class="numeric">%s</span>'
+        '</span></td></tr>'
+        % (entry["pass_no"], esc(entry["generation"] or "-"),
+           esc(entry["watermark"]), esc(entry["started_at"]), entry["steps"],
+           meter(entry["seconds"],
+                 max(one["seconds"] or 0.0 for one in cost["passes"]) or 1.0,
+                 tone="neutral"),
+           cost_time(entry["seconds"]))
+        for entry in cost["passes"])
+    return table('<th class="numeric">pass</th><th>generation</th>'
+                 '<th class="numeric">high #</th><th>started</th>'
+                 '<th class="numeric">steps</th><th>seconds</th>', rows, sortable=False)
+
+
+def step_legend(cost):
+    """Which colour is which step, under the stacked columns.
+
+    Worth its space even when one step is the whole column -- and on this
+    pipeline it usually is: a legend that says the blue is `process` is what
+    turns "the columns are all blue" into the finding rather than a puzzle.
+    """
+    spent = {}
+    for steps in cost["by_pass"].values():
+        for name, seconds in steps.items():
+            spent[name] = spent.get(name, 0.0) + seconds
+    order = cost["order"]
+    return ('<div class="legend">%s</div>'
+            % "".join('<span class="key %s"><i class="swatch"></i>%s<b>%s</b></span>'
+                      % (tone(order.get(name, 8)), esc(name),
+                         cost_time(spent[name]))
+                      for name in sorted(spent, key=lambda name: order.get(name, 99))))
+
+
+def section_cost(data):
+    """Where the sweep's time went: which step, where inside it, and per pass."""
+    cost = cost_data(data)
+    if not cost:
+        return ""
+    top = cost["steps"][0]
+    script = cost["scripts"].get("process")
+    inner = sorted(cost["inner"], key=lambda row: -(row["seconds"] or 0.0))
+    own = sorted(cost["own"], key=lambda row: -(row["seconds"] or 0.0))
+
+    inside = ""
+    if inner and script:
+        inside = ('<h3>Inside the generated scripts</h3>%s'
+                  '<p class="muted">Shares of the %s those %d script(s) spent in '
+                  'all, not of the step\'s wall time: a batch runs '
+                  '%s of them at once, so these seconds overlap each other. '
+                  'Anything the bar does not cover is the interpreter starting '
+                  'up before the script\'s own clock does.</p>'
+                  % (card(stacked_bar(inner, script["seconds"], cost["tones"])
+                          + legend(inner, script["seconds"], cost["tones"])),
+                     cost_time(script["seconds"]), script["calls"] or 0,
+                     esc(_batch_of(data) or "several")))
+    elif inner:
+        inside = ('<h3>Inside the generated scripts</h3>%s'
+                  % card(stacked_bar(inner, sum(row["seconds"] or 0.0
+                                                for row in inner), cost["tones"])
+                         + legend(inner, sum(row["seconds"] or 0.0
+                                             for row in inner), cost["tones"])))
+
+    steps_own = ""
+    if own:
+        # Shares of each other rather than of the sweep, and said so: this is a
+        # couple of seconds of housekeeping beside minutes of waiting on
+        # children, and a bar drawn against the sweep's total would be one
+        # invisible sliver saying nothing.
+        whole = sum(row["seconds"] or 0.0 for row in own)
+        steps_own = ('<h3>Work the steps did themselves</h3>%s'
+                     '<p class="muted">Everything the steps do that is not '
+                     'waiting on a child process -- %s in all, against the %s '
+                     'the sweep took. Shares are of that %s, so this bar is '
+                     'housekeeping measured against housekeeping.</p>'
+                     % (card(stacked_bar(own, whole, cost["tones"])
+                             + legend(own, whole, cost["tones"])),
+                        cost_time(whole), cost_time(cost["total"]),
+                        cost_time(whole)))
+
+    people = ""
+    if cost["people"]:
+        people = ('<h3>What each individual cost</h3>%s%s'
+                  '<p class="muted">The costliest first, and the same colours as '
+                  'the phase legend above. Two blends of one population differ by '
+                  'what their trees make the script do -- the leaves it attaches, '
+                  'the nodes it folds -- on top of a base-model load every one of '
+                  'them pays.</p>'
+                  % (card(execution_cost_chart(cost["people"], cost["tones"])),
+                     cost_people_table(cost)))
+
+    passes = ""
+    if len(cost["passes"]) > 1:
+        passes = ('<h3>Pass by pass</h3>%s%s'
+                  '<p class="muted">One column per pass over the sweep -- a '
+                  'generation each, when <code>continue_run.py</code> is turning '
+                  'the crank -- stacked by step. A total that climbs is the '
+                  'population growing under it; one that is flat is the price of '
+                  'the search rather than of its size.</p>'
+                  % (card(pass_cost_chart(cost["passes"], cost["by_pass"],
+                                          cost["order"])
+                          + step_legend(cost)),
+                     cost_pass_table(cost)))
+
+    return ('<section id="cost"><h2>Where the time went</h2>'
+            '<p class="lead">What this sweep spent, as it spent it: one row per '
+            'step per pass, and the phases inside each step. <code>%s</code> is '
+            'the one to look at first here -- %s of %s.</p>'
+            '<div class="tiles">%s</div>'
+            '%s%s'
+            '%s%s%s%s'
+            '<p class="muted">Recorded by <code>start_run.run()</code> while the '
+            'sweep ran, into <code>step_timings</code> and <code>phase_timings</code>. '
+            '<code>calls</code> is the column that decides what a fix is worth: a '
+            'phase paid once per pass gets cheaper only by running fewer passes, '
+            'and one paid per script or per prompt gets cheaper by being cheaper. '
+            'The same rows print at a terminal with '
+            '<code>python -m metrics.report</code>.</p>'
+            '</section>'
+            % (esc(top["step"]), share(top["seconds"], cost["total"]),
+               cost_time(cost["total"]), cost_tiles(cost, data),
+               card(step_cost_chart(cost["steps"], cost["order"])),
+               cost_step_table(cost),
+               inside, steps_own,
+               '<h3>Every phase</h3>%s' % cost_phase_table(cost),
+               people + passes))
+
+
+def _batch_of(data):
+    """How many scripts a batch of this sweep held, from the note the process
+    step left on its own row -- "batch 4, 5 prompt(s) each"."""
+    for row in data["timings"]["rows"]:
+        if row["step"] == "process" and row["note"]:
+            head = row["note"].split(",")[0].strip()
+            return head.split()[-1] if head.startswith("batch") else None
+    return None
+
+
 def section_dataset(data):
     splits, samples = data["splits"], data["samples"]
     if not splits:
@@ -1660,6 +2272,27 @@ details.inline summary { cursor: pointer; font-family: var(--mono); font-size: 1
 details.inline pre { margin: 6px 0 0; padding: 10px; background: var(--track);
   border-radius: 8px; overflow-x: auto; font-size: 12px; white-space: pre-wrap; }
 
+svg.chart.bar-only { height: 34px; }
+svg.chart .bar.toned { fill: var(--tone, var(--accent)); }
+.tone-0 { --tone: var(--accent); }   .tone-1 { --tone: var(--accent-2); }
+.tone-2 { --tone: var(--lin); }      .tone-3 { --tone: var(--l1); }
+.tone-4 { --tone: var(--l2); }       .tone-5 { --tone: var(--l3); }
+.tone-6 { --tone: var(--l4); }       .tone-7 { --tone: var(--l5); }
+.tone-8 { --tone: var(--none); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 14px; }
+.legend .key { display: inline-flex; align-items: baseline; gap: 7px;
+  font-size: 12.5px; font-family: var(--mono); color: var(--ink); }
+.legend .key b { font-weight: 650; }
+.legend .key em { font-style: normal; color: var(--ink-2); font-size: 11.5px; }
+.key { display: inline-flex; align-items: baseline; gap: 7px; }
+.swatch { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 3px;
+  background: var(--tone, var(--accent)); transform: translateY(1px); }
+table.data .flag.tone-0, table.data .flag.tone-1, table.data .flag.tone-2,
+table.data .flag.tone-3, table.data .flag.tone-4, table.data .flag.tone-5,
+table.data .flag.tone-6, table.data .flag.tone-7, table.data .flag.tone-8 {
+  background: color-mix(in srgb, var(--tone) 16%, transparent); color: var(--tone);
+  font-family: var(--mono); font-weight: 650; }
+
 footer { max-width: 1160px; margin: 0 auto; padding: 26px 32px 50px;
   color: var(--ink-2); font-size: 12.5px; border-top: 1px solid var(--line); }
 @media print {
@@ -1953,7 +2586,7 @@ SCRIPT = """
 
 NAV = (("overview", "Overview"), ("individual", "Individual"), ("history", "The search"),
        ("population", "Population"), ("judging", "Judging"), ("testing", "Testing"),
-       ("dataset", "Dataset"), ("settings", "Settings"))
+       ("cost", "Cost"), ("dataset", "Dataset"), ("settings", "Settings"))
 
 
 def payload(data):
@@ -1978,7 +2611,8 @@ def render(data, values):
     run = data["run"]
     sections = [section_overview(data), section_individuals(data), section_history(data),
                 section_population(data), section_judging(data, values),
-                section_testing(data), section_dataset(data), section_settings(data)]
+                section_testing(data), section_cost(data), section_dataset(data),
+                section_settings(data)]
     present = {name for name, _ in NAV
                if any(('id="%s"' % name) in part for part in sections)}
     nav = "".join('<li><a href="#%s">%s</a></li>' % (name, esc(label))

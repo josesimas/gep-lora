@@ -81,6 +81,7 @@ from blends import generate_runs
 from blends import process_run
 from config import settings as config
 import evaluators
+from metrics import record
 from search import calculate_fitness
 from search import draw_trees
 from search import elitism
@@ -102,7 +103,7 @@ class Context:
     """What every step needs: the database, the sweep, and the options."""
 
     __slots__ = ("conn", "run_id", "conf", "run_dir", "template", "options",
-                 "generation")
+                 "generation", "meter")
 
     def __init__(self, conn, run_id, conf, run_dir, template, options):
         self.conn = conn
@@ -115,6 +116,33 @@ class Context:
         # for a single pass. Nothing reads it but the banners: a generation is
         # not stored, and a step must not start behaving differently in one.
         self.generation = None
+        # What this step cost, and where inside it the time went. run() swaps
+        # in a Meter of its own around every step; a Context built anywhere else
+        # -- a test, a shell, a driver calling one step directly -- keeps this
+        # blank one, which accepts everything a step says and writes nothing. So
+        # a step never has to ask whether it is being timed.
+        self.meter = record.blank()
+
+    # The three things a step says about its own cost. Delegated rather than
+    # reached through context.meter so instrumenting a step reads as part of
+    # the step: see metrics/record.py for what each of them is for.
+
+    def count(self, items, unit=None, skipped=0, note=None):
+        """How many units this step worked on, and how many it skipped."""
+        self.meter.count(items, unit, skipped=skipped, note=note)
+
+    def phase(self, name, seconds, **fields):
+        """Add `seconds` to a named phase inside this step."""
+        self.meter.phase(name, seconds, **fields)
+
+    def timer(self, name, **fields):
+        """`with context.timer("prepare"):` -- the same, timed for you."""
+        return self.meter.timer(name, **fields)
+
+    def phases_from(self, records, execution_id=None):
+        """Add phases something else measured -- a generated script's own
+        TIMING: lines, read back by process_run.timings()."""
+        self.meter.phases_from(records, execution_id=execution_id)
 
 
 # --- the settings a sweep runs under --------------------------------------
@@ -162,6 +190,8 @@ def step_population(context):
         conf["COUNT"], rng, conf["MAX_DEPTH"], conf["BRANCH_PROB"], conf["UNIQUE"])
     store.add_individuals(context.conn, context.run_id, chromosomes)
 
+    context.count(len(chromosomes), "individuals")
+
     sizes = [len(one.split(".")) for one in chromosomes]
     print("stored %d individuals in run %d (seed %s)"
           % (len(chromosomes), context.run_id, conf["SEED"]))
@@ -187,6 +217,7 @@ def step_trees(context):
         store.set_tree(context.conn, row["id"], drawing)
     context.conn.commit()
 
+    context.count(len(rows), "trees")
     print("drew %d trees into run %d" % (len(rows), context.run_id))
     if bad:
         print("%d individual(s) could not be drawn -- see the !! markers" % bad)
@@ -248,6 +279,7 @@ def step_runs(context):
     conn.commit()
 
     written = store.materialise(conn, run_id, context.run_dir)
+    context.count(len(rows), "scripts", skipped=len(rows) - runnable)
     print("stored %d scripts in run %d (from %s)"
           % (len(rows), run_id, os.path.basename(context.template)))
     print("base model: %s" % base_model)
@@ -297,7 +329,8 @@ def step_process(context):
 
     # The scripts have to exist as files to be launched; rewrite any that are
     # missing or out of date.
-    store.materialise(conn, run_id, context.run_dir)
+    with context.timer("materialise"):
+        store.materialise(conn, run_id, context.run_dir)
 
     # Whether the venv is needed is a property of the template that was filled:
     # mocked scripts load nothing, and demanding the venv for them would put a
@@ -372,6 +405,11 @@ def step_process(context):
     def watch(script):
         return process_run.Progress(script, prompts, every, say)
 
+    # What this step is judged on: the individuals it actually launched. The
+    # ones it skipped cost nothing, so counting them would flatter the seconds
+    # per individual that says what a bigger population would cost.
+    context.count(len(selected), "individuals", skipped=blocked + len(unchanged),
+                  note="batch %d, %d prompt(s) each" % (size, prompts))
     print("running %d of %d individuals%s%s"
           % (len(selected), len(rows),
              " (%d skipped as BAD)" % blocked if blocked else "",
@@ -420,6 +458,22 @@ def step_process(context):
                 conn, row["id"], seconds, code, verdict, row["weight_seed"],
                 process_run.drawn_weights(out), out, err)
             store.add_exchanges(conn, execution_id, transcript)
+            # What the script cost from out here, and what it says it spent the
+            # time on in there -- the TIMING: lines it printed about itself, one
+            # phase row each, tied to the execution that paid for them. A script
+            # that printed none (an older sweep, or one that died before it got
+            # going) leaves the wall time and nothing under it.
+            # The row says whose script it was, rather than leaving that to a
+            # join: selection culls executions and sqlite hands their ids out
+            # again, so an id alone stops meaning one individual the moment a
+            # generation has been culled. Same rule as an execution row and a
+            # fitness_history row -- keep what was true when it was written.
+            context.phase("script", seconds, execution_id=execution_id,
+                          detail={"number": row["number"],
+                                  "chromosome": row["chromosome"],
+                                  "verdict": verdict, "batch": size})
+            context.phases_from(process_run.timings(out),
+                                execution_id=execution_id)
             # Commit per individual, so an interrupted sweep keeps what it has
             # done -- a half-finished batch still leaves the ones that came back.
             conn.commit()
@@ -444,7 +498,8 @@ def step_process(context):
     # whatever is still waiting to run, and makes it impossible to launch a
     # stale one by hand later. This happens whatever the individuals did --
     # a failed run is still a processed one, and its output is stored either way.
-    _clear_scripts(context, selected + unchanged)
+    with context.timer("clear scripts"):
+        _clear_scripts(context, selected + unchanged)
 
     # A chromosome that cannot run is a result, not a pipeline failure. Only a
     # sweep where nothing at all worked points at something systemic.
@@ -504,7 +559,11 @@ def _evaluate(context):
     # baseline evaluator may have a base model to run -- and a console that has
     # not yet named the evaluator cannot explain what it is waiting for.
     print("evaluator: %s -- %s" % (evaluator.name, evaluator.description))
-    prepared = evaluator.prepare(context.conf, pending, context)
+    # Timed on its own because it is the one fixed cost of this step: the
+    # baseline evaluator may have a base model to load and a whole eval set to
+    # answer here, and a step total cannot tell that from slow judging.
+    with context.timer("prepare", detail={"evaluator": evaluator.name}):
+        prepared = evaluator.prepare(context.conf, pending, context)
     for note in prepared.notes:
         print(note)
     print("scoring %d answer(s)%s\n"
@@ -560,7 +619,15 @@ def _evaluate(context):
                     # and nothing else: the exchange keeps its NULL quality, the
                     # step counts it, and a re-run picks it up again. A failure
                     # is not a zero, so it never counts toward giving up either.
+                    call_started = time.perf_counter()
                     quality, reason = evaluator.score(item, prepared)
+                    # Timed here rather than around the whole loop: one call is
+                    # a request or a generate(), and calls x seconds is what
+                    # says whether to speed the judge up or ask it less often.
+                    # A failed call is timed too -- see below -- since a judge
+                    # that times out costs its timeout.
+                    context.phase("score", time.perf_counter() - call_started,
+                                  detail={"judge": prepared.label})
                     quality = round(quality, 3)
                     store.score_exchange(conn, row["id"], quality, reason,
                                          prepared.label)
@@ -569,6 +636,9 @@ def _evaluate(context):
                     zeros += 1 if quality == 0.0 else 0
                     print("    [%d] %.2f  %s" % (row["position"], quality, reason))
                 except (RuntimeError, ValueError) as error:
+                    context.phase("score (failed)",
+                                  time.perf_counter() - call_started,
+                                  detail={"judge": prepared.label})
                     failed += 1
                     print("    [%d] FAILED  %s" % (row["position"], error))
 
@@ -582,6 +652,9 @@ def _evaluate(context):
             conn.commit()
 
     print("\nscored %d, %d failed, in %.1fs" % (scored, failed, time.time() - started))
+
+    context.count(scored, "answers", skipped=abandoned,
+                  note="%s via %s" % (evaluator.name, prepared.label or "-"))
 
     if abandoned:
         print("%d answer(s) scored 0 unasked, on individuals given up on early"
@@ -627,6 +700,9 @@ def step_fitness(context):
     print("\nwrote fitness for %d individual(s): min %.3f, max %.3f, mean %.3f"
           % (len(values), min(values), max(values), sum(values) / len(values)))
 
+    context.count(len(values), "individuals",
+                  skipped=sum(1 for row in rows if row["quality"] is None))
+
     # An individual averaged over part of its transcript still gets a fitness,
     # but it is a weaker claim than one averaged over all of it -- say so.
     partial = [row["number"] for row in rows
@@ -670,6 +746,8 @@ def step_elitism(context):
         raise SystemExit("every individual in run %d has fitness 0.0 -- run the "
                          "fitness step first, or, if they really all scored 0.0, "
                          "this generation has no elite to carry forward." % run_id)
+
+    context.count(len(rows), "individuals")
 
     tied = [row["number"] for row in rows
             if (row["fitness"] or 0.0) == (best["fitness"] or 0.0)]
@@ -738,6 +816,7 @@ def step_selection(context):
     times = {}
     for row in picked.parents:
         times[row["number"]] = times.get(row["number"], 0) + 1
+    context.count(len(picked.parents), "spins")
     print("spun the wheel %d time(s) over %d individual(s)"
           % (len(picked.parents), len(before)))
     print("    %-9s %-7s %-6s %s" % ("parent", "fitness", "picked", "chromosome"))
@@ -828,6 +907,7 @@ def step_mutation(context):
 
     elite = [row["number"] for row in rows if row["is_best"]]
     eligible = len(rows) - len(elite)
+    context.count(eligible, "individuals", skipped=len(elite))
     print("rate %.3f per symbol, over %d of %d individual(s)%s"
           % (rate, eligible, len(rows),
              " (#%s is the elite and is left alone)"
@@ -954,6 +1034,13 @@ def run(steps, context):
     --list` says so rather than presenting a half-finished run as a result.
     """
     started = time.time()
+    # One pass over the sweep: this call, whatever steps it was given. A
+    # generation, when continue_run.py is the one calling. The watermark is read
+    # once here rather than per step, so selection raising it half way through
+    # cannot file the same generation under two numbers -- see the step_timings
+    # comment in store.py.
+    pass_no = store.next_pass(context.conn, context.run_id)
+    watermark = store.high_number(context.conn, context.run_id)
     for number, step in enumerate(steps, 1):
         print("=" * 70)
         print("[%d/%d]%s %s -- %s"
@@ -961,21 +1048,38 @@ def run(steps, context):
                  "" if not context.generation else " gen %s" % context.generation,
                  step.name, step.description))
         print("=" * 70)
-        step_started = time.time()
+        # A step is timed whether or not it says anything about itself: the wall
+        # time and the row are the driver's, and the phases inside are the
+        # step's own to add. A step added later is therefore timed by existing.
+        context.meter = record.Meter(context.conn, context.run_id, pass_no,
+                                     number, step.name,
+                                     generation=context.generation,
+                                     watermark=watermark)
+        context.meter.started_at = store.now()
+        step_started = time.perf_counter()
         try:
             step.run(context)
         except SystemExit as error:
             if error.code not in (0, None):
+                context.meter.commit(time.perf_counter() - step_started, "failed")
                 print("\nSTOPPED in step '%s': %s" % (step.name, error))
                 print("Later steps were skipped, since they build on this one.")
                 store.finish_run(context.conn, context.run_id, "failed")
                 return 1
         except Exception as error:                      # noqa: BLE001 - report and stop
+            # The row is written before the sweep is marked failed, for the
+            # reason a crashed individual's transcript is kept: a step that fell
+            # over after forty minutes is the most expensive thing this sweep
+            # did, and this is the only record of it.
+            context.meter.commit(time.perf_counter() - step_started, "failed")
             print("\nSTOPPED in step '%s': %s: %s"
                   % (step.name, type(error).__name__, error))
             store.finish_run(context.conn, context.run_id, "failed")
             return 1
-        print("  (%s took %.1fs)\n" % (step.name, time.time() - step_started))
+        seconds = time.perf_counter() - step_started
+        context.meter.commit(seconds)
+        context.meter = record.blank()
+        print("  (%s took %.1fs)\n" % (step.name, seconds))
 
     store.finish_run(context.conn, context.run_id, "done")
     print("=" * 70)

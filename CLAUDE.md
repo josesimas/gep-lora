@@ -32,6 +32,7 @@ blends/       generate_runs, process_run, baseline_run -- a chromosome,
 templates/    the four template_*.py -- read and filled, never imported,
               which is why this folder is not a package
 storage/      store, add_dataset, db_datasets -- the database and its datasets
+metrics/      record, report -- what each step cost, measured and read back
 evaluators/   one module per evaluator, plus common.py and local_model.py
 testing/      test_run_with_dataset -- the held-out pass
 reporting/    generate_html_db_stats -- a sweep as a single HTML page
@@ -251,10 +252,31 @@ score, chromosome, the blend drawn as an SVG tree whose leaves carry the drawn
 weight *and the slot's rank*, the Karva rows, the weight draw, a bar per
 question, the transcript with the judge's reasons, the script that earned it --
 then the fitness history, the population, the score distribution, the testing
-pass, the dataset and the settings. Derived and disposable: it writes nothing to
+pass, **what the sweep cost**, the dataset and the settings. Derived and
+disposable: it writes nothing to
 the sweep, and reads through `store.py`'s helpers rather than its own SQL, bar a
 couple of read-only aggregates the way `start_run.py` and `test_run_with_dataset.py`
 already do.
+
+**The cost section is `step_timings` and `phase_timings`, drawn.** Six tiles, then
+every step ranked by what it cost, the phases inside the generated scripts as one
+stacked bar, the work the steps did themselves as another, a table of every phase,
+one bar per individual split by phase, and a column per pass stacked by step. It
+prints the same rows `python -m metrics.report` does and shares that module's
+`WHOLE`/`NESTED` classification rather than keeping a second opinion about which
+phases overlap which -- a phase double counted in one and not the other would have
+the page and the command line disagreeing about one sweep.
+
+Two denominators, and the page says which is which on every chart: a step's own
+phase is a share of that step's wall time, and a phase inside a script is a share
+of **script** time, because `PROCESS_RUN_BATCH_SIZE` scripts run at once and their
+seconds overlap each other and the clock. The per-individual rows are keyed on
+**(step_timings row, execution id)** rather than the execution id alone: sqlite
+hands out rowids as `MAX(rowid) + 1`, so culling the newest executions frees their
+ids for the next generation, and two generations' phase rows can carry the same
+one. The `script` phase's `detail` carries the individual's number and chromosome
+for that reason -- self-contained, like an execution row -- and the join back
+through `executions` is only the fallback for sweeps recorded before it did.
 
 **Where the leaf ranks come from is deliberate.** `slot_ranks()` parses them out
 of the stored `script_source` -- `generate_runs.build_order_block()` writes one
@@ -489,6 +511,18 @@ and `BASELINE_TIMEOUT` is what the one script gets. A question with no cached co
 fails **that exchange only** rather than falling back to merit grading -- an improvement
 score and a merit score are not the same number, and mixing them in one fitness would
 reward whoever lost their baseline.
+
+```bash
+python -m metrics.report
+python -m metrics.report --run 3 --step process
+```
+
+What a sweep spent its time on: the step table (which step to optimise first), the phases
+inside each step (what to do about it), and the pass table (whether it is growing). The rows
+come from `step_timings` and `phase_timings`, written by `start_run.run()` as it goes -- so
+this reads a stored sweep, and there is nothing to switch on before a run. `--csv` prints the
+rows behind the tables. A sweep from before the tables existed has none, and cannot be given
+any after the fact.
 
 Population size for a full run is `COUNT` in `settings.py` (currently 10, kept small for
 iteration; the README's worked numbers assume 100). `settings.py` holds every knob the
@@ -727,6 +761,42 @@ is loaded and `ask()`/`grade()` invent the answer and its score. It prints `QUAL
 comes out pre-scored. **A change to one template usually belongs in both**; anything that
 differs between them is by definition part of the mock.
 
+### What each step cost
+
+`start_run.run()` times every step it runs and writes one `step_timings` row per step per
+**pass** -- a pass being one call of `run()`, which is one generation when `continue_run.py`
+is turning the crank. The row carries the wall seconds, and what the step says about its own
+work through `context.count(items, unit, skipped=...)`: seconds alone rank the steps,
+seconds per item survive a change of population size, and `skipped` keeps individuals that
+cost nothing (BAD, unchanged, already scored) out of that average. A step that says nothing
+still gets a row, so **a step added later is timed by existing**.
+
+`phase_timings` is where the seconds inside one step went, one row per phase, holding
+`calls`, the total and the worst single call. The two levels are the two questions: a step
+total cannot tell a fixed cost paid once from a per-item cost paid a hundred times, and
+those want opposite fixes. Phases come from two places. The step adds its own through
+`context.phase()` / `context.timer()` -- `materialise`, `clear scripts`, the evaluator's
+`prepare`, one `score` per judge call. And each generated script reports on itself: it
+prints `TIMING: <phase> <seconds> [label]` lines as it goes -- `import`, `model_load`,
+`attach` per leaf, `combine.cat` / `combine.svd` / `combine.linear` per node, `compact`,
+`inference_setup`, `generate` per prompt, `total` -- which `process_run.timings()` folds
+and `step_process` stores against that individual's `execution_id`. A marker line on stdout,
+like the weights and the mocked score, rather than a second channel out of a child process;
+`process_run.exchanges()` knows to end a reply at one, so a timing line can never land in a
+transcript. **Both templates print them**, so the whole path is exercised by a mocked sweep
+on a machine with no GPU.
+
+Two clocks measure each script -- the step's, from launch, and the script's own `total` --
+and `metrics/report.py` shows the gap rather than hiding it: it is the interpreter starting
+up, which no amount of tuning inside the script touches. Script phases are shares of script
+time and never of the step's wall time, because `PROCESS_RUN_BATCH_SIZE` scripts run at
+once and their seconds overlap.
+
+A phase row's `execution_id` is deliberately **not** a foreign key: selection culls
+individuals and takes their executions with them, and what a culled individual cost is
+still what that generation cost -- the same reason `fitness_history` keeps its rows through
+a cull.
+
 ## The rank rule
 
 The operators map onto PEFT `add_weighted_adapter` combination types — `CAT`→`cat`,
@@ -766,6 +836,12 @@ appeared to manage VRAM would be claiming to test something it cannot.
 
 ## Conventions that matter
 
+- **A step is timed whether or not it knows it.** `run()` wraps every step in a Meter and
+  writes the row itself, including when the step raised -- a step that fell over after forty
+  minutes is the most expensive thing that sweep did. Adding `context.count()` and
+  `context.phase()` to a step adds detail to a row that already exists; a `Context` built
+  outside `run()` gets a blank Meter that accepts everything and writes nothing, so no step
+  needs an `if` around its instrumentation.
 - **Individual failures are results, not pipeline failures.** A chromosome that crashes is
   recorded as an execution row with its exit code and the sweep carries on; only a sweep
   where *nothing* ran exits non-zero. Keep this when adding steps.

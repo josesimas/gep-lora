@@ -62,6 +62,8 @@ import random
 import sys
 import time
 
+_STARTED = time.perf_counter()
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PROJECT = os.path.dirname(_HERE)                  # run/ -> project/
 
@@ -245,6 +247,21 @@ def _prompts(path, count=None):
     return prompts if count is None else prompts[:count]
 
 
+def _timing(phase, seconds, label=""):
+    """Say what this script spent on one thing -- see process_run.timings().
+
+    The same channel and the same phase names the real template prints, over
+    the mocked delays rather than over a model, so the whole path from a script
+    saying what it cost to `python -m metrics.report` showing it is exercised
+    on a machine with no GPU and nothing loaded. The seconds are MOCK_*_DELAY
+    and mean nothing about a real run -- as with the mocked scores, the shape is
+    what is faithful here, not the number.
+    """
+    print(f"TIMING: {phase} {seconds:.4f}{' ' + label if label else ''}", flush=True)
+
+
+_timing("import", time.perf_counter() - _STARTED)
+
 EVAL_PROMPTS = _prompts(TRAINING_SET, TRAINING_COUNT)
 
 EXPRESSION = "@@EXPRESSION@@"
@@ -258,8 +275,10 @@ print("weights: " + ", ".join(f"{k}={v:.4f}" for k, v in WEIGHTS.items()))
 # ---------------------------------------------------------------------------
 # "Load" the base model. This is the step that costs minutes for real.
 # ---------------------------------------------------------------------------
+_started = time.perf_counter()
 time.sleep(MOCK_LOAD_DELAY)
 model = None
+_timing("model_load", time.perf_counter() - _started)
 
 # ---------------------------------------------------------------------------
 # Attach the @@LEAF_COUNT@@ leaf adapter(s) the tree names, each under its own name so
@@ -270,7 +289,9 @@ RANKS = {}
 
 def attach(name, slot):
     """Record what loading LORA_SLOTS[slot] under `name` would have produced."""
+    started = time.perf_counter()
     RANKS[name] = _rank(LORA_SLOTS[slot])
+    _timing("attach", time.perf_counter() - started, f"{name}={slot}")
     return name
 
 
@@ -297,6 +318,7 @@ def combine(name, combination_type, left, right):
     The linear check is kept, and kept identical, so a BAD individual fails
     here in a mocked sweep exactly as it would in a real one.
     """
+    started = time.perf_counter()
     (left_name, left_weight), (right_name, right_weight) = left, right
     left_rank, right_rank = RANKS[left_name], RANKS[right_name]
 
@@ -306,6 +328,8 @@ def combine(name, combination_type, left, right):
             f"but {left_name} is rank {left_rank} and {right_name} is rank {right_rank}. "
             f"cat sums its inputs' ranks, which is usually what pushes them apart."
         )
+
+    _timing(f"combine.{combination_type}", time.perf_counter() - started, name)
 
     if combination_type == "cat":
         RANKS[name] = left_rank + right_rank
@@ -320,7 +344,11 @@ def combine(name, combination_type, left, right):
 # @@COMBINE_NODES@@
 
 FINAL_ADAPTER = "@@FINAL_ADAPTER@@"
+_started = time.perf_counter()
 print(f"Active adapter: ['{FINAL_ADAPTER}'] (rank {RANKS[FINAL_ADAPTER]})")
+# Nothing to select, no chat template to fetch and no inference path to switch
+# to, so this is the near-zero the real template's fixed tail is not.
+_timing("inference_setup", time.perf_counter() - _started)
 
 
 def ask(question, max_new_tokens=250):
@@ -329,9 +357,18 @@ def ask(question, max_new_tokens=250):
     Deliberately multi-line: the real replies wrap, and a transcript reader
     that only ever saw one-liners would not be tested by this.
     """
+    started = time.perf_counter()
     time.sleep(MOCK_ANSWER_DELAY)
     body = _mock.sample(_STEPS, _mock.randint(2, 3))
-    return "\n".join([_mock.choice(_OPENERS)] + body + [_mock.choice(_CLOSERS)])
+    reply = "\n".join([_mock.choice(_OPENERS)] + body + [_mock.choice(_CLOSERS)])
+    # Printed by say(), after the reply -- a line between "COACH:" and the rest
+    # of a wrapped answer would be read as part of the answer.
+    _ASKED.append(time.perf_counter() - started)
+    return reply
+
+
+# How long each ask() took, in the order they were asked. See template_code.py.
+_ASKED = []
 
 
 def grade():
@@ -357,6 +394,7 @@ def say(question):
     # already scored and never needs the judge endpoint.
     print(f"QUALITY: {quality}")
     print(f"REASON: {reason}")
+    _timing("generate", _ASKED[-1])
 
 
 if __name__ == "__main__":
@@ -366,3 +404,4 @@ if __name__ == "__main__":
     else:
         for q in EVAL_PROMPTS:
             say(q)
+        _timing("total", time.perf_counter() - _STARTED)

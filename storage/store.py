@@ -22,12 +22,19 @@ row so sweeps accumulate instead of replacing each other:
           exchanges the questions and answers, and the judge's score for each
       fitness_history  what each individual's fitness was at the end of each
                     generation, and when it was worked out
+      step_timings  what each step of each pass cost, and how much work it did
+        phase_timings  where inside one step those seconds went
 
     baselines     what the base model itself answered, per model and question.
                   The one table outside that tree: it belongs to the model
                   rather than to a sweep, so every sweep that grades against
                   the base model reads the same cache instead of producing it
                   again.
+
+A sweep therefore records what it produced *and* what it cost, in the same
+file and to the same standard: which step, how many items it was, and which
+phase inside it -- see the step_timings and phase_timings comments below, and
+`python -m metrics.report` for the read side.
 
 Everything a scorer needs is reachable from one query, and nothing is derived
 from a filename. The only thing that still has to exist on disk is the generated
@@ -265,11 +272,101 @@ CREATE TABLE IF NOT EXISTS test_results (
     scored_at     TEXT
 );
 
+-- How long each step of the pipeline took, one row per step per pass.
+--
+-- A sweep already records what it produced and nothing about what it cost, so
+-- "which step should be optimised first" can only be answered by watching the
+-- console go by -- and the console is gone by the time the question is asked.
+-- These rows are that answer, kept the way every other result is kept.
+--
+-- One row per *step*, per *pass* over the sweep: a pass is one run of
+-- start_run.run(), which is exactly one generation when continue_run.py is
+-- turning the crank and one partial run when a step list was named by hand. So
+-- `process` appears once per generation rather than once per sweep, and the
+-- cost of a generation is the sum of the rows sharing its pass_no.
+--
+-- `items` and `unit` are what makes two steps comparable: a step is only
+-- expensive relative to how much it did, and seconds/item is the number that
+-- says whether the fix is a faster item or fewer of them. `skipped` is the
+-- other half of that -- individuals a step declined to run (BAD, unchanged,
+-- already scored) cost nothing and would otherwise flatter the per-item cost.
+--
+-- `watermark` is store.high_number() when the pass began: the same clock
+-- fitness_history is dated by, so a timing row can be lined up with the
+-- generation whose fitness it paid for. It is taken once for the whole pass, so
+-- the selection step raising it mid-pass does not split a generation in two.
+CREATE TABLE IF NOT EXISTS step_timings (
+    id          INTEGER PRIMARY KEY,
+    run_id      INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    pass_no     INTEGER NOT NULL,        -- 1-based, one per start_run.run()
+    position    INTEGER NOT NULL,        -- the step's place within that pass
+    step        TEXT    NOT NULL,        -- the STEPS name: process, evaluate, ..
+    generation  TEXT,                    -- the driver's label ("2/5"), if any
+    watermark   INTEGER,                 -- high_number() when the pass began
+    started_at  TEXT    NOT NULL,
+    seconds     REAL    NOT NULL,        -- wall time, the whole step
+    items       INTEGER DEFAULT 0,       -- units it actually worked on
+    unit        TEXT,                    -- what one item is
+    skipped     INTEGER DEFAULT 0,       -- units it declined to work on
+    status      TEXT    NOT NULL DEFAULT 'ok',   -- ok | failed
+    note        TEXT
+);
+
+-- Where the time inside one step went, one row per phase per step.
+--
+-- The step rows say which step to optimise; these say what to do about it. A
+-- phase is a named piece of work a step repeats -- loading the base model,
+-- attaching a leaf, folding one node, one generate(), one judge call -- and a
+-- row aggregates every occurrence of it within that step rather than storing
+-- one row per occurrence: `calls` and `seconds` are what a fix is worth in
+-- total, and `longest` is what a worst case costs. Ten thousand generate()
+-- calls are a shape, not ten thousand rows.
+--
+-- `calls` is the difference between the two kinds of cost that need opposite
+-- fixes: calls = 1 is a fixed price the step pays whatever the population is
+-- (amortise it, batch it, cache it), and calls = items is a per-item price
+-- (make the item cheaper, or ask for fewer). Both look identical in a step
+-- total, which is why the step total alone cannot say what to do.
+--
+-- `execution_id` ties a phase to the individual that paid for it when there is
+-- one -- the process step's phases come out of each generated script's own
+-- stdout -- and is NULL for a phase the step paid once on everyone's behalf.
+-- It is deliberately **not** a foreign key: selection culls individuals and
+-- takes their executions with them, and what a culled individual cost is still
+-- what that generation cost. fitness_history keeps its rows through a cull for
+-- the same reason, and a timing that vanished when the individual did would
+-- make every sweep look cheaper the longer it ran. So the id is a way back to
+-- the transcript while there is one, not a claim that there is.
+--
+-- And **an id that comes back is not the same execution**: sqlite hands out
+-- rowids as MAX(rowid) + 1, so culling the newest executions frees their ids
+-- for the next generation to use again. A row here is therefore identified by
+-- (step_timing_id, execution_id) -- one step ran once, and an id it saw is its
+-- own -- and the script phase carries the individual's number and chromosome in
+-- `detail`, so a reader never has to join back through an id that may since
+-- have been handed to somebody else. Self-contained, the way an execution row
+-- and a fitness_history row are, and for exactly the same reason.
+-- `detail` is JSON for whatever distinguishes occurrences of the same phase:
+-- the combination type of a node, the adapter a leaf came from, the judge that
+-- was asked.
+CREATE TABLE IF NOT EXISTS phase_timings (
+    id             INTEGER PRIMARY KEY,
+    step_timing_id INTEGER NOT NULL REFERENCES step_timings(id) ON DELETE CASCADE,
+    execution_id   INTEGER,                -- executions(id) while it exists; see above
+    phase          TEXT    NOT NULL,     -- model_load, attach, combine.svd, generate, ..
+    calls          INTEGER NOT NULL DEFAULT 1,
+    seconds        REAL    NOT NULL,     -- summed over those calls
+    longest        REAL,                 -- the worst single one
+    detail         TEXT                  -- JSON, or NULL
+);
+
 CREATE INDEX IF NOT EXISTS individuals_by_run ON individuals(run_id, number);
 CREATE INDEX IF NOT EXISTS executions_by_individual ON executions(individual_id);
 CREATE INDEX IF NOT EXISTS exchanges_by_execution ON exchanges(execution_id);
 CREATE INDEX IF NOT EXISTS fitness_history_by_run ON fitness_history(run_id, generation);
 CREATE INDEX IF NOT EXISTS test_results_by_run ON test_results(run_id, number);
+CREATE INDEX IF NOT EXISTS step_timings_by_run ON step_timings(run_id, pass_no, position);
+CREATE INDEX IF NOT EXISTS phase_timings_by_step ON phase_timings(step_timing_id);
 
 -- The fitness view: one row per individual, over its most recent execution.
 -- Mean quality is what a selection step would sort on.
@@ -351,6 +448,15 @@ def _now():
     """A sortable timestamp. Stored as text: sqlite has no date type, and the
     adapters that used to paper over that are deprecated in 3.12+."""
     return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def now():
+    """The timestamp these tables carry, for a caller that stamps its own.
+
+    start_run.py marks a step's start before it runs it and only knows how long
+    it took afterwards, so it cannot let the INSERT do it.
+    """
+    return _now()
 
 
 def _git_commit():
@@ -1082,6 +1188,149 @@ def quality_rows(conn, run_id):
     return conn.execute(
         "SELECT * FROM individual_quality WHERE run_id = ?"
         " ORDER BY quality IS NULL, quality DESC, number", (run_id,)).fetchall()
+
+
+# --- what each step cost ---------------------------------------------------
+
+
+def next_pass(conn, run_id):
+    """The number of the pass about to start: 1-based, one per start_run.run().
+
+    Derived rather than held, the way a generation is (see fitness_generation):
+    a pass is over the moment its steps are, and nothing but these rows has any
+    use for having counted them.
+    """
+    row = conn.execute("SELECT MAX(pass_no) AS top FROM step_timings WHERE run_id = ?",
+                       (run_id,)).fetchone()
+    return (row["top"] or 0) + 1
+
+
+def add_step_timing(conn, run_id, pass_no, position, step, seconds, **fields):
+    """Record what one step of one pass cost. Returns its id.
+
+    Written whether the step finished or failed -- a step that fell over after
+    forty minutes is exactly the kind of cost this table exists to show -- so
+    `status` is part of the row rather than a reason not to write one.
+    """
+    cursor = conn.execute(
+        "INSERT INTO step_timings (run_id, pass_no, position, step, generation,"
+        " watermark, started_at, seconds, items, unit, skipped, status, note)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, pass_no, position, step, fields.get("generation"),
+         fields.get("watermark"), fields.get("started_at") or _now(), seconds,
+         fields.get("items") or 0, fields.get("unit"), fields.get("skipped") or 0,
+         fields.get("status") or "ok", fields.get("note")))
+    return cursor.lastrowid
+
+
+def add_phase_timings(conn, step_timing_id, phases):
+    """Store the phases of one step. `phases` is a sequence of dicts:
+
+        {"phase": "model_load", "calls": 1, "seconds": 62.3,
+         "longest": 62.3, "execution_id": 41, "detail": {...}}
+
+    Nothing here decides what a phase is -- the step that measured it does --
+    so a new phase is a new name and no schema change.
+    """
+    conn.executemany(
+        "INSERT INTO phase_timings (step_timing_id, execution_id, phase, calls,"
+        " seconds, longest, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(step_timing_id, phase.get("execution_id"), phase["phase"],
+          phase.get("calls", 1), phase["seconds"], phase.get("longest"),
+          json.dumps(phase["detail"]) if phase.get("detail") else None)
+         for phase in phases])
+
+
+def step_timings(conn, run_id):
+    """Every step row of one sweep, in the order the steps ran."""
+    return conn.execute(
+        "SELECT * FROM step_timings WHERE run_id = ? ORDER BY pass_no, position, id",
+        (run_id,)).fetchall()
+
+
+def step_costs(conn, run_id):
+    """One row per step of a sweep, summed over every pass it ran in.
+
+    The ranked answer to "which step should be optimised first": total seconds,
+    the share of the sweep they are, and what one item of that step cost.
+    """
+    return conn.execute(
+        "SELECT step,"
+        "       COUNT(*)                        AS passes,"
+        "       SUM(seconds)                    AS seconds,"
+        "       MAX(seconds)                    AS longest,"
+        "       SUM(items)                      AS items,"
+        "       SUM(skipped)                    AS skipped,"
+        "       MAX(unit)                       AS unit,"
+        "       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failures"
+        "  FROM step_timings WHERE run_id = ?"
+        " GROUP BY step ORDER BY seconds DESC", (run_id,)).fetchall()
+
+
+def phase_costs(conn, run_id, step=None):
+    """One row per phase, summed over every step row it was measured in.
+
+    `step` narrows it to one step's phases, which is the second question a
+    reader asks once the first has named a step.
+    """
+    sql = ("SELECT s.step AS step, p.phase AS phase,"
+           "       SUM(p.calls)    AS calls,"
+           "       SUM(p.seconds)  AS seconds,"
+           "       MAX(p.longest)  AS longest,"
+           "       COUNT(DISTINCT s.id || ':' || p.execution_id) AS executions"
+           "  FROM phase_timings p JOIN step_timings s ON s.id = p.step_timing_id"
+           " WHERE s.run_id = ?")
+    args = [run_id]
+    if step:
+        sql += " AND s.step = ?"
+        args.append(step)
+    return conn.execute(sql + " GROUP BY s.step, p.phase ORDER BY seconds DESC",
+                        args).fetchall()
+
+
+def execution_costs(conn, run_id):
+    """The phases each individual's own script reported, one row per phase.
+
+    The per-individual read of `phase_timings`: every row that names an
+    execution, with the individual behind it where it still exists. `number`
+    and `chromosome` come back NULL for an execution selection has since culled
+    -- the phase rows outlive it on purpose (see the schema), and what that
+    individual cost is still part of what its generation cost. Worse than
+    NULL, they come back **wrong** where a culled execution's id has since been
+    handed to another individual, which sqlite does as a matter of course. Read
+    the identity out of the script row's `detail` and use these two only as the
+    fallback for a sweep recorded before it was written there; group on
+    (step_timing_id, execution_id), never on the id alone.
+
+    Left as one row per (execution, phase) rather than folded here: a reader
+    that wants a total per individual can add them up, and one that wants to
+    know which phase made a particular blend expensive cannot get it back once
+    they are summed.
+    """
+    return conn.execute(
+        "SELECT p.step_timing_id AS step_timing_id, p.execution_id AS execution_id,"
+        "       p.phase AS phase, p.calls AS calls, p.detail AS detail,"
+        "       p.seconds AS seconds, p.longest AS longest,"
+        "       i.number AS number, i.chromosome AS chromosome, i.state AS state,"
+        "       e.verdict AS verdict, s.pass_no AS pass_no, s.step AS step"
+        "  FROM phase_timings p"
+        "  JOIN step_timings s ON s.id = p.step_timing_id"
+        "  LEFT JOIN executions e ON e.id = p.execution_id"
+        "  LEFT JOIN individuals i ON i.id = e.individual_id"
+        " WHERE s.run_id = ? AND p.execution_id IS NOT NULL"
+        " ORDER BY s.pass_no, p.step_timing_id, p.execution_id, p.id",
+        (run_id,)).fetchall()
+
+
+def pass_costs(conn, run_id):
+    """What each pass over the sweep cost, oldest first -- a generation each,
+    when continue_run.py is the one turning the crank."""
+    return conn.execute(
+        "SELECT pass_no, MAX(generation) AS generation, MAX(watermark) AS watermark,"
+        "       MIN(started_at) AS started_at, SUM(seconds) AS seconds,"
+        "       COUNT(*) AS steps"
+        "  FROM step_timings WHERE run_id = ?"
+        " GROUP BY pass_no ORDER BY pass_no", (run_id,)).fetchall()
 
 
 # --- the one thing that must be a file ------------------------------------

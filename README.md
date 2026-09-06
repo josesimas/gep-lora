@@ -2172,8 +2172,39 @@ It leads with an individual: the score, the chromosome, the blend drawn as a
 tree, the Karva rows, the weight draw, the adapters it attaches, a bar per
 question, the whole transcript with the judge's reason under each answer, and
 the script that earned it. Then the search's own history, the population, the
-distribution of scores, the testing pass, the dataset and every setting the
-sweep was created with.
+distribution of scores, the testing pass, **where the time went**, the dataset
+and every setting the sweep was created with.
+
+### The cost section
+
+The same rows `python -m metrics.report` prints, drawn. Six tiles first --
+total time, the costliest step, what one individual and one answer came to, the
+biggest single phase, and how much script time the sweep spent -- then:
+
+- **every step, ranked**, with what it did beside what it cost, so a step is
+  read against the work it was given rather than on its own;
+- **inside the generated scripts**, as one stacked bar with a legend: the model
+  load, the answers, the folds, the unsloth import. Shares of *script* time, not
+  of the step's wall time -- a batch runs `PROCESS_RUN_BATCH_SIZE` scripts at
+  once, so those seconds overlap each other, and whatever the bar does not cover
+  is the interpreter starting up before the script's own clock does;
+- **work the steps did themselves** -- materialising scripts, the judge calls,
+  the evaluator's `prepare` -- against each other, since beside the waiting it is
+  rounding error;
+- **every phase**, with `calls` next to the seconds. That column is the one that
+  decides what a fix is worth: a phase paid once per pass gets cheaper only by
+  running fewer passes, one paid per script or per prompt gets cheaper by being
+  cheaper. The `shape` column says which it is;
+- **what each individual cost**, one stacked bar and one row per execution, the
+  costliest first. Two blends of the same population differ by what their trees
+  make the script do -- the leaves it attaches, the nodes it folds -- on top of a
+  base-model load every one of them pays;
+- **pass by pass**, one column per pass stacked by step. A total that climbs is
+  the population growing under it; one that is flat is the price of the search
+  rather than of its size.
+
+A sweep with no timing rows -- one run before the tables existed -- simply has no
+cost section, the way a sweep with no testing pass has no testing one.
 
 Each leaf of the tree carries its slot's **weight and rank** — `w5 = 0.8400 ·
 r16` — because the rank is what decides whether the folds above it can run at
@@ -2300,6 +2331,60 @@ Using the venv's full interpreter path always works regardless of PATH.
 Note that the repo-root `activate.bat` ends with `cmd /k`, which spawns a
 *nested* shell — if you run that one, use the new prompt it gives you rather than
 the original window.
+
+---
+
+## Where the time goes
+
+A sweep records what it cost as carefully as it records what it found. Every step
+of every pass writes a `step_timings` row -- wall seconds, how many items it
+worked on, how many it skipped -- and the phases inside it write `phase_timings`
+rows with `calls` beside the seconds. `python -m metrics.report` reads them back:
+
+```
+where the time went -- 41.2m over 9 step(s)
+    step          seconds   share  passes did                       per item worst pass
+    process         38.1m   92.5%       3 30 individuals (+9 skipped)     76.2s      13.4m
+    evaluate         2.6m    6.3%       3 150 answers                      1.0s      55.1s
+    runs             8.1s    0.3%       3 39 scripts (+9 skipped)         208ms       3.1s
+    ...
+
+inside process -- 38.1m of wall time over 3 pass(es)
+  what the step itself did (share of its 38.1m):
+    materialise              3     380ms    0.0%     127ms     140ms  per pass
+    waiting on scripts      30     38.0m   99.7%                      2.1h of script time, overlapping
+  inside those 30 script(s) -- 2.1h of script time, 4.2m each:
+    phase                calls   seconds   share      mean     worst  shape
+    model_load              30     31.2m   24.7%      62.4s     71.0s  per script
+    generate               150     47.5m   37.6%      19.0s     34.2s  5.0 per script
+    combine.svd             18     12.1m    9.6%      40.3s     56.1s  0.6 per script
+    ...
+```
+
+(Layout only -- those numbers are invented. Run it on a sweep for real ones.)
+
+The two levels are the two questions. The step table says **which step to
+optimise first** -- and it is `process`, every time, because every individual is
+another base-model load. The phase table says **what to do about it**, which the
+step total cannot: `calls` separates a fixed cost from a per-item one, and they
+want opposite fixes. A `model_load` called once per script gets cheaper only by
+running fewer scripts -- a smaller `COUNT`, fewer generations, or the
+`has_changed` skip doing its job. A `generate` called five times per script is
+`TRAINING_COUNT`, and halving it halves that row. `combine.svd` at 40s a node is
+an argument about the alphabet the search draws from.
+
+Where the phases come from: the step measures its own work (`materialise`,
+`prepare`, one `score` per judge call), and each generated script measures
+itself, printing `TIMING: <phase> <seconds>` lines that `process_run.timings()`
+reads back with the transcript. Script phases are shares of **script** time, not
+of the step's wall time, because `PROCESS_RUN_BATCH_SIZE` of them run at once and
+their seconds overlap; the report says so rather than quietly adding them up.
+Both templates print the lines, so a mocked sweep on a machine with no GPU
+exercises the whole path.
+
+`--step process` prints one step in full, `--csv` prints the rows behind the
+tables, and `--run N` picks a sweep. Sweeps run before the tables existed have no
+rows, and none can be worked out after the fact.
 
 ---
 
@@ -2444,6 +2529,7 @@ search/       the GEP search itself
 blends/       a chromosome, turned into a script and run
 templates/    what those scripts are made from
 storage/      the database, and the datasets it keeps
+metrics/      what each step cost, measured and read back
 evaluators/   how an answer is scored
 testing/      the held-out pass
 reporting/    a sweep, written out as something to look at
@@ -2498,7 +2584,9 @@ tools/        dev aids that are not part of the pipeline
 | `storage/store.py` | the database: schema, helpers, `--list/--show/--export` |
 | `storage/add_dataset.py` | the only way into the `datasets` table: every split as a sweep is created, or one afterwards from the command line |
 | `storage/db_datasets.py` | the way back out: a sweep's stored splits written beside its database, for `--from-db` |
-| `reporting/generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database |
+| `metrics/record.py` | the Meter a step is timed with, and the only writer of `step_timings` / `phase_timings` |
+| `metrics/report.py` | what a sweep spent its time on, ranked: `python -m metrics.report` |
+| `reporting/generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database -- including its cost section |
 | `testing/test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
 
 ### The adapters, and the dev aids

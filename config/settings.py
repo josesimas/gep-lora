@@ -12,7 +12,7 @@ Change a value and re-run; nothing else needs editing.
 # --- the population --------------------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 10
+COUNT = 4
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time -- and, since a sweep records what it drew,
@@ -28,7 +28,7 @@ UNIQUE = True
 # and keeps the branch growing -- the shape a population is drawn with, recorded
 # alongside the rest so a stored sweep says what shape that was.
 MAX_DEPTH = 4
-BRANCH_PROB = 0.6
+BRANCH_PROB = 0.1
 
 # --- continuing a sweep ----------------------------------------------------
 

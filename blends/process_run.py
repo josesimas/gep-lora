@@ -61,7 +61,71 @@ def drawn_weights(stdout):
             for name, value in re.findall(r"(w\d+)=([-+0-9.eE]+)", line.group(0))}
 
 
+# What a script says about its own cost, on the channel everything else comes
+# out on: one line per occurrence, "TIMING: <phase> <seconds> [label]".
+#
+# A third channel out of a child process would be a pipe nobody else needs; a
+# marker line is how the weights, the transcript and a mocked score already
+# travel. The phase names are the script's own -- see template_code.py -- so
+# adding a measurement there needs nothing here.
+TIMING_PREFIX = "TIMING:"
+
+# Lines a reply is over by. QUALITY:/REASON: are the mocked template's score,
+# TIMING: is any script talking about itself; neither is part of what the model
+# said, and both are printed after the answer they follow.
 GRADE_PREFIXES = ("QUALITY:", "REASON:")
+
+
+def timings(stdout):
+    """What a run says it spent its time on, one dict per phase.
+
+    Occurrences of a phase are folded together here rather than stored one by
+    one: a script prints one line per generate() and there may be fifty of
+    them, and what a reader needs is calls, the total and the worst one. The
+    order is the order each phase was first seen, which is the order the script
+    goes through them.
+
+        [{"phase": "model_load", "calls": 1, "seconds": 61.8,
+          "longest": 61.8, "detail": None},
+         {"phase": "generate", "calls": 5, "seconds": 12.4,
+          "longest": 3.1, "detail": None}]
+
+    A line that is not "TIMING: <phase> <number> [label]" is ignored: a script's
+    own account of itself is a convenience, and a malformed line must not cost
+    the run whose transcript it sits in. A script that printed none at all --
+    an older sweep, a run that died before it got going -- gives back nothing,
+    and the wall time the step measured from outside still stands.
+    """
+    found = {}
+    order = []
+    for line in stdout.splitlines():
+        if not line.startswith(TIMING_PREFIX):
+            continue
+        parts = line[len(TIMING_PREFIX):].split(None, 2)
+        if len(parts) < 2:
+            continue
+        phase, value = parts[0], parts[1]
+        try:
+            seconds = float(value)
+        except ValueError:
+            continue
+        entry = found.get(phase)
+        if entry is None:
+            entry = found[phase] = {"phase": phase, "calls": 0, "seconds": 0.0,
+                                    "longest": 0.0, "detail": None}
+            order.append(entry)
+        entry["calls"] += 1
+        entry["seconds"] += seconds
+        entry["longest"] = max(entry["longest"], seconds)
+        label = parts[2].strip() if len(parts) > 2 else ""
+        if label:
+            # What told two occurrences of one phase apart -- which node, which
+            # adapter. Kept as a list because the phase row is the fold of all
+            # of them, and capped because it is a label, not a transcript.
+            labels = (entry["detail"] or {}).get("labels", [])
+            if label not in labels and len(labels) < 8:
+                entry["detail"] = {"labels": labels + [label]}
+    return order
 
 
 def _split_grade(lines):
@@ -79,7 +143,13 @@ def _split_grade(lines):
     """
     answer, grade = [], {}
     for line in lines:
-        if line.startswith("QUALITY:"):
+        if line.startswith(TIMING_PREFIX):
+            # Printed after the reply it belongs to, so the reply is over: a
+            # phase line the script prints about itself is not something the
+            # model said, and letting it through would put it in the transcript
+            # and then in front of a judge. Sets no grade of its own.
+            grade.setdefault("_over", True)
+        elif line.startswith("QUALITY:"):
             try:
                 grade["quality"] = float(line[len("QUALITY:"):].strip())
             except ValueError:
@@ -88,6 +158,7 @@ def _split_grade(lines):
             grade["reason"] = line[len("REASON:"):].strip()
         elif not grade:                         # still in the reply itself
             answer.append(line)
+    grade.pop("_over", None)
     return answer, grade
 
 

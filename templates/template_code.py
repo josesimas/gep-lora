@@ -45,6 +45,27 @@ import json
 import os
 import random
 import sys
+import time
+
+#~ Everything from here to the end of the imports is timed as the "import"
+#~ phase: on this machine unsloth alone is tens of seconds, and a step total
+#~ cannot tell that from a slow model load.
+_STARTED = time.perf_counter()
+
+
+def _timing(phase, seconds, label=""):
+    """Say what this script spent on one thing, on the channel everything else
+    it says comes out on -- see process_run.timings(), which reads these back.
+
+    One line per occurrence, folded into calls/total/worst on the way into the
+    database, so a phase that happens fifty times is fifty of these and one row.
+    Printed as it happens rather than gathered up and printed at the end: a
+    script that runs out of memory half way through has still told the sweep
+    what the half it managed cost. flush, because stdout is a pipe here and a
+    killed script's buffer dies with it.
+    """
+    print(f"TIMING: {phase} {seconds:.4f}{' ' + label if label else ''}", flush=True)
+
 
 # Match the training/inference environment: disable Xet download acceleration.
 os.environ["HF_HUB_DISABLE_XET"] = "1"
@@ -56,6 +77,8 @@ from unsloth.chat_templates import get_chat_template
 
 import torch
 from peft import PeftModel
+
+_timing("import", time.perf_counter() - _STARTED)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PROJECT = os.path.dirname(_HERE)                  # run/ -> project/
@@ -243,12 +266,18 @@ print("weights: " + ", ".join(f"{k}={v:.4f}" for k, v in WEIGHTS.items()))
 # ---------------------------------------------------------------------------
 # Load the base model once, with no adapter attached yet.
 # ---------------------------------------------------------------------------
+_started = time.perf_counter()
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=BASE_MODEL,
     max_seq_length=MAX_SEQ,
     dtype=None,
     load_in_4bit=True,
 )
+# The fixed price of an individual: paid once per script whatever its tree is,
+# which is what makes it the number PROCESS_RUN_BATCH_SIZE is really trading
+# against, and the one a cheaper search cannot get out of by picking simpler
+# trees.
+_timing("model_load", time.perf_counter() - _started)
 
 # ---------------------------------------------------------------------------
 # Attach the @@LEAF_COUNT@@ leaf adapter(s) the tree names, each under its own name so
@@ -262,12 +291,17 @@ RANKS = {}
 def attach(name, slot):
     """Load LORA_SLOTS[slot] under `name`, and record the rank it carries."""
     global model
+    started = time.perf_counter()
     if isinstance(model, PeftModel):
         model.load_adapter(LORA_SLOTS[slot], adapter_name=name)
     else:
         # The first adapter is what turns the base model into a PeftModel.
         model = PeftModel.from_pretrained(model, LORA_SLOTS[slot], adapter_name=name)
     RANKS[name] = _rank(LORA_SLOTS[slot])
+    # Per leaf, and labelled with the slot: leaves are the part of the cost a
+    # tree can have more of, so calls x seconds here is what a deeper population
+    # would cost before any of it is folded.
+    _timing("attach", time.perf_counter() - started, f"{name}={slot}")
     return name
 
 
@@ -280,6 +314,10 @@ def attach(name, slot):
 # ---------------------------------------------------------------------------
 def _compact(name):
     """Copy adapter `name`'s weights off whatever buffer they were sliced from.
+
+    Timed as its own phase, nested inside the combine.svd that called it: what
+    it costs in seconds is what the VRAM it releases is bought with, and that
+    trade cannot be looked at unless both halves are written down.
 
     PEFT builds an svd node by running torch.linalg.svd on each module's delta
     weight and handing back `Vh[:new_rank, :]` (peft/tuners/lora/model.py,
@@ -295,6 +333,7 @@ def _compact(name):
     a copy drops the reference to the buffer behind it. Anything already
     sitting on its own storage is left alone.
     """
+    started = time.perf_counter()
     for module in model.modules():
         for store in ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B"):
             entry = getattr(module, store, None)
@@ -313,6 +352,7 @@ def _compact(name):
     # back so a batch is sized by what its scripts hold rather than by the
     # high-water mark they each passed through.
     torch.cuda.empty_cache()
+    _timing("compact", time.perf_counter() - started, name)
 
 
 def combine(name, combination_type, left, right):
@@ -333,6 +373,7 @@ def combine(name, combination_type, left, right):
             f"cat sums its inputs' ranks, which is usually what pushes them apart."
         )
 
+    started = time.perf_counter()
     model.add_weighted_adapter(
         adapters=[left_name, right_name],
         weights=[left_weight, right_weight],
@@ -348,6 +389,13 @@ def combine(name, combination_type, left, right):
     if combination_type == "svd":
         _compact(name)
 
+    # One phase per combination type rather than one for combining: cat, svd and
+    # linear are three different pieces of arithmetic with three different
+    # prices, and a search whose expensive operator is known is a search whose
+    # alphabet can be argued about. Includes the _compact() above, which is
+    # timed again on its own -- so the two overlap on purpose.
+    _timing(f"combine.{combination_type}", time.perf_counter() - started, name)
+
     if combination_type == "cat":
         RANKS[name] = left_rank + right_rank
     elif combination_type == "svd":
@@ -361,6 +409,7 @@ def combine(name, combination_type, left, right):
 # @@COMBINE_NODES@@
 
 FINAL_ADAPTER = "@@FINAL_ADAPTER@@"
+_started = time.perf_counter()
 model.set_adapter(FINAL_ADAPTER)
 print(f"Active adapter: {model.active_adapters} (rank {RANKS[FINAL_ADAPTER]})")
 
@@ -375,27 +424,54 @@ FastLanguageModel.for_inference(model)
 # ask() is the only one in play -- max_new_tokens was winning anyway.
 model.generation_config.max_length = None
 
+# Selecting the adapter, the chat template and Unsloth's inference path: the
+# rest of the fixed cost, after the model load and before the first question.
+_timing("inference_setup", time.perf_counter() - _started)
+
 
 def ask(question, max_new_tokens=250):
     """Send one user turn through this tree's combined adapter."""
+    started = time.perf_counter()
     msgs = [{"role": "user", "content": question}]
     inputs = tokenizer.apply_chat_template(
         msgs, add_generation_prompt=True, return_tensors="pt", return_dict=True
     ).to(model.device)
     out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
     # Slice off the prompt tokens so we only decode the newly generated reply.
-    return tokenizer.decode(out[0][inputs["input_ids"].shape[-1]:],
-                            skip_special_tokens=True).strip()
+    reply = tokenizer.decode(out[0][inputs["input_ids"].shape[-1]:],
+                             skip_special_tokens=True).strip()
+    # The per-prompt cost: the half of a script that TRAINING_COUNT multiplies.
+    # The other half is the load above, and it is paid whether this is asked
+    # once or fifty times -- which is the whole shape of a script's cost.
+    _ASKED.append(time.perf_counter() - started)
+    return reply
+
+
+# How long each ask() took, in the order they were asked. Held rather than
+# printed inside ask(), because a line printed there would arrive between
+# "COACH:" and the reply that follows it, and process_run.exchanges() reads a
+# reply as everything printed up to the next question.
+_ASKED = []
+
+
+def _say(question):
+    """Ask, print the exchange the way every generated script does, then say
+    what it cost -- in that order, so the line follows the whole reply."""
+    print(f"\nYOU: {question}")
+    print(f"COACH: {ask(question)}")
+    _timing("generate", _ASKED[-1])
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         # Everything after the script name is treated as one question.
-        question = " ".join(sys.argv[1:])
-        print(f"\nYOU: {question}")
-        print(f"COACH: {ask(question)}")
+        _say(" ".join(sys.argv[1:]))
     else:
         # Score this individual by eyeballing its answers to the eval prompts.
         for q in EVAL_PROMPTS:
-            print(f"\nYOU: {q}")
-            print(f"COACH: {ask(q)}")
+            _say(q)
+        # The whole script, from its first line to its last answer: what the
+        # phases above should add up to, and the number the process step
+        # measures from outside as well. Two clocks on the same thing, so a
+        # gap between them is a phase nobody has named yet.
+        _timing("total", time.perf_counter() - _STARTED)
