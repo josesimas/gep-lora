@@ -416,6 +416,15 @@ print(f"Active adapter: {model.active_adapters} (rank {RANKS[FINAL_ADAPTER]})")
 # Same chat template used during training, so inputs are formatted identically.
 tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
 
+# Batched generation pads the short prompts up to the long one, and a decoder
+# continues from the last column of what it is given -- so the padding has to
+# sit on the *left*, or a padded row would be continuing from its own padding
+# and answering nothing. The pad token itself is only ever masked out; Qwen
+# ships one, and eos stands in for a tokenizer that does not.
+tokenizer.padding_side = "left"
+if tokenizer.pad_token_id is None:
+    tokenizer.pad_token = tokenizer.eos_token
+
 # Switch to Unsloth's fast inference path (~2x faster generation).
 FastLanguageModel.for_inference(model)
 
@@ -429,47 +438,68 @@ model.generation_config.max_length = None
 _timing("inference_setup", time.perf_counter() - _started)
 
 
+# How many eval prompts go through the model in one generate() call.
+#
+# The weights are read once per call whatever it is answering, so five prompts
+# in one call cost far less than five calls of one -- on this base model the
+# batch is nearly the price of its slowest single answer. What grows with the
+# batch is the KV cache, which is why this is a cap and not simply all of them:
+# TRAINING_COUNT says how many prompts there are, this says how many at once.
+# It is a constant here rather than a setting for the reason MAX_SEQ is: the
+# script is the only thing that reads it, and it is a fact about the machine
+# rather than about the sweep.
+ANSWER_BATCH = 8
+
+
+def answer(questions, max_new_tokens=250):
+    """Answer several questions in one generate() call. -> replies, in order."""
+    messages = [[{"role": "user", "content": question}] for question in questions]
+    inputs = tokenizer.apply_chat_template(
+        messages, add_generation_prompt=True, return_tensors="pt",
+        return_dict=True, padding=True
+    ).to(model.device)
+    out = model.generate(**inputs, max_new_tokens=max_new_tokens,
+                         do_sample=False, pad_token_id=tokenizer.pad_token_id)
+    # Padded on the left, so every row's reply starts at the same column and
+    # one width slices the prompt off all of them.
+    width = inputs["input_ids"].shape[-1]
+    return [tokenizer.decode(row[width:], skip_special_tokens=True).strip()
+            for row in out]
+
+
 def ask(question, max_new_tokens=250):
     """Send one user turn through this tree's combined adapter."""
+    return answer([question], max_new_tokens)[0]
+
+
+def _say(questions):
+    """Answer a batch, print the exchanges, then say what the batch cost.
+
+    Printed here, batch by batch, rather than after the last one: a script that
+    hits its timeout still leaves the exchanges it had finished, which is what
+    process_run.launch() keeps a killed child's output for. The timing line goes
+    last, after the final reply of the batch -- a line between "COACH:" and the
+    rest of a wrapped answer would be read as part of the answer.
+    """
     started = time.perf_counter()
-    msgs = [{"role": "user", "content": question}]
-    inputs = tokenizer.apply_chat_template(
-        msgs, add_generation_prompt=True, return_tensors="pt", return_dict=True
-    ).to(model.device)
-    out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
-    # Slice off the prompt tokens so we only decode the newly generated reply.
-    reply = tokenizer.decode(out[0][inputs["input_ids"].shape[-1]:],
-                             skip_special_tokens=True).strip()
-    # The per-prompt cost: the half of a script that TRAINING_COUNT multiplies.
-    # The other half is the load above, and it is paid whether this is asked
-    # once or fifty times -- which is the whole shape of a script's cost.
-    _ASKED.append(time.perf_counter() - started)
-    return reply
-
-
-# How long each ask() took, in the order they were asked. Held rather than
-# printed inside ask(), because a line printed there would arrive between
-# "COACH:" and the reply that follows it, and process_run.exchanges() reads a
-# reply as everything printed up to the next question.
-_ASKED = []
-
-
-def _say(question):
-    """Ask, print the exchange the way every generated script does, then say
-    what it cost -- in that order, so the line follows the whole reply."""
-    print(f"\nYOU: {question}")
-    print(f"COACH: {ask(question)}")
-    _timing("generate", _ASKED[-1])
+    replies = answer(questions)
+    seconds = time.perf_counter() - started
+    for question, reply in zip(questions, replies):
+        print(f"\nYOU: {question}")
+        print(f"COACH: {reply}")
+    # calls counts generate() calls, not answers -- the label says how many
+    # answers this one carried, since that is what its seconds bought.
+    _timing("generate", seconds, "%d answer(s)" % len(questions))
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         # Everything after the script name is treated as one question.
-        _say(" ".join(sys.argv[1:]))
+        _say([" ".join(sys.argv[1:])])
     else:
         # Score this individual by eyeballing its answers to the eval prompts.
-        for q in EVAL_PROMPTS:
-            _say(q)
+        for start in range(0, len(EVAL_PROMPTS), ANSWER_BATCH):
+            _say(EVAL_PROMPTS[start:start + ANSWER_BATCH])
         # The whole script, from its first line to its last answer: what the
         # phases above should add up to, and the number the process step
         # measures from outside as well. Two clocks on the same thing, so a

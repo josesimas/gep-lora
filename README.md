@@ -2356,7 +2356,7 @@ inside process -- 38.1m of wall time over 3 pass(es)
   inside those 30 script(s) -- 2.1h of script time, 4.2m each:
     phase                calls   seconds   share      mean     worst  shape
     model_load              30     31.2m   24.7%      62.4s     71.0s  per script
-    generate               150     47.5m   37.6%      19.0s     34.2s  5.0 per script
+    generate                30     19.0m   15.0%      38.0s     51.1s  per script
     combine.svd             18     12.1m    9.6%      40.3s     56.1s  0.6 per script
     ...
 ```
@@ -2369,9 +2369,10 @@ another base-model load. The phase table says **what to do about it**, which the
 step total cannot: `calls` separates a fixed cost from a per-item one, and they
 want opposite fixes. A `model_load` called once per script gets cheaper only by
 running fewer scripts -- a smaller `COUNT`, fewer generations, or the
-`has_changed` skip doing its job. A `generate` called five times per script is
-`TRAINING_COUNT`, and halving it halves that row. `combine.svd` at 40s a node is
-an argument about the alphabet the search draws from.
+`has_changed` skip doing its job. `generate` is one call per `ANSWER_BATCH`
+prompts, so `TRAINING_COUNT` moves the tokens in a call rather than the number
+of them, and halving it no longer halves that row. `combine.svd` at 40s a node
+is an argument about the alphabet the search draws from.
 
 Where the phases come from: the step measures its own work (`materialise`,
 `prepare`, one `score` per judge call), and each generated script measures

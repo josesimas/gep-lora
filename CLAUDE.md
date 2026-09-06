@@ -747,9 +747,12 @@ generation time and by the templates at startup, because a line count cannot des
 sample of it, and the same N for every individual, because fitness numbers are only
 comparable when they were earned answering the same questions. A cap larger than the file
 is not an error; it just means all of them, which is also what `None` means. It is the
-cheapest knob in `settings.py`: one prompt is one `generate()` call per individual per
-generation, so turning it down while iterating cuts the eval half of a sweep
-proportionally — at the cost of a noisier fitness signal.
+cheapest knob in `settings.py`: turning it down while iterating cuts the eval half of a
+sweep — at the cost of a noisier fitness signal. It is no longer *proportional*, though:
+a script answers its prompts `ANSWER_BATCH` at a time in one `generate()` call, and a call
+reads the weights once whatever it is answering, so five prompts cost far less than five
+times one. What TRAINING_COUNT still multiplies is the tokens in the batch, and, past
+`ANSWER_BATCH`, the number of calls.
 
 **Change what every generated script does by editing `template_code.py`, then re-running
 `python start_run.py runs`.** Only touch the generator when the new part varies per individual.
@@ -779,12 +782,20 @@ those want opposite fixes. Phases come from two places. The step adds its own th
 `prepare`, one `score` per judge call. And each generated script reports on itself: it
 prints `TIMING: <phase> <seconds> [label]` lines as it goes -- `import`, `model_load`,
 `attach` per leaf, `combine.cat` / `combine.svd` / `combine.linear` per node, `compact`,
-`inference_setup`, `generate` per prompt, `total` -- which `process_run.timings()` folds
+`inference_setup`, `generate` per *batch* of prompts, `total` -- which `process_run.timings()` folds
 and `step_process` stores against that individual's `execution_id`. A marker line on stdout,
 like the weights and the mocked score, rather than a second channel out of a child process;
 `process_run.exchanges()` knows to end a reply at one, so a timing line can never land in a
 transcript. **Both templates print them**, so the whole path is exercised by a mocked sweep
 on a machine with no GPU.
+
+**`generate` counts calls, not answers**, since the two stopped being the same thing: a
+script asks `ANSWER_BATCH` prompts at once, and the phase's label says how many answers the
+call carried. Measured on this machine, batching five prompts took generation from 2.96s an
+answer to 0.62s -- and moved it from a quarter of a script's time to a tenth, which leaves
+`import` and `model_load` as ~77% of what a script spends. Batched and sequential decoding
+can word an answer differently (the reduction order in the matmuls differs), so a sweep is
+internally consistent but one straddling this change is not strictly comparable with itself.
 
 Two clocks measure each script -- the step's, from launch, and the script's own `total` --
 and `metrics/report.py` shows the gap rather than hiding it: it is the interpreter starting

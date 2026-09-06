@@ -351,24 +351,30 @@ print(f"Active adapter: ['{FINAL_ADAPTER}'] (rank {RANKS[FINAL_ADAPTER]})")
 _timing("inference_setup", time.perf_counter() - _started)
 
 
-def ask(question, max_new_tokens=250):
-    """A plausible-looking reply, assembled at random. Ignores the question.
+# How many prompts one generate() call would carry. See template_code.py --
+# the mock has no model to batch, and keeps the number so the two templates
+# walk their eval sets the same way and print the same shape of transcript.
+ANSWER_BATCH = 8
+
+
+def answer(questions, max_new_tokens=250):
+    """Plausible-looking replies, assembled at random. Ignore the questions.
 
     Deliberately multi-line: the real replies wrap, and a transcript reader
     that only ever saw one-liners would not be tested by this.
     """
-    started = time.perf_counter()
+    # One sleep for the batch, not one per answer, because that is what the
+    # real template now pays: a generate() call reads the weights once whatever
+    # it is answering.
     time.sleep(MOCK_ANSWER_DELAY)
-    body = _mock.sample(_STEPS, _mock.randint(2, 3))
-    reply = "\n".join([_mock.choice(_OPENERS)] + body + [_mock.choice(_CLOSERS)])
-    # Printed by say(), after the reply -- a line between "COACH:" and the rest
-    # of a wrapped answer would be read as part of the answer.
-    _ASKED.append(time.perf_counter() - started)
-    return reply
+    return ["\n".join([_mock.choice(_OPENERS)]
+                      + _mock.sample(_STEPS, _mock.randint(2, 3))
+                      + [_mock.choice(_CLOSERS)])
+            for _ in questions]
 
 
-# How long each ask() took, in the order they were asked. See template_code.py.
-_ASKED = []
+def ask(question, max_new_tokens=250):
+    return answer([question], max_new_tokens)[0]
 
 
 def grade():
@@ -385,23 +391,27 @@ def grade():
     return quality, ""
 
 
-def say(question):
-    """Print one exchange in the form process_run.py parses."""
-    quality, reason = grade()
-    print(f"\nYOU: {question}")
-    print(f"COACH: {ask(question)}")
-    # Folded into this exchange by process_run.py, so a mocked sweep comes out
-    # already scored and never needs the judge endpoint.
-    print(f"QUALITY: {quality}")
-    print(f"REASON: {reason}")
-    _timing("generate", _ASKED[-1])
+def say(questions):
+    """Print one batch of exchanges in the form process_run.py parses."""
+    started = time.perf_counter()
+    replies = answer(questions)
+    seconds = time.perf_counter() - started
+    for question, reply in zip(questions, replies):
+        quality, reason = grade()
+        print(f"\nYOU: {question}")
+        print(f"COACH: {reply}")
+        # Folded into this exchange by process_run.py, so a mocked sweep comes
+        # out already scored and never needs the judge endpoint.
+        print(f"QUALITY: {quality}")
+        print(f"REASON: {reason}")
+    _timing("generate", seconds, "%d answer(s)" % len(questions))
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         # Everything after the script name is treated as one question.
-        say(" ".join(sys.argv[1:]))
+        say([" ".join(sys.argv[1:])])
     else:
-        for q in EVAL_PROMPTS:
-            say(q)
+        for start in range(0, len(EVAL_PROMPTS), ANSWER_BATCH):
+            say(EVAL_PROMPTS[start:start + ANSWER_BATCH])
         _timing("total", time.perf_counter() - _STARTED)

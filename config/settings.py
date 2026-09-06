@@ -84,10 +84,12 @@ TRAINING_SET = "datasets/medical_training_lora_dataset.json"
 # prefix of it keeps that arbitrariness fixed instead of adding a second source
 # of it.
 #
-# This is the cheapest knob in the file. Every prompt is one generate() call per
-# individual per generation, so halving it halves the eval half of a sweep --
-# worth turning down while iterating and back up for a real search, remembering
-# that a short eval set makes a noisier fitness signal.
+# This is the cheapest knob in the file: worth turning down while iterating and
+# back up for a real search, remembering that a short eval set makes a noisier
+# fitness signal. It is not a proportional saving -- a script answers its
+# prompts ANSWER_BATCH at a time in one generate() call, and a call reads the
+# weights once whatever it is answering, so five prompts cost nothing like five
+# times one. Past ANSWER_BATCH it does start costing another call.
 TRAINING_COUNT = 5
 
 # The other two splits of the same dataset, recorded beside the training one.
