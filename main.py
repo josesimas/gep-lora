@@ -1,1115 +1,550 @@
 """
-main.py - Run the whole pipeline end to end against a sqlite database.
+main.py - A sweep from nothing to the end of the search, in one command.
 
-    population -> trees -> runs -> process -> evaluate -> fitness -> elitism
-    -> selection -> mutation
+    start_run.py     draws a population and takes it through one generation
+    continue_run.py  carries that sweep on for GENERATIONS more
+    test_run_with_dataset.py  puts what the search found in front of the
+                     testing split, and grades it
+    main.py          all of that, in that order, against the same sweep
 
-Nothing is left scattered across a folder afterwards. The population, every
-setting the sweep ran under, every seed, every generated script, every
-transcript, every score and the fitness they come to go into one database,
-described in store.py:
+    python main.py
 
-    runs -> settings, individuals -> executions -> exchanges
+which is:
 
-Why a database
---------------
-A folder of a hundred files answers "what happened" only by being read one file
-at a time, and the next sweep overwrites it. A database keeps sweeps side by
-side and lets you ask across them:
+    python start_run.py
+    python continue_run.py --run <the sweep start_run.py just made>
 
-    SELECT chromosome, quality FROM individual_quality
-     WHERE run_id = 3 ORDER BY quality DESC LIMIT 5;
+so the whole search is 1 + GENERATIONS generations -- start_run.py's own turn of the
+crank, then the ones continue_run.py adds. --generations controls the second
+half; there is no way to have fewer than the one start_run.py runs, because drawing
+a population and leaving it unjudged would not be a generation.
 
-and, because the seeds are stored too, it can say exactly what a stored sweep
-was: which chromosomes (the population seed) and which blend weights each of
-them was judged under (a per-individual weight seed, stamped into its script).
-A stored sweep can therefore be repeated, which is the point of storing it.
+It calls the two drivers as libraries, in this interpreter. That matters: the
+process step launches every generated script with sys.executable, so a subprocess
+would be one more chance to run the search under the wrong Python. Whatever you
+start this with is what the whole sweep uses.
 
-What still touches the disk
----------------------------
-The generated run_NNN.py scripts, and only those, and only until they have run:
-process launches them as subprocesses, so they have to be real files, and it
-deletes each one it has processed once the sweep is through. They are a cache of
-individuals.script_source, rewritten from the database whenever they are missing
-or stale, so nothing is lost -- what is gained is that run_db/ does not fill up
-with spent scripts, and nobody can launch a stale one by hand a week later.
-Pass --keep-scripts to leave them.
+The sweep is handed on by id, not by "the latest one" -- start_run.py's new sweep is
+looked up once it exists and named explicitly, so a database that gains a sweep
+from somewhere else in between cannot be picked up by mistake.
 
-They have to sit exactly one level below the project folder -- a generated
-script finds the LoRA folders by going up one from itself -- so they land in
-run_db/, alongside the database itself.
+Options are forwarded to whichever driver understands them: --label to start_run.py,
+--generations and --set to continue_run.py, and the rest -- --db, --run-dir,
+--limit, --include-blocked, --include-unchanged, --keep-scripts, --timeout,
+--force -- to both, meaning there what they mean there.
 
-Steps run in the order listed and stop at the first failure. An individual that
-crashes is not a failure: it is a row in executions with its exit code.
+    python main.py --generations 3
+    python main.py --db run_real/gep.sqlite3 --label "overnight"
+    python main.py --limit 2 --generations 1     # a smoke test of the lot
 
-Resuming
---------
-Every step but population can be re-run against a sweep already in the database,
-and the settings it reads are the ones that sweep was created with, not whatever
-settings.py says today. That is what makes a resumed sweep still be the same
-sweep. Name a run with --run, or leave it out and the most recent one is used.
+Running a database that is already a sweep
+-----------------------------------------------------------------------------
 
-Usage:
-    python main.py                    # a new sweep, every step
-    python main.py --list             # show the steps without running them
-    python main.py --evaluators       # show the ways an answer can be scored
-    python main.py population trees runs   # the fast half, before a model load
-    python main.py process evaluate   # resume the latest sweep
-    python main.py evaluate --run 3   # score sweep 3
-    python main.py --limit 3          # smoke test: only the first few
+    python main.py --db dbtemplates/test_new_run.sqlite3
 
-Run it with the **venv's python**: process launches each generated script with
-sys.executable, so the wrong interpreter fails every individual. That does not
-apply to a sweep generated from template_code_mocked.py, which loads nothing.
+A database can be *prepared* rather than produced: a run row, its settings, its
+dataset, and no individuals. Everything a search needs and none of the search.
+Handed one of those, this runs it rather than starting a second sweep beside it
+-- `--db <a prepared database>` means "run this", and the alternative would be
+a stranger's sweep appearing in somebody's experiment file. --run 0 (or --run N)
+says the same thing out loud, and takes any sweep by id.
 
-Reading a sweep back:
-    python store.py --list
-    python store.py --show 0
-    python store.py --export 0 --into export
+The rule is the latest sweep having no individuals. Anything else is a database
+to start a new sweep in, exactly as before: one that does not exist yet, one
+holding no sweeps, one whose latest sweep has a population. --label suppresses
+it too, since only a sweep being created can be given a label.
+
+From there the database is the only thing the run reads itself out of --
+
+  * the settings are the sweep's stored ones, which is what resuming already
+    meant, so the evaluator, the base model, the adapters, the seeds, the batch
+    size and GENERATIONS are the ones written down beside the questions;
+  * the questions are the sweep's stored dataset rows, not the files those
+    settings name. settings.py and datasets/ are never opened.
+
+and it is **isolated on disk as well**. Everything such a run writes goes into
+one folder beside the database, named for it and the sweep --
+
+    dbtemplates/
+        test_new_run.sqlite3
+        test_new_run_run1/
+            training.jsonl      the questions, out of the rows
+            run_001.py ...      the generated scripts, until they have run
+            testing_scripts/    the testing pass's re-pointed copies
+
+-- so run_db/, run_testing/ and the rest of the repo are untouched, two prepared
+databases cannot tread on each other, and the results go back into the same
+file, since --db is where the sweep lives. A prepared database is then a whole
+experiment in one file plus one folder: hand it to another machine and the
+search it runs there is the one it describes, not the one that machine's
+settings.py happens to say. --run-dir still overrides, if you want it elsewhere.
+
+An adopted sweep must hold no individuals yet -- start_run.py's half of the run draws
+a population, and drawing one into a search that already has one would leave two
+side by side. continue_run.py --from-db is what carries a started sweep on.
+
+--from-db is the flag underneath all of this, and the three drivers take it on
+their own too:
+
+    python start_run.py --db <prepared> --run 1 --from-db
+    python continue_run.py --db <prepared> --run 1 --from-db
+    python test_run_with_dataset.py --db <prepared> --run 1 --from-db
+
+--no-test and --test-min-quality go to the testing pass, and --db, --limit,
+--keep-scripts, --timeout and --force reach it too.
+
+A failing half stops the run: if start_run.py cannot produce a sweep there is nothing
+to continue, and its exit code comes straight back out.
+
+The testing pass at the end runs only when the sweep has a TESTING_SET, because
+that setting is the only statement anyone has made about which questions the
+search was not judged on. It costs a base-model load per individual above
+TESTING_MIN_QUALITY, so --no-test skips it and --test-min-quality changes how
+many that is. It is deliberately the *last* thing, and it is why the search's last
+generation stops after `fitness`: the individuals worth testing are the ones
+that were actually scored, and stopping there is what leaves the population
+holding exactly those rather than a generation selection and mutation have
+already moved on to.
+
+    python main.py --no-test                 # search only, as before
+    python main.py --test-min-quality 0.7    # test fewer of them
 """
 
 import argparse
-import itertools
 import os
-import random
 import sys
-import threading
 import time
-from collections import namedtuple
 
-import add_dataset
-import calculate_fitness
-import db_datasets
-import draw_trees
-import elitism
-import evaluators
-import generate_population
-import generate_runs
-import mutation
-import process_run
-import selection
+import continue_run
 import settings as config
+import start_run
 import store
+import test_run_with_dataset
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# The upper bound for a drawn seed. Kept well inside 2**32 so the value is a
-# plain int in every sqlite column and in every generated script.
-_SEED_LIMIT = 2 ** 31 - 1
 
-
-class Context:
-    """What every step needs: the database, the sweep, and the options."""
-
-    __slots__ = ("conn", "run_id", "conf", "run_dir", "template", "options",
-                 "generation")
-
-    def __init__(self, conn, run_id, conf, run_dir, template, options):
-        self.conn = conn
-        self.run_id = run_id
-        self.conf = conf              # the settings this sweep runs under
-        self.run_dir = run_dir
-        self.template = template      # absolute path to the template it fills
-        self.options = options        # the parsed command line
-        # "2/5" while continue_run.py is working through its generations, None
-        # for a single pass. Nothing reads it but the banners: a generation is
-        # not stored, and a step must not start behaving differently in one.
-        self.generation = None
-
-
-# --- the settings a sweep runs under --------------------------------------
-
-
-def _template_path(name):
-    """Absolute path of the template to fill, from a name or None."""
-    name = name or "template_code.py"
-    if not os.path.isabs(name) and not os.path.exists(name):
-        return os.path.join(_HERE, name)
-    return os.path.abspath(name)
-
-
-def new_sweep(conn, label):
-    """Create a run row and freeze the settings it will use. -> (run_id, conf).
-
-    Seeds left as None in settings.py are drawn *here* and stored as the number
-    that was drawn, rather than passed along as None. A sweep is then repeatable
-    even when it was never asked to be: whatever it used is written down.
-    """
-    conf = config.snapshot()
-    # Fail on an unknown EVALUATOR here rather than an hour later, when the
-    # process step has finished and there is a transcript nobody can score.
-    evaluators.get(conf.get("EVALUATOR"))
-    if conf.get("SEED") is None:
-        conf["SEED"] = random.randrange(_SEED_LIMIT)
-    if conf.get("WEIGHT_MASTER_SEED") is None:
-        conf["WEIGHT_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
-    if conf.get("SELECTION_MASTER_SEED") is None:
-        conf["SELECTION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
-    if conf.get("MUTATION_MASTER_SEED") is None:
-        conf["MUTATION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
-
-    run_id = store.create_run(conn, template=conf.get("TEMPLATE") or "template_code.py",
-                              label=label)
-    print("new run %d in %s" % (run_id, conn.path))
-    store.save_settings(conn, run_id, conf)
-    add_dataset.save_all(conn, run_id, conf)
-    return run_id, conf
-
-
-# --- the steps -------------------------------------------------------------
-
-
-def step_population(context):
-    """Draw the chromosomes -> individuals."""
-    conf = context.conf
-    rng = random.Random(conf["SEED"])
-    chromosomes = generate_population.build_population(
-        conf["COUNT"], rng, conf["MAX_DEPTH"], conf["BRANCH_PROB"], conf["UNIQUE"])
-    store.add_individuals(context.conn, context.run_id, chromosomes)
-
-    sizes = [len(one.split(".")) for one in chromosomes]
-    print("stored %d individuals in run %d (seed %s)"
-          % (len(chromosomes), context.run_id, conf["SEED"]))
-    print("symbols per individual: min %d, max %d, mean %.1f"
-          % (min(sizes), max(sizes), sum(sizes) / len(sizes)))
-
-
-def step_trees(context):
-    """Draw each chromosome -> individuals.tree."""
-    rows = store.individuals(context.conn, context.run_id)
-    if not rows:
-        raise SystemExit("run %d holds no individuals. Run the population step first."
-                         % context.run_id)
-    bad = 0
-    for row in rows:
-        try:
-            drawing = "\n".join(draw_trees.draw(row["chromosome"]))
-        except ValueError as error:
-            # An undrawable individual is recorded with its complaint, not
-            # dropped: it is still part of the population.
-            drawing = "%s\n\n!! cannot draw: %s" % (row["chromosome"], error)
-            bad += 1
-        store.set_tree(context.conn, row["id"], drawing)
-    context.conn.commit()
-
-    print("drew %d trees into run %d" % (len(rows), context.run_id))
-    if bad:
-        print("%d individual(s) could not be drawn -- see the !! markers" % bad)
-
-
-def step_runs(context):
-    """Fill the template per individual -> script_source, state, rank, weight seed."""
-    conn, run_id = context.conn, context.run_id
-    rows = store.individuals(conn, run_id)
-    if not rows:
-        raise SystemExit("run %d holds no individuals. Run the population step first."
-                         % run_id)
-
-    template_lines = generate_runs.load_template(context.template)
-    # The adapters come from this sweep's stored LORA_SLOTS, not from the
-    # template; each slot's rank comes from its own adapter_config.json, and
-    # they may differ.
-    slots = context.conf.get("LORA_SLOTS")
-    ranks = generate_runs.slot_ranks(slots)
-    # The eval prompts come from this sweep's stored TRAINING_SET, not from the
-    # template; the generated scripts read them at startup, so fail here if they
-    # cannot be read at all.
-    training_set = generate_runs.training_set_path(context.conf.get("TRAINING_SET"))
-    # ...and so does the cap on how many of them each script uses.
-    count = context.conf.get("TRAINING_COUNT")
-    # And the model they all attach their adapters to -- the same one the
-    # baseline the llm_judge_baseline evaluator grades against loads.
-    base_model = generate_runs.base_model_name(context.conf.get("BASE_MODEL"))
-    prompts_path, prompt_count, prompt_total = generate_runs.eval_prompt_count(
-        training_set, count)
-
-    master = context.conf["WEIGHT_MASTER_SEED"]
-    runnable = 0
-    for row in rows:
-        steps, final = generate_runs.plan(
-            generate_population.decode(row["chromosome"])[0], ranks)
-        # Derived from the master seed and the individual's own number, so it is
-        # the same seed however the population is walked, and re-generating a
-        # sweep from its stored settings reproduces the blends exactly.
-        weight_seed = random.Random("%s:%d" % (master, row["number"])).randrange(_SEED_LIMIT)
-        name = "run_%03d.py" % row["number"]
-        source = generate_runs.render(
-            row["chromosome"], steps, final,
-            script_name=name,
-            provenance="Generated by main.py from run %d, individual %d of %s."
-                       % (run_id, row["number"], os.path.basename(conn.path)),
-            label="Individual %d" % row["number"],
-            template_lines=template_lines,
-            weight_seed=weight_seed,
-            training_set=training_set,
-            slots=slots,
-            count=count,
-            base_model=base_model,
-        )
-        broken = any(step.broken for step in steps)
-        runnable += not broken
-        store.set_script(conn, row["id"], "BAD" if broken else "ok",
-                         steps[-1].rank, name, source, weight_seed)
-    conn.commit()
-
-    written = store.materialise(conn, run_id, context.run_dir)
-    print("stored %d scripts in run %d (from %s)"
-          % (len(rows), run_id, os.path.basename(context.template)))
-    print("base model: %s" % base_model)
-    print("slot ranks: %s" % ", ".join("%s=%d" % pair for pair in sorted(ranks.items())))
-    # Says "10 of 50" when TRAINING_COUNT is holding some back, so the number a
-    # sweep is actually scored on is never guessed at from the file's size.
-    print("eval prompts: %d%s from %s"
-          % (prompt_count,
-             "" if prompt_count == prompt_total else " of %d" % prompt_total,
-             os.path.basename(prompts_path)))
-    print("%d runnable, %d blocked by PEFT's equal-rank rule for linear"
-          % (runnable, len(rows) - runnable))
-    print("wrote %d script file(s) to %s" % (written, context.run_dir))
-
-
-def _clear_scripts(context, rows):
-    """Delete the script files of individuals whose result is stored.
-
-    The scripts have done their job: everything they printed is in the database,
-    and their source is in individuals.script_source, so the files themselves are
-    spent. Clearing them keeps run_db/ to the database plus whatever is still
-    waiting to run, and makes it impossible to launch a stale one by hand later.
-
-    That covers the ones that just ran -- a failed run is still a processed one,
-    and its output is stored either way -- and the ones skipped as unchanged,
-    which are spent for the same reason: they ran in an earlier generation. Ones
-    held back as BAD or by --limit have never run, so their scripts stay.
-    """
-    if context.options.keep_scripts:
-        print("kept the scripts in %s (--keep-scripts)" % context.run_dir)
-        return
-    gone = store.remove_scripts(context.conn, context.run_id, context.run_dir,
-                                [row["script_name"] for row in rows])
-    print("removed %d spent script(s) from %s -- they are still in the database "
-          "(python main.py runs, or python store.py --export)"
-          % (gone, context.run_dir))
-
-
-def step_process(context):
-    """Execute each script -> executions and exchanges."""
-    conn, run_id = context.conn, context.run_id
-    conf, options = context.conf, context.options
-    rows = [row for row in store.individuals(conn, run_id) if row["script_source"]]
-    if not rows:
-        raise SystemExit("run %d holds no generated scripts. Run the runs step first."
-                         % run_id)
-
-    # The scripts have to exist as files to be launched; rewrite any that are
-    # missing or out of date.
-    store.materialise(conn, run_id, context.run_dir)
-
-    # Whether the venv is needed is a property of the template that was filled:
-    # mocked scripts load nothing, and demanding the venv for them would put a
-    # GPU-less machine out of reach.
-    real = process_run.imports_unsloth(rows[0]["script_source"])
-    if real:
-        process_run.check_interpreter()
-
-    runnable = [row for row in rows
-                if options.include_blocked or row["state"] != "BAD"]
-    blocked = len(rows) - len(runnable)
-
-    # An individual whose chromosome has not moved since it last ran would
-    # produce the same execution again at the cost of another base-model load,
-    # and its result is already in the database. has_changed is exactly that
-    # question, so it is exactly what decides. An individual that has never run
-    # is not "unchanged" -- there is nothing to have changed from -- so a fresh
-    # population, and every copy selection appends, still runs in full.
-    done = store.executed(conn, run_id)
-    if options.include_unchanged:
-        selected, unchanged = runnable, []
-    else:
-        selected = [row for row in runnable
-                    if row["has_changed"] or row["id"] not in done]
-        keep = {row["id"] for row in selected}
-        unchanged = [row for row in runnable if row["id"] not in keep]
-
+def forwarded(options, adopted=False):
+    """The arguments both drivers understand, as an argv fragment."""
+    argv = ["--db", options.db, "--timeout", str(options.timeout)]
+    if adopted:
+        # Both halves read the adopted sweep's questions out of the sweep, and
+        # work in its own folder beside the database rather than in run_db/.
+        argv.append("--from-db")
+    if options.run_dir:
+        argv += ["--run-dir", options.run_dir]
     if options.limit:
-        selected = selected[:options.limit]
+        argv += ["--limit", str(options.limit)]
+    if options.include_blocked:
+        argv.append("--include-blocked")
+    if options.include_unchanged:
+        argv.append("--include-unchanged")
+    if options.keep_scripts:
+        argv.append("--keep-scripts")
+    if options.force:
+        argv.append("--force")
+    return argv
 
-    if not selected:
-        if unchanged:
-            # A generation where nothing moved is a result, not a failure: the
-            # database already holds the answer for every individual in it.
-            print("nothing to run: all %d individual(s) already have an execution "
-                  "of their current chromosome" % len(unchanged))
-            print("pass --include-unchanged to run them again anyway")
-            _clear_scripts(context, unchanged)
-            return
-        raise SystemExit("nothing to run: all %d individuals are marked BAD. "
-                         "Pass --include-blocked to run them anyway." % len(rows))
 
-    # How many run at once. The sweep's own value, so a batch size cannot be
-    # changed under a sweep already under way; a sweep created before this knob
-    # existed falls back to what settings.py says now.
-    size = process_run.batch_size(
-        conf.get("PROCESS_RUN_BATCH_SIZE", config.PROCESS_RUN_BATCH_SIZE))
-    groups = process_run.batches(selected, size)
+def call(driver, argv):
+    """Run one driver in this process. -> its exit code.
 
-    # How many prompts each script has to get through, so a progress line can
-    # say 12/50 rather than 12. Only the counting is done here -- an eval file
-    # that cannot be read is every script's failure to report, not this step's,
-    # so it costs the total and nothing else.
+    SystemExit is what a driver raises when it stops itself -- an unknown run,
+    a population that is not there. Caught here so the second half is skipped
+    rather than the whole thing unwinding through an exception nobody reads.
+    """
     try:
-        _, prompts, _ = generate_runs.eval_prompt_count(
-            conf.get("TRAINING_SET"), conf.get("TRAINING_COUNT"))
-    except SystemExit:
-        prompts = 0
-    every = conf.get("PROCESS_RUN_PROGRESS_SECONDS",
-                     config.PROCESS_RUN_PROGRESS_SECONDS)
-
-    # Progress arrives on the threads draining the children, several at once in
-    # a batch, so one lock owns the console for a whole line. Everything else
-    # printed by this step is on this thread, between batches, and cannot
-    # collide with it.
-    console = threading.Lock()
-
-    def say(script, message):
-        with console:
-            print("        %s%s" % ("" if size == 1 else script + "  ", message))
-
-    def watch(script):
-        return process_run.Progress(script, prompts, every, say)
-
-    print("running %d of %d individuals%s%s"
-          % (len(selected), len(rows),
-             " (%d skipped as BAD)" % blocked if blocked else "",
-             " (%d unchanged since their last run)" % len(unchanged)
-             if unchanged else ""))
-    if real:
-        # Say what a batch costs where it is paid: every script in one is
-        # another copy of the base model resident at the same time.
-        print("each one loads the base model, so this takes a while%s\n"
-              % ("" if size == 1 else
-                 " -- %d of them loaded at once, in batches of %d" % (size, size)))
-    else:
-        print("these are mocked scripts: nothing is loaded, so this is quick\n")
-
-    failures = 0
-    started = time.time()
-    number = 0
-    for position, group in enumerate(groups, 1):
-        # A whole batch is announced before it is launched, so a long wait says
-        # what it is waiting for.
-        first = number + 1
-        for offset, row in enumerate(group):
-            print("[%d/%d] %s  %s" % (first + offset, len(selected),
-                                      row["script_name"], row["chromosome"]))
-        if size > 1:
-            print("        %sbatch %d/%d: %d running at once"
-                  % ("" if not context.generation
-                     else "gen %s, " % context.generation,
-                     position, len(groups), len(group)))
-
-        results = process_run.launch_batch(
-            context.run_dir, [row["script_name"] for row in group],
-            options.timeout, watch)
-
-        # Stored in the order they were asked for rather than the order they
-        # finished, and from this thread only: the children print to their own
-        # pipes and nothing but this loop touches the database.
-        for row, (code, seconds, out, err) in zip(group, results):
-            number += 1
-            verdict = process_run.verdict_of(code)
-            if code != 0:
-                failures += 1
-
-            transcript = process_run.exchanges(out)
-            execution_id = store.add_execution(
-                conn, row["id"], seconds, code, verdict, row["weight_seed"],
-                process_run.drawn_weights(out), out, err)
-            store.add_exchanges(conn, execution_id, transcript)
-            # Commit per individual, so an interrupted sweep keeps what it has
-            # done -- a half-finished batch still leaves the ones that came back.
-            conn.commit()
-
-            # In a batch these lines no longer sit under their own heading, so
-            # they carry the script name; one at a time they read as before.
-            print("        %s%-9s %6.1fs  %d exchange(s) -> execution %d"
-                  % ("" if size == 1 else row["script_name"] + "  ",
-                     verdict, seconds, len(transcript), execution_id))
-            if code != 0:
-                # Show why, so a systemic problem is obvious without a query.
-                tail = [line for line in (out + err).splitlines()
-                        if line.strip()][-1:]
-                if tail:
-                    print("        %s" % tail[0][:100])
-
-    print("\nran %d in %.1fs, %d failed" % (len(selected), time.time() - started, failures))
-
-    # The scripts have done their job: everything they printed is in the
-    # database, and their source is in individuals.script_source, so the files
-    # themselves are spent. Clearing them keeps run_db/ to the database plus
-    # whatever is still waiting to run, and makes it impossible to launch a
-    # stale one by hand later. This happens whatever the individuals did --
-    # a failed run is still a processed one, and its output is stored either way.
-    _clear_scripts(context, selected + unchanged)
-
-    # A chromosome that cannot run is a result, not a pipeline failure. Only a
-    # sweep where nothing at all worked points at something systemic.
-    if failures == len(selected):
-        raise SystemExit("every individual failed -- try: python store.py --show %d"
-                         % run_id)
-
-
-def step_evaluate(context):
-    """Score every answer with the sweep's evaluator -> quality and reason.
-
-    Which evaluator is EVALUATOR in the sweep's *stored* settings, so a sweep
-    is scored the way it was created to be scored even if settings.py has moved
-    on -- two individuals graded by different rubrics would not be comparable,
-    and comparing them is the whole point of a fitness number.
-    """
-    conn, run_id, options = context.conn, context.run_id, context.options
-    pending = store.exchanges_to_score(conn, run_id, options.force)
-    if not pending:
-        total = conn.execute(
-            "SELECT COUNT(*) AS n FROM exchanges x JOIN executions e ON e.id = x.execution_id"
-            " JOIN individuals i ON i.id = e.individual_id WHERE i.run_id = ?",
-            (run_id,)).fetchone()["n"]
-        if not total:
-            raise SystemExit("run %d holds no answers to score. Run the process step first."
-                             % run_id)
-        # Only the most recent execution of each individual is scored -- that is
-        # the current result. An older one keeps whatever score it was given.
-        print("nothing to score -- every answer in the latest execution of each "
-              "individual already has a quality")
-        return
-
-    # prepare() is where an evaluator does its once-per-step work: discovering
-    # the judge model, loading the eval set's own answers, checking its knobs.
-    # It is handed the pending rows so it can tell an all-blank set -- a sweep
-    # where every script failed, or a mocked one that arrived scored -- from one
-    # that really needs an endpoint up.
-    evaluator = evaluators.get(context.conf.get("EVALUATOR"))
-    # The Context goes with it for the one evaluator that needs more than the
-    # settings and the pending rows: llm_judge_baseline reads the cache of
-    # base-model answers, and fills it -- one model load, once -- when the
-    # sweep asks a question no earlier sweep did.
-    # Said before prepare(), not after: preparing can take minutes -- the
-    # baseline evaluator may have a base model to run -- and a console that has
-    # not yet named the evaluator cannot explain what it is waiting for.
-    print("evaluator: %s -- %s" % (evaluator.name, evaluator.description))
-    prepared = evaluator.prepare(context.conf, pending, context)
-    for note in prepared.notes:
-        print(note)
-    print("scoring %d answer(s)%s\n"
-          % (len(pending), " (--force: re-scoring)" if options.force else ""))
-
-    # Giving up early is only ever worth it when a score costs something to
-    # get: a local evaluator would spend nothing finishing an individual, and
-    # stopping short would only lose detail. The rows arrive ordered by
-    # individual and then by position, so each group below is one individual's
-    # answers in the order they were asked -- which is what "the first 10%"
-    # means.
-    limit_fraction = (context.conf.get("JUDGE_ABANDON_FRACTION")
-                      if evaluator.needs_endpoint else None)
-    if limit_fraction:
-        print("giving up on an individual once its first %g%% of graded answers "
-              "have all scored 0" % (100 * limit_fraction))
-
-    scored = failed = abandoned = 0
-    started = time.time()
-    for number, group in itertools.groupby(pending, key=lambda row: row["number"]):
-        rows = list(group)
-        print("individual %d  %s" % (number, rows[0]["chromosome"]))
-        # How many graded answers, all of them zero, are enough to stop asking.
-        limit = (evaluators.abandon_after(context.conf, len(rows))
-                 if limit_fraction else None)
-        graded = zeros = 0
-        giving_up = ""
-
-        for index, row in enumerate(rows):
-            answer = row["answer"] or ""
-            if giving_up:
-                # Written rather than left NULL: an individual's fitness is the
-                # mean over its exchanges, so this is what makes "fitness zero"
-                # true of the whole individual rather than of the part that was
-                # graded -- and a re-run of evaluate does not ask about these
-                # again.
-                store.score_exchange(conn, row["id"], 0.0, giving_up, None)
-                scored += 1
-                abandoned += 1
-            elif not answer.strip():
-                # Nothing to grade: an unanswered question is worth nothing, and
-                # asking the judge about an empty string just wastes a call. It
-                # is not an evaluation either, so it neither counts toward the
-                # first 10% nor condemns the individual on its own.
-                store.score_exchange(conn, row["id"], 0.0, "no answer given", None)
-                scored += 1
-                print("    [%d] 0.00  (no answer)" % row["position"])
-            else:
-                item = {"question": row["question"], "answer": answer,
-                        "position": row["position"], "number": row["number"]}
-                try:
-                    # An evaluator that cannot score this one answer fails it
-                    # and nothing else: the exchange keeps its NULL quality, the
-                    # step counts it, and a re-run picks it up again. A failure
-                    # is not a zero, so it never counts toward giving up either.
-                    quality, reason = evaluator.score(item, prepared)
-                    quality = round(quality, 3)
-                    store.score_exchange(conn, row["id"], quality, reason,
-                                         prepared.label)
-                    scored += 1
-                    graded += 1
-                    zeros += 1 if quality == 0.0 else 0
-                    print("    [%d] %.2f  %s" % (row["position"], quality, reason))
-                except (RuntimeError, ValueError) as error:
-                    failed += 1
-                    print("    [%d] FAILED  %s" % (row["position"], error))
-
-                if limit and graded >= limit and zeros == graded:
-                    giving_up = ("abandoned: the first %d graded answer(s) all "
-                                 "scored 0" % graded)
-                    print("    giving up on individual %d -- %s, so its "
-                          "remaining %d answer(s) are scored 0 unasked"
-                          % (number, giving_up, len(rows) - index - 1))
-            # Saved as we go, so an interrupted scoring run resumes where it stopped.
-            conn.commit()
-
-    print("\nscored %d, %d failed, in %.1fs" % (scored, failed, time.time() - started))
-
-    if abandoned:
-        print("%d answer(s) scored 0 unasked, on individuals given up on early"
-              % abandoned)
-
-    qualities = [row["quality"] for row in store.quality_rows(conn, run_id)
-                 if row["quality"] is not None]
-    if qualities:
-        print("quality across %d individual(s): min %.3f, max %.3f, mean %.3f"
-              % (len(qualities), min(qualities), max(qualities),
-                 sum(qualities) / len(qualities)))
-
-    if failed and not scored:
-        raise SystemExit("nothing could be scored by the %s evaluator -- check "
-                         "its settings, and the judge endpoint if it uses one"
-                         % evaluator.name)
-
-
-def step_fitness(context):
-    """Fold each transcript into one number -> individuals.fitness, and record
-    that generation of it -> fitness_history."""
-    conn, run_id = context.conn, context.run_id
-    snapshot = calculate_fitness.assign(conn, run_id)
-    rows = snapshot.rows
-    if not rows:
-        raise SystemExit("run %d holds no individuals. Run the population step first."
-                         % run_id)
-    if not any(row["quality"] is not None for row in rows):
-        raise SystemExit("no answer in run %d carries a quality yet -- run the "
-                         "evaluate step first." % run_id)
-
-    print("fitness = mean quality across the exchanges of the latest execution\n")
-    print("    %-4s %-5s %-7s %-7s %s"
-          % ("#", "state", "answers", "fitness", "chromosome"))
-    values = []
-    for row in rows:                            # already best first
-        value = calculate_fitness.fitness_of(row)
-        values.append(value)
-        print("    %-4d %-5s %-7d %-7.3f %s"
-              % (row["number"], row["state"] or "-", row["answers"] or 0,
-                 value, row["chromosome"]))
-
-    print("\nwrote fitness for %d individual(s): min %.3f, max %.3f, mean %.3f"
-          % (len(values), min(values), max(values), sum(values) / len(values)))
-
-    # An individual averaged over part of its transcript still gets a fitness,
-    # but it is a weaker claim than one averaged over all of it -- say so.
-    partial = [row["number"] for row in rows
-               if row["quality"] is not None and (row["unscored"] or 0)]
-    if partial:
-        print("%d individual(s) averaged over a partly scored transcript: %s"
-              % (len(partial), ", ".join(str(number) for number in partial)))
-    # 0.0 here is a decision, not a gap -- see calculate_fitness.py.
-    empty = [row["number"] for row in rows if row["quality"] is None]
-    if empty:
-        print("%d individual(s) had no judged answer and scored 0.0: %s"
-              % (len(empty), ", ".join(str(number) for number in empty)))
-
-    # The column above says what the population is worth now; this says what it
-    # was worth each generation, which is the only way a finished sweep can show
-    # whether the search went anywhere. Re-running this step restates the
-    # current generation rather than adding one -- see store.fitness_generation.
-    print("\nrecorded generation %d in fitness_history at %s"
-          % (snapshot.generation, snapshot.recorded_at))
-    history = store.fitness_by_generation(conn, run_id)
-    if len(history) > 1:
-        print("    %-5s %-20s %-6s %-7s %-7s %s"
-              % ("gen", "recorded", "pop", "best", "mean", "fittest chromosome"))
-        for entry in history:
-            best = store.best_of_generation(conn, run_id, entry["generation"])
-            print("    %-5d %-20s %-6d %-7.3f %-7.3f %s"
-                  % (entry["generation"], entry["recorded_at"], entry["population"],
-                     entry["best"] or 0.0, entry["mean"] or 0.0,
-                     best["chromosome"] if best else "-"))
-
-
-def step_elitism(context):
-    """Name the one individual to carry forward -> individuals.is_best."""
-    conn, run_id = context.conn, context.run_id
-    best, rows = elitism.elect(conn, run_id)
-    if not rows:
-        raise SystemExit("run %d holds no individuals. Run the population step first."
-                         % run_id)
-    if best is None:
-        # Nothing was written, so is_best is whatever it was -- see elitism.py.
-        raise SystemExit("every individual in run %d has fitness 0.0 -- run the "
-                         "fitness step first, or, if they really all scored 0.0, "
-                         "this generation has no elite to carry forward." % run_id)
-
-    tied = [row["number"] for row in rows
-            if (row["fitness"] or 0.0) == (best["fitness"] or 0.0)]
-    print("elite: individual %d, fitness %.3f" % (best["number"], best["fitness"]))
-    print("    %s" % best["chromosome"])
-    print("cleared is_best on the other %d individual(s)" % (len(rows) - 1))
-    if len(tied) > 1:
-        # Say so rather than letting the choice look like a ranking.
-        print("%d individuals tie at %.3f (%s); the lowest number takes it"
-              % (len(tied), best["fitness"] or 0.0,
-                 ", ".join(str(number) for number in tied)))
-
-
-def _span(numbers):
-    """"#4-#6", or "#4" when there is only one of them."""
-    if len(numbers) == 1:
-        return "#%d" % numbers[0]
-    return "#%d-#%d" % (numbers[0], numbers[-1])
-
-
-def _master_seed(context, name):
-    """The sweep's seed called `name`, drawing and recording one if it has none.
-
-    The same bargain the other seeds strike: a sweep that was never asked to be
-    repeatable still is, because whatever it used is written down. A sweep
-    created before the setting existed gets its seed here instead of at
-    creation, and keeps it from then on.
-    """
-    seed = context.conf.get(name)
-    if seed is None:
-        seed = random.randrange(_SEED_LIMIT)
-        context.conf[name] = seed
-        store.save_settings(context.conn, context.run_id, {name: seed})
-        print("drew %s for run %d and stored it: %d" % (name, context.run_id, seed))
-    return seed
-
-
-def step_selection(context):
-    """Spin the roulette wheel -> the n+1 weakest replaced by n copies and one
-    newcomer, leaving the population the size it was."""
-    conn, run_id = context.conn, context.run_id
-    master = _master_seed(context, "SELECTION_MASTER_SEED")
-    before = store.individuals(conn, run_id)
-    if not before:
-        raise SystemExit("run %d holds no individuals. Run the population step first."
-                         % run_id)
-
-    # Derived from the sweep's seed and the population's high-water number, so
-    # a second round draws its own parents rather than the first round's again,
-    # and re-running a sweep from its stored seed reproduces every round of it.
-    # The number and not the size: a round now culls as many individuals as it
-    # appends, so the size is the same every generation and seeding on it would
-    # spin the identical wheel every time.
-    rng = random.Random("%s:%d" % (master, store.high_number(conn, run_id)))
-    count = context.conf.get("SELECTION_COUNT")
-    picked = selection.select(conn, run_id, count, rng, context.conf)
-
-    if not picked.parents:
-        raise SystemExit("every individual in run %d has fitness 0.0 -- there is no "
-                         "wheel to spin. Run the fitness step first, or, if they "
-                         "really all scored 0.0, this generation selects nobody."
-                         % run_id)
-
-    # How often each parent came up: the whole point of drawing with
-    # replacement, and the quickest read on whether the wheel is doing anything.
-    times = {}
-    for row in picked.parents:
-        times[row["number"]] = times.get(row["number"], 0) + 1
-    print("spun the wheel %d time(s) over %d individual(s)"
-          % (len(picked.parents), len(before)))
-    print("    %-9s %-7s %-6s %s" % ("parent", "fitness", "picked", "chromosome"))
-    for row in sorted(picked.parents, key=lambda row: -(row["fitness"] or 0.0)):
-        if row["number"] in times:
-            print("    %-9d %-7.3f %-6d %s"
-                  % (row["number"], row["fitness"] or 0.0,
-                     times.pop(row["number"]), row["chromosome"]))
-
-    missed = [row["number"] for row in before if row["number"] not in
-              {row["number"] for row in picked.parents}]
-    if missed:
-        print("%d individual(s) the wheel never landed on: %s -- being missed is "
-              "not what gets an individual culled; being weakest is"
-              % (len(missed), ", ".join(str(number) for number in missed)))
-    print("appended %d copy/copies as %s"
-          % (len(picked.numbers), _span(picked.numbers)))
-
-    # The cull is the other half of a round: n copies and one newcomer in, the
-    # n+1 weakest out, so the population comes out the size it went in and what
-    # moved is its membership. The elite is never eligible, and a population
-    # too small to spare that many gives up what it can and grows by the rest.
-    if picked.culled:
-        print("culled the %d weakest individual(s), transcripts and all:"
-              % len(picked.culled))
-        for row in picked.culled:
-            print("    %-9d %-7.3f %s"
-                  % (row["number"], row["fitness"] or 0.0, row["chromosome"]))
-        # Their rows are gone, so remove_scripts() can no longer find the files
-        # they owned -- the names have to come from the rows the cull handed
-        # back. The scripts were only ever a cache of script_source, and the
-        # source went with the row.
-        stale = store.discard_scripts(context.run_dir,
-                                      [row["script_name"] for row in picked.culled])
-        if stale:
-            print("    and %d of their script file(s) from %s"
-                  % (stale, context.run_dir))
-    else:
-        print("culled nobody: the population had no non-elite individual to spare")
-    short = len(picked.parents) + 1 - len(picked.culled)
-    if short > 0:
-        print("that is %d fewer than the %d a round of %d appends, so the population "
-              "grows by %d this generation -- there was no other non-elite "
-              "individual to spare"
-              % (short, len(picked.parents) + 1, len(picked.parents), short))
-
-    # And the one individual per round that is nobody's copy: the floor under a
-    # gene pool that copying and mutation can only ever narrow.
-    print("drew #%d fresh from the same rules the first population came from: %s"
-          % (picked.newcomer.number, picked.newcomer.chromosome))
-
-    after = len(before) + len(picked.numbers) - len(picked.culled) + 1
-    if after == len(before):
-        print("the population is still %d, as it went in -- %d out, %d in"
-              % (after, len(picked.culled), len(picked.numbers) + 1))
-    else:
-        print("the population is now %d, up from %d" % (after, len(before)))
-    # Each copy is its parent field for field, so it arrives holding the
-    # parent's script name, weight seed and fitness as well as its chromosome.
-    # Those are the parent's answers, and stay right only while the chromosome
-    # is still the parent's; the newcomer has none of them to begin with;
-    # trees and runs re-derive them for everyone either way.
-    print("each copy is its parent field for field and the newcomer is bare -- "
-          "re-derive their trees, scripts and seeds with: python main.py trees runs")
-
-
-def step_mutation(context):
-    """Mutate everything but the elite -> chromosome, has_changed."""
-    conn, run_id = context.conn, context.run_id
-    rate = context.conf.get("MUTATION_RATE", config.MUTATION_RATE)
-    if not 0.0 <= rate <= 1.0:
-        raise SystemExit("MUTATION_RATE is %r; it is a probability per symbol and "
-                         "has to be between 0.0 and 1.0" % rate)
-
-    master = _master_seed(context, "MUTATION_MASTER_SEED")
-    before = store.individuals(conn, run_id)
-    if not before:
-        raise SystemExit("run %d holds no individuals. Run the population step first."
-                         % run_id)
-
-    # Derived the way selection's is, and for the same reason: the population's
-    # highest number rises a generation at a time, so it dates the round, and a
-    # sweep replayed from its stored seed mutates exactly as it did the first
-    # time. Seeding on the size instead would mutate the same positions of the
-    # same individuals every generation, now that the size does not move.
-    rng = random.Random("%s:%d" % (master, store.high_number(conn, run_id)))
-    changes, rows = mutation.apply(conn, run_id, rate, rng)
-
-    elite = [row["number"] for row in rows if row["is_best"]]
-    eligible = len(rows) - len(elite)
-    print("rate %.3f per symbol, over %d of %d individual(s)%s"
-          % (rate, eligible, len(rows),
-             " (#%s is the elite and is left alone)"
-             % ", #".join(str(number) for number in elite) if elite else ""))
-    if changes:
-        print("    %-4s %-7s %s" % ("#", "symbols", "chromosome"))
-        for change in changes:
-            print("    %-4d %-7d %s" % (change.number, change.symbols, change.before))
-            print("    %-4s %-7s %s" % ("", "->", change.after))
-    print("mutated %d, left %d unchanged; has_changed is set on %d individual(s)"
-          % (len(changes), len(rows) - len(changes), len(changes)))
-    if changes:
-        # Their fitness is gone, cleared with the chromosome that earned it. The
-        # tree, script and rank are merely stale descriptions, and nothing here
-        # can re-derive them.
-        print("their fitness is cleared, and their trees, scripts and ranks still "
-              "describe the chromosome they used to be")
-        print("re-derive and re-earn: python main.py trees runs, then process")
-
-
-Step = namedtuple("Step", "name run description")
-
-STEPS = [
-    Step("population", step_population,
-         "draw the chromosomes -> individuals"),
-    Step("trees", step_trees,
-         "draw each chromosome as a tree -> individuals.tree"),
-    Step("runs", step_runs,
-         "fill the template per individual -> individuals.script_source + run_db/"),
-    # The expensive one: a base-model load per individual. Keep COUNT small
-    # while iterating, or run the earlier steps on their own.
-    Step("process", step_process,
-         "execute each script -> executions, exchanges; then delete the scripts"),
-    # The cost depends on the evaluator: a judge is one call per answer and
-    # needs its endpoint up, while similarity and heuristic are local and free.
-    Step("evaluate", step_evaluate,
-         "score every answer with the sweep's evaluator -> exchanges.quality"),
-    # Cheap, and pure arithmetic over what evaluate stored: no model, no judge.
-    Step("fitness", step_fitness,
-         "average each transcript's qualities -> individuals.fitness,"
-         " fitness_history"),
-    # Cheap too, and reads nothing but the column fitness just wrote.
-    Step("elitism", step_elitism,
-         "mark the fittest individual as the one to keep -> individuals.is_best"),
-    # Appends more than it removes, so running it twice is two generations of
-    # selection, not one done twice.
-    Step("selection", step_selection,
-         "roulette wheel sampling -> copies of the fit appended, the weakest"
-         " culled, one newcomer drawn"),
-    # Leaves the elite alone, so the best result found so far survives intact.
-    Step("mutation", step_mutation,
-         "point-mutate every other chromosome -> chromosome, has_changed"),
-]
-
-
-# The tail of the pipeline: the three steps that do not describe this
-# generation but build the *next* one. `elitism` names the individual mutation
-# must not touch, `selection` fills the population the next generation runs,
-# and `mutation` varies what it filled it with -- none of them reads a
-# transcript or writes a score, and all three leave the population describing a
-# generation that has not happened yet.
-#
-# So the last generation of a run stops before them, at `fitness`: the sweep
-# comes to rest holding the individuals that were actually scored, each one
-# still described by the script that earned it and the transcript it earned it
-# with. That is the state store.py --export, the HTML report and
-# test_run_with_dataset.py all want, and the state a sweep used to have to be
-# walked back into by re-running `trees runs process evaluate`.
-NEXT_GENERATION = ("elitism", "selection", "mutation")
-
-
-def without_next_generation(steps):
-    """`steps` up to the point where they stop being about this generation.
-
-    Trims NEXT_GENERATION off the end rather than filtering it out anywhere it
-    appears, so a step list that never had a tail comes back unchanged and one
-    that does keeps everything before it -- including a `fitness` that somebody
-    asked for by name.
-    """
-    trimmed = list(steps)
-    while trimmed and trimmed[-1].name in NEXT_GENERATION:
-        trimmed.pop()
-    return trimmed
-
-
-# --- driver ----------------------------------------------------------------
-
-
-def resolve_run_dir(conf, override=None, default=None):
-    """Absolute path of the folder the generated scripts live in.
-
-    Absolute from here on: each script is launched with cwd set to this folder,
-    so a relative path would be resolved against itself a second time.
-
-    `default` displaces DB_RUN_DIR when the run has a folder of its own -- a
-    --from-db run works entirely beside its database, see db_datasets. --run-dir
-    still wins over both: it is the one thing that was asked for out loud.
-    """
-    run_dir = override or default or conf.get("DB_RUN_DIR") or config.DB_RUN_DIR
-    if not os.path.isabs(run_dir):
-        run_dir = os.path.join(_HERE, run_dir)
-    return os.path.abspath(run_dir)
-
-
-def context_for(conn, run_id, conf, args):
-    """The Context a step gets. One place, so every driver builds the same one.
-
-    Which is also why the --from-db run folder is chosen here rather than in
-    each driver: main.py and continue_run.py both come through this, so a run
-    driven from a database keeps to its own folder whichever of them is turning
-    the crank.
-    """
-    isolated = (db_datasets.run_folder(conn, run_id)
-                if getattr(args, "from_db", False) else None)
-    return Context(conn, run_id, conf,
-                   resolve_run_dir(conf, getattr(args, "run_dir", None), isolated),
-                   _template_path(conf.get("TEMPLATE")), args)
-
-
-def run(steps, context):
-    """Run `steps` in order. Returns the exit code for the process.
-
-    A sweep that stops part way is left marked 'failed', so `python store.py
-    --list` says so rather than presenting a half-finished run as a result.
-    """
-    started = time.time()
-    for number, step in enumerate(steps, 1):
-        print("=" * 70)
-        print("[%d/%d]%s %s -- %s"
-              % (number, len(steps),
-                 "" if not context.generation else " gen %s" % context.generation,
-                 step.name, step.description))
-        print("=" * 70)
-        step_started = time.time()
-        try:
-            step.run(context)
-        except SystemExit as error:
-            if error.code not in (0, None):
-                print("\nSTOPPED in step '%s': %s" % (step.name, error))
-                print("Later steps were skipped, since they build on this one.")
-                store.finish_run(context.conn, context.run_id, "failed")
-                return 1
-        except Exception as error:                      # noqa: BLE001 - report and stop
-            print("\nSTOPPED in step '%s': %s: %s"
-                  % (step.name, type(error).__name__, error))
-            store.finish_run(context.conn, context.run_id, "failed")
-            return 1
-        print("  (%s took %.1fs)\n" % (step.name, time.time() - step_started))
-
-    store.finish_run(context.conn, context.run_id, "done")
-    print("=" * 70)
-    print("done: %s in %.1fs" % (", ".join(step.name for step in steps),
-                                 time.time() - started))
-    print("run %d in %s -- python store.py --show %d"
-          % (context.run_id, context.conn.path, context.run_id))
-    print("=" * 70)
-    return 0
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Run the pipeline into a sqlite database: %s."
-                    % " -> ".join(step.name for step in STEPS)
-    )
-    parser.add_argument("steps", nargs="*", metavar="STEP",
-                        help="steps to run (default: all of them, in order)")
-    parser.add_argument("--list", action="store_true",
-                        help="list the steps and exit")
-    parser.add_argument("--evaluators", action="store_true",
-                        help="list the ways an answer can be scored and exit "
-                             "(EVALUATOR in settings.py picks one)")
-    parser.add_argument("--db", default=config.DB_PATH,
-                        help="database file (default %s)" % config.DB_PATH)
-    parser.add_argument("--run", type=int, default=None, metavar="ID",
-                        help="resume this sweep instead of starting one (0 = the latest)")
-    parser.add_argument("--label", default=None,
-                        help="a note stored with the sweep, to find it again later")
-    parser.add_argument("--from-db", action="store_true",
-                        help="read the eval prompts from the sweep's own stored "
-                             "dataset rows instead of the files its settings name "
-                             "(needs --run; the rows are written out beside the "
-                             "database and the *_SET settings point at them for "
-                             "this run only)")
-    parser.add_argument("--run-dir", default=None,
-                        help="folder for the generated scripts (default %s)"
-                             % config.DB_RUN_DIR)
-    parser.add_argument("--limit", type=int, default=0,
-                        help="process only the first N individuals (0 = all)")
-    parser.add_argument("--include-blocked", action="store_true",
-                        help="also run the ones marked BAD")
-    parser.add_argument("--include-unchanged", action="store_true",
-                        help="also run individuals whose chromosome has not "
-                             "changed since their last execution (default: skip "
-                             "them; their result is already stored)")
-    parser.add_argument("--keep-scripts", action="store_true",
-                        help="leave the generated scripts on disk after processing "
-                             "them (default: delete them; the source is in the database)")
-    parser.add_argument("--timeout", type=int, default=900,
-                        help="seconds to allow each script (default 900)")
-    parser.add_argument("--force", action="store_true",
-                        help="re-score answers that already have a quality")
-    parser.add_argument("--next-generation", action="store_true",
-                        help="also run %s -- the steps that build the next "
-                             "generation. Without it a full run stops after "
-                             "fitness, because main.py's one generation is the "
-                             "whole run and there is no next generation to "
-                             "build. continue_run.py passes it for every "
-                             "generation but its last."
-                             % ", ".join(NEXT_GENERATION))
-    args = parser.parse_args(argv)
-
-    known = {step.name: step for step in STEPS}
-
-    if args.list:
-        for step in STEPS:
-            print("%-12s %s" % (step.name, step.description))
-        return 0
-
-    if args.evaluators:
-        current = config.EVALUATOR
-        for name, description in evaluators.available():
-            mark = "*" if name == current else " "
-            print("%s %-20s %s" % (mark, name, description))
-        print("\n* is EVALUATOR in settings.py, which a *new* sweep is created "
-              "with.\n  A sweep already in the database keeps the one it was "
-              "created with.")
-        return 0
-
-    if args.steps:
-        unknown = [name for name in args.steps if name not in known]
-        if unknown:
-            parser.error("unknown step(s): %s. Known steps: %s"
-                         % (", ".join(unknown), ", ".join(known)))
-        # Keep the order the pipeline defines, not the order they were typed.
-        # Named steps are run as named: asking for `selection` and being given
-        # something else would be worse than any default.
-        selected = [step for step in STEPS if step.name in set(args.steps)]
-    else:
-        selected = list(STEPS)
-        if not args.next_generation:
-            selected = without_next_generation(selected)
-
-    # Before connect(), which creates the database it cannot open: a usage
-    # error should not leave an empty one behind. A *new* sweep is the moment a
-    # dataset is read out of the files its settings name and stored, so there
-    # are no rows for --from-db to read back yet -- it needs one that exists.
-    if args.from_db and args.run is None:
-        raise SystemExit("--from-db reads a sweep's stored dataset, so it needs a "
-                         "sweep: pass --run (0 = the latest). A new sweep is where "
-                         "those rows come from.")
-
-    conn = store.connect(args.db)
-
-    # A sweep that draws a population is a new sweep; one that does not is
-    # continuing an existing one, and must use the settings that one was
-    # created with rather than whatever settings.py says now.
-    if args.run is None and any(step.name == "population" for step in selected):
-        run_id, conf = new_sweep(conn, args.label)
-        print()
-    else:
-        run_id = store.latest_run(conn) if args.run in (None, 0) else args.run
-        if run_id is None:
-            raise SystemExit("%s holds no runs yet -- start one with the population "
-                             "step." % conn.path)
-        if store.get_run(conn, run_id) is None:
-            raise SystemExit("no run %d in %s. Try: python store.py --list"
-                             % (run_id, conn.path))
-        conf = store.get_settings(conn, run_id)
-        print("resuming run %d in %s\n" % (run_id, conn.path))
-        # The sweep's settings already come from the sweep; --from-db is the
-        # other half of that -- its questions too, rather than whatever the
-        # files those settings name hold now.
-        if args.from_db:
-            conf = db_datasets.repoint(conn, run_id, conf)
-            print()
-
-    if not args.steps and not args.next_generation:
-        print("this run is one generation, so it is the last one and stops after "
-              "fitness.")
-        print("    %s are what build the next generation, and there is none."
-              % ", ".join(NEXT_GENERATION))
-        print("    Add --next-generation to run them anyway.")
-        print()
-
-    context = context_for(conn, run_id, conf, args)
+        code = driver(argv)
+    except SystemExit as error:
+        if error.code in (0, None):
+            return 0
+        print(error)
+        return 1
+    return code or 0
+
+
+def sweep_after(db_path, before):
+    """The id of the sweep start_run.py just created, or None if it made none."""
+    conn = store.connect(db_path)
     try:
-        return run(selected, context)
+        latest = store.latest_run(conn)
+    finally:
+        conn.close()
+    return latest if latest != before else None
+
+
+def prepared(options):
+    """The sweep a bare --db should run rather than add to, or None.
+
+    A database can be *prepared* rather than produced: a run row, its settings,
+    its dataset, and no individuals -- everything a search needs and none of
+    the search. Handed one of those, `python main.py --db it.sqlite3` means
+    "run this", not "start a second sweep in the same file". So the latest run
+    is looked at, and adopted when it is waiting to be run.
+
+    Nothing else changes: a database that does not exist yet, holds no sweeps,
+    or whose latest sweep has a population is a database to start a new sweep
+    in, exactly as before -- `main.py --db run_real/gep.sqlite3` goes on
+    meaning what it meant. --label suppresses this too, since a label is
+    something only a sweep being created can be given.
+
+    --run says it out loud and takes any sweep by id; this is the same decision
+    made for somebody who did not.
+    """
+    if options.run is not None or options.label:
+        return None
+    where = (options.db if os.path.isabs(options.db)
+             else os.path.join(_HERE, options.db))
+    if not os.path.exists(where):
+        return None
+    conn = store.connect(options.db)
+    try:
+        run_id = store.latest_run(conn)
+        if run_id is None or store.individuals(conn, run_id):
+            return None
+        # Settings are what make it a sweep rather than an empty row; without
+        # them there is nothing to run it under and adopt() would say so.
+        return run_id if store.get_settings(conn, run_id) else None
     finally:
         conn.close()
 
 
+def adopt(options, run=None):
+    """The prepared sweep to run. -> (run_id, its settings, its datasets).
+
+    `run` is the id, from --run or from prepared(); 0 means the latest.
+
+    A sweep is *prepared* when the database already holds its settings and its
+    dataset and no individuals: everything a search needs, and none of the
+    search. start_run.py then draws the population into it and takes it through its
+    first generation exactly as it would into a sweep it had just created --
+    except that the knobs and the questions are the ones already written down,
+    so settings.py and the files under datasets/ are never opened, and the run
+    keeps to its own folder beside the database rather than to run_db/.
+
+    Refused, rather than guessed past:
+
+    A path that is not already a database. store.connect() creates what it
+    cannot open, which for a mistyped --db would mean being told a brand-new
+    empty file holds no run 1.
+
+    A sweep that already holds individuals. The population step appends, so
+    joining a search that has one would draw a second population beside the
+    first; continue_run.py is what carries one of those on. Only --run can
+    reach this, since prepared() picks no such sweep in the first place.
+    """
+    run = options.run if run is None else run
+    where = (options.db if os.path.isabs(options.db)
+             else os.path.join(_HERE, options.db))
+    if not os.path.exists(where):
+        raise SystemExit("no database at %s" % os.path.abspath(where))
+
+    conn = store.connect(options.db)
+    try:
+        run_id = store.latest_run(conn) if run == 0 else run
+        if run_id is None:
+            raise SystemExit(
+                "%s holds no sweeps, so there is none to run. Drop --run to "
+                "start one from settings.py." % conn.path)
+        if store.get_run(conn, run_id) is None:
+            raise SystemExit("no run %d in %s. Try: python store.py --list"
+                             % (run_id, conn.path))
+        held = store.individuals(conn, run_id)
+        if held:
+            raise SystemExit(
+                "run %d in %s already holds %d individual(s). main.py starts "
+                "a search rather than joining one, and its first half would draw "
+                "a second population beside that one.\n"
+                "    Carry it on instead: python continue_run.py --db %s --run %d "
+                "--from-db"
+                % (run_id, conn.path, len(held), options.db, run_id))
+        conf = store.get_settings(conn, run_id)
+        if not conf:
+            raise SystemExit(
+                "run %d in %s has no stored settings, so there is nothing to run "
+                "it under." % (run_id, conn.path))
+        splits = store.dataset_summary(conn, run_id)
+    finally:
+        conn.close()
+    return run_id, conf, splits
+
+
+def describe(options, run_id, conf, splits, asked):
+    """Say what the adopted sweep is, before a single step runs.
+
+    `asked` is whether --run named it. When it did not, the reason it was picked
+    is worth a line: this is the one decision main.py makes on its own, and
+    the alternative it turned down -- starting a second sweep in somebody's
+    prepared database -- is exactly what a person would want to be told about.
+    """
+    if asked:
+        print("adopting run %d in %s -- its settings and its questions, not "
+              "settings.py's" % (run_id, options.db))
+    else:
+        print("run %d in %s is prepared -- settings and a dataset, no "
+              "individuals -- so this runs it" % (run_id, options.db))
+        print("    rather than starting a second sweep beside it. Its settings "
+              "and its questions, not settings.py's.")
+    print("    %d stored setting(s); evaluator %s, base model %s"
+          % (len(conf), conf.get("EVALUATOR"), conf.get("BASE_MODEL")))
+    if splits:
+        for entry in splits:
+            print("    %-10s %3d record(s), %d with a reference answer"
+                  % (entry["split"], entry["records"], entry["references"]))
+    else:
+        print("    no dataset rows -- the run will stop when it looks for them")
+    print()
+
+
+def cli(argv=None):
+    options = parse(argv)
+
+    # --run names a sweep to run; without it, a database that is already a
+    # prepared sweep is one too. Anything else starts a new sweep, as before.
+    asked = options.run is not None
+    target = options.run if asked else prepared(options)
+    adopted = adopt(options, target) if target is not None else None
+    if adopted:
+        run_id, conf, splits = adopted
+        # The sweep's own GENERATIONS, the way continue_run.py reads it, so a
+        # prepared database says how long its own search is.
+        generations = continue_run.generation_count(options, conf)
+        before = None
+    else:
+        run_id = None
+        generations = (config.GENERATIONS if options.generations is None
+                       else options.generations)
+        conn = store.connect(options.db)
+        try:
+            before = store.latest_run(conn)
+        finally:
+            conn.close()
+
+    if generations < 1:
+        raise SystemExit(
+            "%d generation(s) for the second half; start_run.py's generation would be "
+            "the whole run. Use start_run.py on its own for that." % generations)
+
+    started = time.time()
+    print("=" * 70)
+    print("full run: start_run.py, then continue_run.py for %d more generation(s)"
+          % generations)
+    print("=" * 70)
+    print()
+    if adopted:
+        describe(options, run_id, conf, splits, asked)
+
+    # --next-generation because start_run.py's generation is this run's *first*,
+    # not its last: continue_run.py has at least one more to run (--generations
+    # is refused below 1), and it needs a population selection and mutation
+    # have moved on. Only the run's last generation stops after fitness, and
+    # that one belongs to continue_run.py.
+    first = ["--next-generation"]
+    if adopted:
+        first += ["--run", str(run_id)]
+    elif options.label:
+        first += ["--label", options.label]
+    code = call(start_run.main, first + forwarded(options, bool(adopted)))
+    if code:
+        print()
+        print("start_run.py failed; there is no sweep to continue.")
+        return code
+
+    if not adopted:
+        run_id = sweep_after(options.db, before)
+        if run_id is None:
+            print()
+            print("start_run.py made no new sweep in %s; nothing to continue."
+                  % options.db)
+            return 1
+
+    print()
+    print("#" * 70)
+    print("# start_run.py done -- run %d. Continuing it for %d more generation(s)."
+          % (run_id, generations))
+    print("#" * 70)
+    print()
+
+    second = ["--run", str(run_id), "--generations", str(generations)]
+    for assignment in options.settings:
+        second += ["--set", assignment]
+    code = call(continue_run.cli, second + forwarded(options, bool(adopted)))
+
+    print()
+    print("=" * 70)
+    print("full run of %d generation(s) %s in %.1fs -- run %d in %s"
+          % (generations + 1, "finished" if not code else "STOPPED",
+             time.time() - started, run_id, options.db))
+    print("python store.py --show %d" % run_id)
+    print("=" * 70)
+
+    # The search is over; this is the one question it could not answer about
+    # itself. Skipped when the search stopped early -- a half-finished sweep's
+    # best individual is not what the search found -- and when the sweep names
+    # no testing set, which is the only statement of which questions it was
+    # never judged on.
+    if not code:
+        code = test(options, run_id, bool(adopted))
+    return code
+
+
+def testing_set(db_path, run_id):
+    """The sweep's own TESTING_SET, or None if it named none.
+
+    The sweep's stored setting rather than settings.py's, for the reason every
+    step reads stored settings: the file it recorded at creation is the one its
+    `testing` split holds, and settings.py may have been repointed since.
+    """
+    conn = store.connect(db_path)
+    try:
+        return store.get_settings(conn, run_id).get("TESTING_SET")
+    finally:
+        conn.close()
+
+
+def testing_split(db_path, run_id):
+    """How many testing records the sweep itself holds, or None for none.
+
+    The question TESTING_SET answers for a sweep run from files, asked of the
+    database instead -- because an adopted sweep reads its questions out of its
+    own rows, and a setting naming a file those rows never came from is not a
+    statement about this run. A sweep whose settings name a testing file it
+    never stored has none as far as this pass is concerned, which is the same
+    thing db_datasets.repoint() decides.
+    """
+    conn = store.connect(db_path)
+    try:
+        held = [entry for entry in store.dataset_summary(conn, run_id)
+                if entry["split"] == "testing"]
+    finally:
+        conn.close()
+    return held[0]["records"] if held else None
+
+
+def test(options, run_id, adopted=False):
+    """Put the finished search in front of its testing split. -> an exit code.
+
+    Called as a library, in this interpreter, for the reason the other two are:
+    the pass launches each script with sys.executable, so a subprocess would be
+    one more chance to run it under the wrong Python.
+
+    A pass that stops itself -- nothing scored above the bar, no judge to grade
+    with -- is reported and returned, not swallowed: the search finished and
+    this did not, and saying so is the difference between a testing pass that
+    was skipped and one that failed.
+    """
+    if options.no_test:
+        return 0
+
+    # An adopted sweep is asked the same question of its rows rather than of
+    # its settings, and answers it with --from-db: the questions it was never
+    # judged on are the ones in its own `testing` split.
+    if adopted:
+        records = testing_split(options.db, run_id)
+        if not records:
+            print()
+            print("no testing pass: run %d holds no testing split, so nothing "
+                  "says which questions it was never judged on." % run_id)
+            print("    add one with: python add_dataset.py <file> --db %s "
+                  "--run %d --split testing" % (options.db, run_id))
+            return 0
+        dataset = "its own testing split (%d record(s))" % records
+        first = ["--from-db"]
+    else:
+        dataset = testing_set(options.db, run_id)
+        if not dataset:
+            print()
+            print("no testing pass: run %d names no TESTING_SET, so nothing says "
+                  "which questions it was never judged on." % run_id)
+            print("    set TESTING_SET in settings.py before a sweep, or run "
+                  "test_run_with_dataset.py against this one.")
+            return 0
+        first = [dataset]
+
+    print()
+    print("#" * 70)
+    print("# the search is done -- testing run %d against %s" % (run_id, dataset))
+    print("#" * 70)
+    print()
+
+    argv = first + ["--db", options.db, "--run", str(run_id),
+                    "--timeout", str(options.timeout)]
+    if options.test_min_quality is not None:
+        argv += ["--min-quality", str(options.test_min_quality)]
+    if options.limit:
+        # Means there what it means here: only the first few individuals, so a
+        # smoke test of the whole thing stays a smoke test.
+        argv += ["--limit", str(options.limit)]
+    if options.keep_scripts:
+        argv.append("--keep-scripts")
+    if options.force:
+        argv.append("--force")
+
+    code = call(test_run_with_dataset.main, argv)
+    if code:
+        print()
+        print("the search finished; the testing pass did not.")
+    return code
+
+
+def parse(argv):
+    parser = argparse.ArgumentParser(
+        description="Run a whole search: start_run.py for a new sweep and its first "
+                    "generation, then continue_run.py for the rest.")
+    parser.add_argument("--db", default=config.DB_PATH,
+                        help="database file (default %s)" % config.DB_PATH)
+    parser.add_argument("--run", type=int, default=None, metavar="ID",
+                        help="run the sweep the database already holds instead of "
+                             "creating one (0 = the latest). Its stored settings "
+                             "and its stored dataset are what the search uses; "
+                             "settings.py and the files under datasets/ are never "
+                             "read. The sweep must hold no individuals yet.")
+    parser.add_argument("--label", default=None,
+                        help="a note stored with the sweep, to find it again later")
+    parser.add_argument("--generations", type=int, default=None, metavar="N",
+                        help="generations for continue_run.py, on top of the one "
+                             "start_run.py runs (default: with --run, the sweep's own "
+                             "stored GENERATIONS; otherwise settings.py's, "
+                             "currently %d)" % config.GENERATIONS)
+    parser.add_argument("--set", action="append", default=[], dest="settings",
+                        metavar="NAME=VALUE",
+                        help="change one of the new sweep's stored settings before "
+                             "continuing it, e.g. --set SELECTION_COUNT=3")
+    parser.add_argument("--run-dir", default=None,
+                        help="folder for the generated scripts (default %s)"
+                             % config.DB_RUN_DIR)
+    parser.add_argument("--limit", type=int, default=0,
+                        help="process only the first N individuals of a generation")
+    parser.add_argument("--include-blocked", action="store_true",
+                        help="also run the ones marked BAD")
+    parser.add_argument("--include-unchanged", action="store_true",
+                        help="also run individuals whose chromosome has not changed "
+                             "since their last execution")
+    parser.add_argument("--keep-scripts", action="store_true",
+                        help="leave the generated scripts on disk after processing them")
+    parser.add_argument("--timeout", type=int, default=900,
+                        help="seconds to allow each script (default 900)")
+    parser.add_argument("--force", action="store_true",
+                        help="re-score answers that already have a quality")
+    parser.add_argument("--no-test", action="store_true",
+                        help="skip the testing pass at the end (it runs when the "
+                             "sweep has a testing split, and costs a base-model "
+                             "load per individual it tests)")
+    parser.add_argument("--test-min-quality", type=float, default=None, metavar="Q",
+                        help="test the individuals scoring above this (default: "
+                             "the sweep's own TESTING_MIN_QUALITY, falling back to "
+                             "settings.py's, currently %.2f)"
+                             % config.TESTING_MIN_QUALITY)
+    options = parser.parse_args(argv)
+    if options.generations is not None and options.generations < 1:
+        parser.error("--generations is %d; start_run.py's generation would be the whole "
+                     "run. Use start_run.py on its own for that." % options.generations)
+    if options.run is not None and options.label:
+        # create_run() is what writes a label, and --run creates nothing.
+        parser.error("--label names a sweep as it is created, and --run adopts one "
+                     "that already exists. Label it when you prepare the database.")
+    return options
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(cli())

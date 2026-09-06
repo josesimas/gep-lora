@@ -4,7 +4,7 @@ generate_runs.py - Turn a tree into a runnable script.
 Each individual becomes one self-contained script, written in the style of
 combination.py: load the base model once, attach the LoRAs the tree names, fold
 them together with PEFT's add_weighted_adapter, then chat through the resulting
-adapter. main.py calls plan() and render() here for every individual in a sweep
+adapter. start_run.py calls plan() and render() here for every individual in a sweep
 and stores what comes back; the script only reaches disk long enough to be run.
 
 The script itself comes from a template -- template_code.py by default -- which
@@ -86,7 +86,7 @@ def training_set_path(value=None):
     TRAINING_SET is a setting rather than a line in the templates, so the eval
     set can be repointed without editing generated-script code and a sweep
     records which prompts it was scored against. A relative value is taken from
-    this file's folder, the way main.py resolves DB_RUN_DIR, so it never depends
+    this file's folder, the way start_run.py resolves DB_RUN_DIR, so it never depends
     on the cwd a driver happened to be started from; an absolute one is used as
     it stands. None means whatever settings.py currently says -- callers holding
     a sweep's stored settings should pass that instead, or a resumed sweep would
@@ -526,13 +526,13 @@ def render(expression, steps, final, script_name, provenance, label,
     `weight_seed` is what the script's WEIGHT_SEED becomes. None leaves the
     script redrawing its blend weights from the OS every execution, so the same
     chromosome is judged under different weights each time. An int pins the draw,
-    which is how main.py makes a stored sweep repeatable -- it records the seed
+    which is how start_run.py makes a stored sweep repeatable -- it records the seed
     it stamped in here.
 
     `training_set` is what the script's TRAINING_SET becomes, resolved to an
     absolute path; None takes it from settings.py. `slots` is the same for
     LORA_SLOTS, `count` for TRAINING_COUNT, and `base_model` for BASE_MODEL.
-    main.py passes the sweep's stored values for all four, so a resumed sweep
+    start_run.py passes the sweep's stored values for all four, so a resumed sweep
     keeps reading the prompts, reading as many of them, blending the adapters
     and loading the model it was created with even if settings.py has since
     moved on.

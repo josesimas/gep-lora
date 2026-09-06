@@ -36,7 +36,7 @@ say how fit its population is and nothing at all about whether the search is
 getting anywhere. The history is the record of the run as a run -- what a
 fitness curve is drawn from.
 
-main.py calls this as a library:
+start_run.py calls this as a library:
 
     calculate_fitness.assign(conn, run_id)
 """

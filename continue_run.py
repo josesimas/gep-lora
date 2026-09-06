@@ -1,7 +1,7 @@
 """
 continue_run.py - Run the evolutionary loop on, generation after generation.
 
-    main.py          one sweep, from a fresh population through one generation
+    start_run.py     one sweep, from a fresh population through one generation
     continue_run.py  that sweep, carried on for as many generations as you ask
 
 One generation is every step but population, in pipeline order:
@@ -78,11 +78,11 @@ import sys
 import time
 
 import db_datasets
-import main
 import settings as config
+import start_run
 import store
 
-# One generation: every step but population, in the order main.py defines them.
+# One generation: every step but population, in the order start_run.py defines them.
 # Named rather than sliced, so a step inserted at the front of STEPS does not
 # silently join the loop.
 GENERATION = ("trees", "runs", "process", "evaluate", "fitness", "elitism",
@@ -93,7 +93,7 @@ def generation_steps(last=False):
     """The steps of one generation, in pipeline order.
 
     `last` trims the tail that builds the *next* generation
-    (main.NEXT_GENERATION: elitism, selection, mutation), because the last
+    (start_run.NEXT_GENERATION: elitism, selection, mutation), because the last
     generation of a run has no next generation to build. The sweep then comes
     to rest on the population that was actually scored, each individual still
     described by the script that earned its transcript -- rather than on a
@@ -101,11 +101,11 @@ def generation_steps(last=False):
     the state every reader of a finished sweep used to have to work around.
     """
     wanted = set(GENERATION)
-    steps = [step for step in main.STEPS if step.name in wanted]
+    steps = [step for step in start_run.STEPS if step.name in wanted]
     missing = wanted - {step.name for step in steps}
     if missing:
-        raise SystemExit("main.py has no step(s) named: %s" % ", ".join(sorted(missing)))
-    return main.without_next_generation(steps) if last else steps
+        raise SystemExit("start_run.py has no step(s) named: %s" % ", ".join(sorted(missing)))
+    return start_run.without_next_generation(steps) if last else steps
 
 
 def projection(size, generations, selection_count):
@@ -168,7 +168,7 @@ def announce(conn, run_id, conf, generations):
     rows = store.individuals(conn, run_id)
     if not rows:
         raise SystemExit("run %d holds no individuals -- there is nothing to "
-                         "continue. Start a sweep with: python main.py" % run_id)
+                         "continue. Start a sweep with: python start_run.py" % run_id)
 
     selection_count = conf.get("SELECTION_COUNT")
     sizes = projection(len(rows), generations, selection_count)
@@ -200,13 +200,13 @@ def announce(conn, run_id, conf, generations):
 def evolve(conn, run_id, conf, generations, options):
     """Run `generations` generations over one sweep. -> an exit code.
 
-    Stops at the first generation that fails, for the reason main.run() stops at
+    Stops at the first generation that fails, for the reason start_run.run() stops at
     the first step that fails: each one builds on the one before it, and a
     generation grown out of a broken one is not a result.
     """
     steps = generation_steps()
     final = generation_steps(last=True)
-    context = main.context_for(conn, run_id, conf, options)
+    context = start_run.context_for(conn, run_id, conf, options)
     started = time.time()
 
     for number in range(1, generations + 1):
@@ -225,7 +225,7 @@ def evolve(conn, run_id, conf, generations, options):
         print("#" * 70)
         print()
 
-        code = main.run(this_one, context)
+        code = start_run.run(this_one, context)
         if code:
             print()
             print("stopped in generation %d of %d, after %.1fs"
@@ -238,7 +238,7 @@ def evolve(conn, run_id, conf, generations, options):
         print("# generation %d done: population %d -> %d" % (number, size, grown))
         if this_one is final:
             print("# stopped after fitness: %s build the next generation and there"
-                  % ", ".join(main.NEXT_GENERATION))
+                  % ", ".join(start_run.NEXT_GENERATION))
             print("# is none, so the population is the one that was just scored")
         print()
 
@@ -282,7 +282,7 @@ def parse(argv):
     parser.add_argument("--run-dir", default=None,
                         help="folder for the generated scripts (default: the "
                              "sweep's own DB_RUN_DIR)")
-    # The steps read these off the options, exactly as they do when main.py is
+    # The steps read these off the options, exactly as they do when start_run.py is
     # the one driving.
     parser.add_argument("--limit", type=int, default=0,
                         help="process only the first N individuals of each generation")
@@ -336,7 +336,7 @@ def cli(argv=None):
         run_id = store.latest_run(conn) if options.run == 0 else options.run
         if run_id is None:
             raise SystemExit("%s holds no sweeps to continue. Start one with: "
-                             "python main.py" % conn.path)
+                             "python start_run.py" % conn.path)
         if store.get_run(conn, run_id) is None:
             raise SystemExit("no run %d in %s. Try: python store.py --list"
                              % (run_id, conn.path))

@@ -1,7 +1,7 @@
 """
 settings.py - The knobs for a complete run, in one place.
 
-main.py reads this module. Keeping the values here rather than at the top of it
+start_run.py reads this module. Keeping the values here rather than at the top of it
 means there is no second copy to drift, and it is what lets a sweep record the
 settings it ran under without listing them by hand -- snapshot() takes every
 upper-case name below, so a knob added here is a knob stored there.
@@ -286,7 +286,7 @@ PROCESS_RUN_PROGRESS_SECONDS = 5
 #
 # Like every setting here, this is frozen into a sweep when it starts: changing
 # it does nothing to a sweep already running, which is what keeps every fitness
-# number in one sweep comparable with the others. `python main.py --evaluators`
+# number in one sweep comparable with the others. `python start_run.py --evaluators`
 # lists what is registered.
 EVALUATOR = "similarity"
 

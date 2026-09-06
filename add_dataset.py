@@ -4,7 +4,7 @@ add_dataset.py - Put a dataset file into a sweep's `datasets` table.
 The one way records get into that table, from either end of a sweep's life:
 
   * `save_all()` stores the splits a sweep's settings name, and is what
-    `main.new_sweep()` calls as the sweep is created -- alongside the settings
+    `start_run.new_sweep()` calls as the sweep is created -- alongside the settings
     and for the same reason. A fitness number means *this blend, under these
     knobs, on these questions*, and a settings table that records TRAINING_SET
     records only **where** the questions were; the files go on being edited,
@@ -119,7 +119,7 @@ SPLIT_SETTINGS = {"training": "TRAINING_SET",
 def save_all(conn, run_id, conf, say=print):
     """Store every split a sweep's settings name -> datasets. -> how many.
 
-    Called by main.new_sweep() the moment a sweep is created, before its first
+    Called by start_run.new_sweep() the moment a sweep is created, before its first
     step: the files a sweep was judged on are half of what its fitness numbers
     mean, and they are not going to sit still.
 

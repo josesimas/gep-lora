@@ -2,8 +2,8 @@
 evaluators - Score an answer. Which way is a setting.
 
 The process step stores the question/answer pairs a blended model produced.
-This package grades them, and returns the number main.py writes back onto that
-exchange:
+This package grades them, and returns the number start_run.py writes back onto
+that exchange:
 
     question   "Help me organize my desktop."
     answer     "Before we lay anything out, ..."
@@ -45,8 +45,9 @@ step's own Context, for the one evaluator that needs more than the settings and
 the pending rows: llm_judge_baseline reads and fills the base-answer cache, so
 it needs the database and the run folder. Everything else ignores it.
 `score(item, prepared)` grades one exchange and returns `(quality, reason)`.
-Raising ValueError or RuntimeError fails that one exchange and no more: main.py
-counts it and moves on, which is what makes a half-scored sweep resumable.
+Raising ValueError or RuntimeError fails that one exchange and no more:
+start_run.py counts it and moves on, which is what makes a half-scored sweep
+resumable.
 
 Every module here keeps the same two names, `prepare` and `score`, because the
 file it lives in already says which evaluator they belong to. That is also what
@@ -62,7 +63,7 @@ unless the evaluate step is run with --force, so an interrupted sweep can simply
 be re-run. A sweep generated from template_code_mocked.py arrives already scored
 and never reaches an evaluator at all.
 
-Usage, which is all main.py does with it:
+Usage, which is all start_run.py does with it:
 
     evaluator = evaluators.get(conf.get("EVALUATOR"))
     prepared = evaluator.prepare(conf, pending, context)

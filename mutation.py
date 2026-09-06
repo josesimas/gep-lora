@@ -57,7 +57,7 @@ this chromosome has not been judged yet -- and both elitism and selection
 already read a missing fitness as no fitness, so a mutant simply waits its turn
 until process and evaluate have given it one of its own.
 
-main.py calls this as a library:
+start_run.py calls this as a library:
 
     mutation.apply(conn, run_id, rate, rng)
 """

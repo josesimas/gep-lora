@@ -18,7 +18,7 @@ pipeline behaviour, and update it when behaviour changes.
 The generated scripts need the venv **one level up**, outside this repo:
 
 ```bash
-D:\sage-is\loras\.venv\Scripts\python.exe main.py
+D:\sage-is\loras\.venv\Scripts\python.exe start_run.py
 ```
 
 Python 3.13 is first on PATH on this machine and has no torch/unsloth. `process_run.py`
@@ -32,13 +32,13 @@ steps (`population`, `trees`, `runs`) run under any Python 3.
 All commands run from the repo root.
 
 ```bash
-python main.py
+python start_run.py
 ```
 
 Whole pipeline:
 `population -> trees -> runs -> process -> evaluate -> fitness -> elitism -> selection
 -> mutation`, stopping at the first
-failure. `python main.py --list` shows the steps; naming steps runs a subset, always in
+failure. `python start_run.py --list` shows the steps; naming steps runs a subset, always in
 pipeline order regardless of typing order.
 
 Everything a sweep produces goes into one database, `run_db/gep.sqlite3` — the population,
@@ -48,18 +48,18 @@ so sweeps accumulate rather than replacing each other, and `--run` resumes one.
 The generated scripts are a cache with a life cycle: `store.materialise()` writes any that
 are missing or stale before `process` runs, and `store.remove_scripts()` deletes each one it
 processed afterwards, so a finished sweep leaves only the database. `--keep-scripts` opts
-out; `python main.py runs` brings them back. Only scripts that actually ran are removed —
+out; `python start_run.py runs` brings them back. Only scripts that actually ran are removed —
 ones skipped as `BAD` or held back by `--limit` stay.
 
 ```bash
 python continue_run.py --generations 3
 ```
 
-`main.py` runs a sweep through **one** generation, and because that generation is the whole
-run it stops after `fitness`: `main.NEXT_GENERATION` (`elitism`, `selection`, `mutation`)
+`start_run.py` runs a sweep through **one** generation, and because that generation is the whole
+run it stops after `fitness`: `start_run.NEXT_GENERATION` (`elitism`, `selection`, `mutation`)
 is the tail that builds the *next* generation, and there is none. `--next-generation` runs
-them anyway, which is what `full_run.py` passes and what you want before continuing a sweep
-by hand. Naming steps explicitly (`python main.py selection`) always runs exactly those.
+them anyway, which is what `main.py` passes and what you want before continuing a sweep
+by hand. Naming steps explicitly (`python start_run.py selection`) always runs exactly those.
 `continue_run.py` carries an existing sweep
 on, running `trees -> runs -> process -> evaluate -> fitness -> elitism -> selection ->
 mutation` per generation -- **except its last, which stops after `fitness`** for the same
@@ -68,9 +68,9 @@ reason. How many is `--generations`, then **the sweep's own stored `GENERATIONS`
 stored settings, so a sweep continued a week later runs the search it was set up to run and
 not the one whoever last edited `settings.py` had in mind; `--set GENERATIONS=N` changes it
 in writing, and the file is the fallback for a sweep stored before the setting existed.
-`full_run.py` reads it the same way when it adopts a sweep. It never draws a
+`main.py` reads it the same way when it adopts a sweep. It never draws a
 population and never creates a sweep -- it resumes one from the database (`--db`, `--run`)
-under the settings that sweep was created with, reusing `main.STEPS` and `main.run()` rather
+under the settings that sweep was created with, reusing `start_run.STEPS` and `start_run.run()` rather
 than a second copy of the driver. The `_run` suffix is forced: `continue` is a keyword, so a
 `continue.py` could never be imported. **The population is static** -- selection appends `n`
 copies plus one newcomer and culls that many again, so a generation ends the size it began
@@ -84,17 +84,17 @@ instead, which is how SELECTION_COUNT gets fixed mid-run without the sweep losin
 what it ran under.
 
 ```bash
-python full_run.py
+python main.py
 ```
 
-`main.py` then `continue_run.py` against the same sweep -- a whole search, `1 + GENERATIONS`
+`start_run.py` then `continue_run.py` against the same sweep -- a whole search, `1 + GENERATIONS`
 generations, in one command -- and then, when the sweep names a `TESTING_SET`,
 `test_run_with_dataset.py` against it. It calls all three as **libraries in this
 interpreter** (a
 subprocess would be another chance to run under the wrong Python, since `process` uses
 `sys.executable`), and hands the sweep on **by id** rather than by "the latest", so a
 database that gains a sweep in between cannot be picked up by mistake. `--label` goes to
-`main.py`, `--generations`/`--set` to `continue_run.py`, `--no-test`/`--test-min-quality`
+`start_run.py`, `--generations`/`--set` to `continue_run.py`, `--no-test`/`--test-min-quality`
 to the testing pass, the rest to both or all three. A failing first
 half stops the run.
 
@@ -108,7 +108,7 @@ mutation, so the individuals worth testing are the ones that were actually score
 is what their stored scripts still describe.
 
 ```bash
-python full_run.py --db dbtemplates/test_new_run.sqlite3
+python main.py --db dbtemplates/test_new_run.sqlite3
 ```
 
 Handed a database that is **already a sweep**, this runs it rather than starting a second
@@ -145,7 +145,7 @@ so `run_db/`, `run_testing/` and the rest of the repo are untouched, two prepare
 cannot tread on each other, and the results go back into the same file. A prepared database
 is then a whole experiment in one file plus one folder -- run it on another machine and you
 get the search it describes, not the one that machine's `settings.py` says. The folder is
-chosen in `main.context_for()`, which is the one place both drivers build a `Context`, so
+chosen in `start_run.context_for()`, which is the one place both drivers build a `Context`, so
 whichever of them is turning the crank keeps to it; `--run-dir` (and `--into` for the
 testing pass) still overrides. The folder is derived and disposable: delete it and the
 sweep is still whole.
@@ -159,7 +159,7 @@ rather than on `TESTING_SET` naming a file, which is the same question asked of 
 `--from-db` is the flag underneath it, and the three drivers take it on their own:
 
 ```bash
-python main.py --db <prepared> --run 1 --from-db
+python start_run.py --db <prepared> --run 1 --from-db
 python continue_run.py --db <prepared> --run 1 --from-db
 python test_run_with_dataset.py --db <prepared> --run 1 --from-db
 ```
@@ -212,7 +212,7 @@ question, the transcript with the judge's reasons, the script that earned it --
 then the fitness history, the population, the score distribution, the testing
 pass, the dataset and the settings. Derived and disposable: it writes nothing to
 the sweep, and reads through `store.py`'s helpers rather than its own SQL, bar a
-couple of read-only aggregates the way `main.py` and `test_run_with_dataset.py`
+couple of read-only aggregates the way `start_run.py` and `test_run_with_dataset.py`
 already do.
 
 **Where the leaf ranks come from is deliberate.** `slot_ranks()` parses them out
@@ -270,14 +270,14 @@ shows `quality` (the mean over the latest execution) beside `fitness` (the
 column the search reads) for the same reason.
 
 ```bash
-python main.py population trees runs
+python start_run.py population trees runs
 ```
 
 The fast half — everything before a base-model load. Use this while iterating on tree code
 or `template_code.py`.
 
 ```bash
-python main.py process --limit 3
+python start_run.py process --limit 3
 ```
 
 Smoke-test the expensive step against the latest sweep. `process` costs one base-model load
@@ -299,13 +299,13 @@ the script under `Popen` with `-u`, drains stdout and stderr on a thread each, a
 too. `process_run.Progress` turns that into the occasional line -- the model coming ready
 (always, with the blend's rank), the last prompt starting (always), and the running
 `prompt k/N` throttled to one per `PROCESS_RUN_PROGRESS_SECONDS` per script (`0` = milestones
-only). It formats; `main.py` prints, under a lock, because the callbacks arrive on the
+only). It formats; `start_run.py` prints, under a lock, because the callbacks arrive on the
 children's drain threads. **The transcript is never echoed** -- it belongs in the database.
 A killed script now keeps the output it had already printed, so a timeout stores a partial
 transcript rather than an empty one.
 
 `context.generation` ("2/5", or None) is set by `continue_run.py` around each generation and
-read only by `main.run()`'s step banner and the batch line. Display only: no step may behave
+read only by `start_run.run()`'s step banner and the batch line. Display only: no step may behave
 differently in one generation than another, and nothing stores it.
 
 Dry-run the whole pipeline by setting `TEMPLATE = "template_code_mocked.py"` in
@@ -388,7 +388,7 @@ six registered evaluators are local (`similarity`, `heuristic`); the other four
 (`llm_judge`, `llm_judge_reference`, `llm_judge_baseline`, `panel`) need an
 OpenAI-compatible judge endpoint (`JUDGE_BASE_URL`, defaulting to LMStudio at
 `http://172.22.208.1:1234/v1`). It is resumable either way — already-scored exchanges
-are skipped unless `--force` — and `python main.py --evaluators` lists what is
+are skipped unless `--force` — and `python start_run.py --evaluators` lists what is
 registered.
 
 The step also **gives up on an individual that opens badly**:
@@ -422,19 +422,19 @@ reward whoever lost their baseline.
 
 Population size for a full run is `COUNT` in `settings.py` (currently 10, kept small for
 iteration; the README's worked numbers assume 100). `settings.py` holds every knob the
-pipeline reads — add one there rather than at the top of `main.py`, or the sweep records a
+pipeline reads — add one there rather than at the top of `start_run.py`, or the sweep records a
 value it did not use.
 
 ## Architecture
 
-`main.py` is the entry point and the driver: it owns the `STEPS` list, the `Context` each
+`start_run.py` is the entry point and the driver: it owns the `STEPS` list, the `Context` each
 step gets, and the argument parser. `settings.py` is the one copy of the knobs; `store.py`
 owns the sqlite schema (`runs -> settings, datasets, individuals -> executions -> exchanges`,
 plus `fitness_history` and `test_results` hanging off `runs`, plus `baselines`, which hangs
 off nothing -- see the evaluate section), its
 helpers, and `--list/--show/--export`. Nothing else imports sqlite3.
 
-`add_dataset.save_all()` runs inside `main.new_sweep()`, before the first step: it stores
+`add_dataset.save_all()` runs inside `start_run.new_sweep()`, before the first step: it stores
 the dataset the sweep was given into `datasets`, alongside the settings and for the same
 reason -- the settings table records *where* the questions were, and the files go on being
 edited. One row per record, with the question (the user turn), the reference (the
@@ -471,7 +471,7 @@ tries the cwd first, because a path typed at a shell means what the shell means 
 [db_datasets.py](db_datasets.py) is the way back **out**, and the only other module that
 knows those rows can become a file again: `repoint()` writes each split beside the database
 and points a sweep's `*_SET` settings at what it wrote, which is how `--from-db` feeds the
-generated scripts and the evaluators from the database. See the `full_run.py --run` part of
+generated scripts and the evaluators from the database. See the `main.py --run` part of
 the Commands section for the rest of it. It reads through `store.dataset()` and writes no
 rows of its own, so `add_dataset.py` is still the only INSERT.
 
@@ -546,7 +546,7 @@ rows gives up as many as it has and grows by the difference -- which is what
 executions, exchanges and test_results cascade with the row. Two things survive -- the
 number, retired rather than reused (`store.next_number()` counts from `MAX(number)`), and
 its `fitness_history` rows, which hang off the *run* and are the only record of what each
-generation was. A culled individual's script file is deleted by `main.py` from the rows the
+generation was. A culled individual's script file is deleted by `start_run.py` from the rows the
 cull handed back (`store.discard_scripts()`), since `remove_scripts()` works from the
 population and those rows are gone.
 
@@ -597,7 +597,7 @@ ranks is expected and is culled by the usual `BAD` path.
   from either template. A relative value is resolved against the repo folder — for a slot, only when it
   really names a folder there, so an absolute path or a Hub repo id passes through as
   written. Both resolved values are stamped into each script as literals, so a script
-  carries real paths instead of walking up from wherever it lands. `main.py` passes the
+  carries real paths instead of walking up from wherever it lands. `start_run.py` passes the
   *sweep's stored* values, so editing `settings.py` cannot move the eval set, change how
   much of it counts, or swap the adapters under a sweep already running. **There is no `resolve_from_template()` any
   more** — nothing reads constants back out of the templates, because nothing that varies
@@ -648,7 +648,7 @@ generation, so turning it down while iterating cuts the eval half of a sweep
 proportionally — at the cost of a noisier fitness signal.
 
 **Change what every generated script does by editing `template_code.py`, then re-running
-`python main.py runs`.** Only touch the generator when the new part varies per individual.
+`python start_run.py runs`.** Only touch the generator when the new part varies per individual.
 
 `template_code_mocked.py` is the second template: same markers, same generated shape, same
 rank arithmetic and same `linear` guard — so the `ok`/`BAD` split is identical — but nothing
@@ -751,10 +751,10 @@ appeared to manage VRAM would be claiming to test something it cannot.
   reads the same lines for the `assistant` turn, which is the reference
   `llm_judge_reference` and `similarity` grade against. A script must never see that turn —
   handing a model the answer and then scoring its reply is marking its own homework.
-- Steps are added to `main.py`'s `STEPS` list as a `Step(name, callable, description)`,
+- Steps are added to `start_run.py`'s `STEPS` list as a `Step(name, callable, description)`,
   where the callable takes the `Context` — the connection, the run id, that sweep's settings,
   the run dir and the parsed options.
-- **`main.py` calls the other modules as libraries; none of them has a `main()`.** That is
+- **`start_run.py` calls the other modules as libraries; none of them has a `main()`.** That is
   what keeps the pipeline from writing text files: `build_population`, `draw`,
   `plan`/`render`, `launch`, `exchanges`, `Evaluator.score` are all pure enough to use directly. If a
   new step needs something out of one of them, extract a function there rather than teaching
@@ -767,7 +767,7 @@ appeared to manage VRAM would be claiming to test something it cannot.
   the settings form, relative with forward slashes); `test_lora.py` accepts
   `--lora Lora003` with or without the `loras/` prefix.
 - `run/`, `run_db/` and `run_real/` are gitignored, as is everything under
-  `loras/Lora00*/` except each folder's `main.py` and `inference.py` -- the ignore matches
+  `loras/Lora00*/` except each folder's `start_run.py` and `inference.py` -- the ignore matches
   the folders' *contents* (`loras/Lora00*/*`), because git cannot re-include a file whose
   parent directory is excluded. Adapter weights and the sweep database are not tracked.
   `run/` is only ever written by `test.py`.

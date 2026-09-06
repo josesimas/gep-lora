@@ -127,8 +127,8 @@ Windows host — on native Linux, with the judge on the same box, that is
 
 **Which commands need it.** Everything under [1. Train](#1-train-the-adapters),
 `test_lora.py`, and the `process` and `evaluate` steps — so in practice all of
-`full_run.py` and `continue_run.py`. The rest (`test.py`, `store.py`,
-`main.py population trees runs`, anything with the mocked template) runs on any
+`main.py` and `continue_run.py`. The rest (`test.py`, `store.py`,
+`start_run.py population trees runs`, anything with the mocked template) runs on any
 Python 3.
 
 Activate the venv before those commands — `.venv\Scripts\activate.bat` on
@@ -144,7 +144,7 @@ activation did not stick — a `(.venv)` prompt does not prove it. `where python
 full path to the interpreter — `.venv\Scripts\python.exe` or `.venv/bin/python` —
 always works regardless of PATH.
 
-This matters more than it looks: `main.py process` launches every generated
+This matters more than it looks: `start_run.py process` launches every generated
 script with `sys.executable`, so the wrong interpreter fails the whole population
 at once rather than one script.
 
@@ -221,7 +221,7 @@ population -> trees -> runs -> process -> evaluate -> fitness -> elitism -> sele
 The last generation of a run stops after `fitness`. The three steps behind it
 build the *next* generation, so a finished run leaves the population that was
 actually scored, each individual still described by the script that earned its
-transcript. `python main.py` on its own is a one-generation run and stops there
+transcript. `python start_run.py` on its own is a one-generation run and stops there
 too; `--next-generation` runs them anyway.
 
 ### 3a. Dry run
@@ -233,7 +233,7 @@ TEMPLATE = "template_code_mocked.py"
 ```
 
 ```bash
-python full_run.py --label "mock"
+python main.py --label "mock"
 ```
 
 No model, no judge, no GPU, finishes in seconds. Scores are random — the point is
@@ -244,7 +244,7 @@ that the pipeline runs. Set `TEMPLATE` back to `"template_code.py"` afterwards.
 `EVALUATOR` in `settings.py` picks one of five ways:
 
 ```bash
-python main.py --evaluators
+python start_run.py --evaluators
 ```
 
 | `EVALUATOR` | What it does | Needs an endpoint |
@@ -304,15 +304,15 @@ take, so it grows the population by two a generation.
 ### 3e. Smoke test
 
 ```bash
-python main.py population trees runs
+python start_run.py population trees runs
 ```
 
 ```bash
-python main.py process --limit 1 --run 0 --keep-scripts
+python start_run.py process --limit 1 --run 0 --keep-scripts
 ```
 
 ```bash
-python main.py evaluate fitness --run 0
+python start_run.py evaluate fitness --run 0
 ```
 
 `--run 0` is the latest sweep.
@@ -320,7 +320,7 @@ python main.py evaluate fitness --run 0
 ### 3f. Full run
 
 ```bash
-python full_run.py --label "poem blends 1"
+python main.py --label "poem blends 1"
 ```
 
 `1 + GENERATIONS` generations. Flags: `--generations N`, `--set NAME=VALUE`,
@@ -331,11 +331,11 @@ Editing `settings.py` does not affect a sweep already created. Use `--set`.
 ### 3g. Full run from a prepared database
 
 ```bash
-python full_run.py --db dbtemplates/test_new_run.sqlite3
+python main.py --db dbtemplates/test_new_run.sqlite3
 ```
 
 A *prepared* database is one holding a sweep with settings, a dataset and no
-individuals. Point `full_run.py` at one and it runs that sweep rather than
+individuals. Point `main.py` at one and it runs that sweep rather than
 starting a second one beside it — its stored settings *and* its stored dataset
 rows, so `settings.py` and `datasets/` are not read, and the results go back into
 the same file.
@@ -355,7 +355,7 @@ Prepare a database by creating a sweep and adding its splits with
 `add_dataset.py`, or copy `dbtemplates/test_new_run.sqlite3` and edit its
 `settings` table.
 
-The flag underneath it is `--from-db`, which `main.py`, `continue_run.py` and
+The flag underneath it is `--from-db`, which `start_run.py`, `continue_run.py` and
 `test_run_with_dataset.py` each take with `--run`.
 
 Resume:
@@ -391,7 +391,7 @@ improved — `individuals.fitness` only holds the current generation.
 Run the winning blend by hand (needs the venv):
 
 ```bash
-python main.py runs --run 0
+python start_run.py runs --run 0
 ```
 
 ```bash

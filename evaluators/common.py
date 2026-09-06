@@ -77,7 +77,7 @@ class Prepared:
         # {question key: what the base model said} -- the control
         # llm_judge_baseline grades against, read out of the database once.
         self.baselines = baselines or {}
-        self.notes = list(notes)      # lines main.py prints before scoring
+        self.notes = list(notes)      # lines start_run.py prints before scoring
 
 
 class Evaluator:
@@ -343,7 +343,7 @@ def needs_grading(pending):
     """Whether any pending exchange has an answer worth spending a call on.
 
     An all-blank set -- a sweep where every script failed -- is scored 0.0 by
-    main.py without anyone being asked, and a mocked sweep arrives scored, so
+    start_run.py without anyone being asked, and a mocked sweep arrives scored, so
     neither should make the step demand an endpoint that need not be up.
     """
     return any((row["answer"] or "").strip() for row in pending)

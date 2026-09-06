@@ -3,8 +3,8 @@ draw_trees.py - Draw one individual as a tree.
 
 Rebuilds a chromosome with the same decoder that generated it and lays it out
 the way plan.txt draws them: the expression, a blank line, then one row per
-level of the tree. main.py stores that drawing on the individual, so a sweep
-carries a readable picture of every tree it grew.
+level of the tree. start_run.py stores that drawing on the individual, so a
+sweep carries a readable picture of every tree it grew.
 
     CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
 

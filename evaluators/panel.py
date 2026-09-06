@@ -60,7 +60,7 @@ def score(item, prepared):
     A member that fails is dropped rather than fatal: a panel that loses one
     model still has a score, and losing the whole exchange because one endpoint
     hiccupped would cost the individual an answer its rivals kept. Only a panel
-    where *nobody* answered fails, which main.py counts like any other failure.
+    where *nobody* answered fails, which start_run.py counts like any other failure.
     """
     conf = prepared.conf
     reference = common.reference_for(item, prepared) if prepared.references else None

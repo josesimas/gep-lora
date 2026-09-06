@@ -3,7 +3,7 @@ generate_population.py - The alphabet, the encoding, and the random draw.
 
 This is the root module of the pipeline: it owns the symbols an individual is
 made of, the Node type, and the encode/decode pair everything else reads trees
-with. main.py calls build_population() for a sweep's population and decode() for
+with. start_run.py calls build_population() for a sweep's population and decode() for
 each tree; there is no second parser anywhere.
 
 Encoding

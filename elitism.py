@@ -23,7 +23,7 @@ transcripts again here would be a second, quietly different definition of "best"
 -- if the fitness rule changes, it changes in calculate_fitness.py and this step
 follows it without knowing that it did.
 
-main.py calls this as a library:
+start_run.py calls this as a library:
 
     elitism.elect(conn, run_id)
 """

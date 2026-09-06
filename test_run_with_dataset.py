@@ -46,7 +46,7 @@ compare a testing answer with a training question's reference.
 `test_answers` is the view that reads the graded transcripts back one answer at
 a time.
 
-Nothing here is a pipeline step. main.py runs a sweep; this runs *after* one,
+Nothing here is a pipeline step. start_run.py runs a sweep; this runs *after* one,
 against a sweep already in the database, and touches neither the population nor
 any fitness number -- which is why the results live in their own table rather
 than in `executions`, where fitness, elitism and selection would find them and
@@ -285,7 +285,7 @@ def run_all(conn, run_id, rows, run_dir, dataset, prompts, conf, options,
 class _Context:
     """What an evaluator's prepare() is handed, for a pass that has no Context.
 
-    main.py builds a real one per step; this is the same five attributes for a
+    start_run.py builds a real one per step; this is the same five attributes for a
     script that is not a step. Only llm_judge_baseline looks at it -- it reads
     and fills the cache of base-model answers, so it wants the database, the
     folder to run a baseline script in, and whether to keep it.
@@ -557,7 +557,8 @@ def main(argv=None):
                              "those rows are already what it read.")
     parser.add_argument("--evaluator", default=None, metavar="NAME",
                         help="score with this evaluator instead of the sweep's "
-                             "own EVALUATOR (python main.py --evaluators lists them)")
+                             "own EVALUATOR (python start_run.py --evaluators "
+                             "lists them)")
     parser.add_argument("--no-score", action="store_true",
                         help="run the scripts and store the answers, leaving "
                              "them ungraded for a later pass")

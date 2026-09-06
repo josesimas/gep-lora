@@ -5,7 +5,7 @@
 #~     python generate_runs.py --template template_code_mocked.py
 #~
 #~ What it is for: exercising the pipeline -- generate_runs -> process_run ->
-#~ evaluators, or `python main.py` end to end -- in seconds instead of hours,
+#~ evaluators, or `python start_run.py` end to end -- in seconds instead of hours,
 #~ with no GPU, no base-model load and no judge endpoint. Use it when what you
 #~ are testing is the plumbing, never when you are testing a blend.
 #~

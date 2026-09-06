@@ -153,10 +153,10 @@ about VRAM; the note where `_compact()` would go says so.
 
 Run everything from `project/`.
 
-### 0. `main.py` — the whole pipeline
+### 0. `start_run.py` — the whole pipeline
 
 ```bash
-python main.py
+python start_run.py
 ```
 
 Runs the steps in order — population, trees, runs, process, evaluate,
@@ -165,25 +165,25 @@ before it.
 
 **It stops after `fitness`**, and the three steps after it are the reason:
 `elitism`, `selection` and `mutation` do not describe this generation, they
-build the *next* one, and `main.py` on its own is a run of one generation with
+build the *next* one, and `start_run.py` on its own is a run of one generation with
 no next one. Stopping there leaves the sweep holding the individuals that were
 actually scored, each still described by the script that earned its transcript
 — which is what `store.py --export`, the HTML report and
 `test_run_with_dataset.py` all want to read.
 
 ```bash
-python main.py --next-generation
+python start_run.py --next-generation
 ```
 
 runs them anyway, leaving a population bred and varied for another generation.
-That is what `full_run.py` passes, and what you want before carrying a sweep on
-by hand. Naming steps explicitly always runs exactly those: `python main.py
+That is what `main.py` passes, and what you want before carrying a sweep on
+by hand. Naming steps explicitly always runs exactly those: `python start_run.py
 selection` selects, flag or no flag.
 
 `process` and `evaluate` are the slow ones: `process` executes the generated
 scripts, one base-model load per individual — `PROCESS_RUN_BATCH_SIZE` of them
-at a time — and `evaluate` then makes one grading call per answer. A full `python main.py` is therefore a long operation,
-and `python main.py population trees runs` stops short of both. `fitness`,
+at a time — and `evaluate` then makes one grading call per answer. A full `python start_run.py` is therefore a long operation,
+and `python start_run.py population trees runs` stops short of both. `fitness`,
 and `elitism`, `selection` and `mutation` behind it, work over what they stored
 and cost nothing.
 
@@ -192,12 +192,12 @@ with `sys.executable`, so the wrong interpreter fails every individual. It now
 checks this up front rather than discovering it once per individual.
 
 ```bash
-python main.py runs
+python start_run.py runs
 ```
 
 Runs a subset. Handy after editing `template_code.py`, when the population is
 still good. Steps always execute in pipeline order regardless of how you type
-them, and `python main.py --list` shows them without running anything.
+them, and `python start_run.py --list` shows them without running anything.
 
 A run that includes `population` starts a new sweep; one that does not resumes
 the most recent one, or the one `--run` names. See
@@ -328,7 +328,7 @@ says so. Those rows are what that sweep was built on, and a dataset changing
 under a finished sweep is the thing the table exists to prevent; adding the
 split that was missing is a different act from rewriting the one that was there.
 
-**Adding a step.** Append a `Step(name, callable, description)` to `main.py`'s
+**Adding a step.** Append a `Step(name, callable, description)` to `start_run.py`'s
 `STEPS`. The callable takes the `Context` — the connection, the run id, the
 settings that sweep was created with, the run folder and the parsed options:
 
@@ -429,7 +429,7 @@ templates and `template_baseline.py`, the control `llm_judge_baseline` grades
 against.
 
 To change what every generated script looks like, edit `template_code.py` and
-re-run `python main.py runs`. Only add code to the generator itself when the new
+re-run `python start_run.py runs`. Only add code to the generator itself when the new
 part varies per individual.
 
 #### `template_code_mocked.py` — the dry run
@@ -473,11 +473,11 @@ the local ones never reach for one at all.
 
 ### 4. `process_run.py` → `executions`, `exchanges`
 
-The `runs` step writes the scripts; this one runs them. `main.py` hands each
+The `runs` step writes the scripts; this one runs them. `start_run.py` hands each
 script to `process_run.launch()` and files what it said back into the database.
 
 ```bash
-python main.py process --limit 3
+python start_run.py process --limit 3
 ```
 
 | Option | Default | Meaning |
@@ -638,7 +638,7 @@ Scores every answer. Only the most recent execution of each individual is
 scored; older ones keep the scores they were given.
 
 ```bash
-python main.py evaluate
+python start_run.py evaluate
 ```
 
 **How an answer is scored is a setting.** `evaluators/` is a registry —
@@ -646,7 +646,7 @@ python main.py evaluate
 and `EVALUATOR` in `settings.py` names the one a sweep uses:
 
 ```bash
-python main.py --evaluators     # what is registered, and which one is current
+python start_run.py --evaluators     # what is registered, and which one is current
 ```
 
 | `EVALUATOR` | What it does | Needs |
@@ -690,7 +690,7 @@ of them on its own merits. Every knob is in `settings.py`:
 | `JUDGE_RESPONSE_FORMAT` | `{"type": "json_object"}` | `None` for an endpoint that rejects it |
 | `JUDGE_ABANDON_FRACTION` | `0.1` | give up on an individual whose first 10% of graded answers all score 0 |
 | `JUDGE_SYSTEM_PROMPT` | see the file | **the rubric the search selects on** |
-| `main.py --force` | off | re-score answers that already have a quality |
+| `start_run.py --force` | off | re-score answers that already have a quality |
 
 The API key is the one judge setting that is *not* in `settings.py`: a sweep
 writes its settings into the database, so the key is read from the
@@ -959,7 +959,7 @@ comparable number per individual — so this step folds each transcript into its
 mean:
 
 ```bash
-python main.py fitness
+python start_run.py fitness
 ```
 
 > fitness = the average `quality` across the exchanges of the individual's most
@@ -1018,7 +1018,7 @@ before the sweep is done, so a history read through a join back to
 
 **Nothing counts generations for you**, because until now nothing needed to: a
 sweep is a population that keeps being rewritten in place, and neither
-`main.py` nor `continue_run.py` stores a generation number. The count is
+`start_run.py` nor `continue_run.py` stores a generation number. The count is
 derived in `store.fitness_generation()` from the one thing that dates a round
 — the **highest individual number** the population holds, which selection
 always leaves higher than it found it. Numbers are handed out from the top and
@@ -1032,7 +1032,7 @@ at `COUNT` forever, and dating a round by it would file every generation as a
 restatement of the first — one history row, overwritten once a generation, and
 no curve at all. The first snapshot is generation 1; a later one is a **new** generation
 if the population has grown since the last, and the **same** generation
-restated if it has not. That is what makes `python main.py fitness` — cheap,
+restated if it has not. That is what makes `python start_run.py fitness` — cheap,
 and a reasonable thing to redo after a re-scored `evaluate` — rewrite the
 current generation instead of inventing another one.
 
@@ -1075,7 +1075,7 @@ SELECT generation, recorded_at, population, MAX(fitness) AS best, AVG(fitness) A
 Names the one individual this generation carries forward:
 
 ```bash
-python main.py elitism
+python start_run.py elitism
 ```
 
 > `is_best = 1` for one individual with the highest fitness, `0` for every other
@@ -1118,7 +1118,7 @@ this step follows it without knowing that it did.
 Fitness-proportionate selection, the classic roulette wheel:
 
 ```bash
-python main.py selection
+python start_run.py selection
 ```
 
 Every individual gets a slice of the wheel as wide as its fitness; the wheel is
@@ -1229,7 +1229,7 @@ answers to a question the child no longer asks. Re-deriving them from the
 chromosome, for every individual, is exactly what this does:
 
 ```bash
-python main.py trees runs
+python start_run.py trees runs
 ```
 
 Two consequences of inheriting the rest, both of which the next run of the
@@ -1247,7 +1247,7 @@ relevant step clears up, and neither of which is a reason to hold the copy back:
 **Because it appends more than it removes, the step is not idempotent.**
 Running it twice runs two rounds, and the second culls what the first left.
 That is what a second generation *is*, so it is deliberate — but `python
-main.py selection` is something you do on purpose, not something you repeat to
+start_run.py selection` is something you do on purpose, not something you repeat to
 be sure it took.
 
 An individual whose fitness is `0.0` has a slice of width zero and can never be
@@ -1273,7 +1273,7 @@ round still draws its own parents rather than the first round's again.
 Selection makes copies; mutation is what makes them worth having.
 
 ```bash
-python main.py mutation
+python start_run.py mutation
 ```
 
 Every symbol of every non-elite chromosome is offered a chance, `MUTATION_RATE`,
@@ -1345,7 +1345,7 @@ Its `tree`, `script_source` and `rank` are stale too, but those are only
 descriptions and are re-derived wholesale:
 
 ```bash
-python main.py trees runs
+python start_run.py trees runs
 ```
 
 Note that `fitness` reads the individual's **most recent execution**, so it must
@@ -1360,7 +1360,7 @@ and put the stale score back.
 
 ### 10. `continue_run.py` → generation after generation
 
-`main.py` runs a sweep from a fresh population through **one** generation.
+`start_run.py` runs a sweep from a fresh population through **one** generation.
 `continue_run.py` carries that sweep on:
 
 ```bash
@@ -1434,7 +1434,7 @@ python continue_run.py --db run_real/gep.sqlite3 --run 3 --generations 5
 | `--set NAME=VALUE` | none | change one of the sweep's stored settings, e.g. `--set SELECTION_COUNT=3` |
 
 `--limit`, `--include-blocked`, `--include-unchanged`, `--keep-scripts`,
-`--timeout` and `--force` are there too, and mean what they mean in `main.py`
+`--timeout` and `--force` are there too, and mean what they mean in `start_run.py`
 — the steps read them off the options either way.
 
 #### Watch the size
@@ -1474,51 +1474,51 @@ the earlier generations did stays in the database.
 The `_run` suffix is not decoration — `continue` is a Python keyword, so a
 `continue.py` could be run but never imported.
 
-### 11. `full_run.py` → the whole search, one command
+### 11. `main.py` → the whole search, one command
 
-`main.py` and `continue_run.py`, in that order, against the same sweep:
+`start_run.py` and `continue_run.py`, in that order, against the same sweep:
 
 ```bash
-python full_run.py
+python main.py
 ```
 
 which is
 
 ```bash
-python main.py
-python continue_run.py --run <the sweep main.py just made>
+python start_run.py
+python continue_run.py --run <the sweep start_run.py just made>
 ```
 
-so a full run is **1 + `GENERATIONS`** generations — `main.py`'s own turn of the
+so a full run is **1 + `GENERATIONS`** generations — `start_run.py`'s own turn of the
 crank, then the ones `continue_run.py` adds. `--generations` controls the second
-half; there is no way to have fewer than the one `main.py` runs, because drawing
-a population and leaving it unjudged would not be a generation. (Use `main.py`
+half; there is no way to have fewer than the one `start_run.py` runs, because drawing
+a population and leaving it unjudged would not be a generation. (Use `start_run.py`
 on its own for that.)
 
 ```bash
-python full_run.py --generations 3
-python full_run.py --db run_real/gep.sqlite3 --label "overnight"
-python full_run.py --limit 2 --generations 1     # a smoke test of the lot
+python main.py --generations 3
+python main.py --db run_real/gep.sqlite3 --label "overnight"
+python main.py --limit 2 --generations 1     # a smoke test of the lot
 ```
 
 It calls the two drivers **as libraries, in this interpreter**. That matters:
 `process` launches every generated script with `sys.executable`, so a subprocess
 would be one more chance to run the search under the wrong Python. Whatever you
 start this with is what the whole sweep uses — so it still wants the venv's
-python, for the same reason `main.py` does.
+python, for the same reason `start_run.py` does.
 
-The sweep is handed on **by id, not by "the latest one"**: `main.py`'s new sweep
+The sweep is handed on **by id, not by "the latest one"**: `start_run.py`'s new sweep
 is looked up once it exists and named explicitly, so a database that gains a
 sweep from somewhere else in between cannot be picked up by mistake. Running
-`full_run.py` twice into one database leaves two sweeps side by side, each
+`main.py` twice into one database leaves two sweeps side by side, each
 continued only by its own half of the run.
 
-Options go to whichever driver understands them — `--label` to `main.py`,
+Options go to whichever driver understands them — `--label` to `start_run.py`,
 `--generations` and `--set` to `continue_run.py`, and `--db`, `--run-dir`,
 `--limit`, `--include-blocked`, `--include-unchanged`, `--keep-scripts`,
 `--timeout` and `--force` to both, meaning there what they mean there.
 
-A failing half stops the run: if `main.py` cannot produce a sweep there is
+A failing half stops the run: if `start_run.py` cannot produce a sweep there is
 nothing to continue, and its exit code comes straight back out.
 
 #### And then the testing pass
@@ -1547,8 +1547,8 @@ for one run and `--no-test` skips the pass entirely; `--db`, `--limit`,
 `--keep-scripts`, `--timeout` and `--force` reach it too.
 
 ```bash
-python full_run.py --no-test                  # the search alone, as before
-python full_run.py --test-min-quality 0.7     # test fewer of them
+python main.py --no-test                  # the search alone, as before
+python main.py --test-min-quality 0.7     # test fewer of them
 ```
 
 The pass runs only if the search itself finished — a half-finished sweep's best
@@ -1558,7 +1558,7 @@ does not, that is said in as many words and the exit code is the pass's.
 #### Running a database that is already a sweep
 
 ```bash
-python full_run.py --db dbtemplates/test_new_run.sqlite3
+python main.py --db dbtemplates/test_new_run.sqlite3
 ```
 
 A database can be **prepared** rather than produced: a run row, its settings, its
@@ -1566,7 +1566,7 @@ dataset, and no individuals. Everything a search needs, and none of the search.
 `dbtemplates/test_new_run.sqlite3` is one of those — 49 settings and a 60-record
 `training` split, waiting for a population.
 
-Handed one of those, `full_run.py` **runs it** rather than starting a second sweep
+Handed one of those, `main.py` **runs it** rather than starting a second sweep
 beside it. `--db <a prepared database>` means "run this"; the alternative would be
 a stranger's sweep turning up in somebody's experiment file. `--run 0` (or
 `--run N`) says the same thing out loud and takes any sweep by id.
@@ -1574,7 +1574,7 @@ a stranger's sweep turning up in somebody's experiment file. `--run 0` (or
 The rule is **the latest sweep having no individuals**. Anything else is a
 database to start a new sweep in, exactly as before — one that does not exist
 yet, one holding no sweeps, one whose latest sweep has a population — so
-`full_run.py --db run_real/gep.sqlite3` goes on meaning what it meant. `--label`
+`main.py --db run_real/gep.sqlite3` goes on meaning what it meant. `--label`
 suppresses it too, since only a sweep being created can be given one.
 
 From there the database is the only thing the run reads itself out of:
@@ -1593,7 +1593,7 @@ machine's `settings.py` happens to say.
 
 ```
 ======================================================================
-full run: main.py, then continue_run.py for 5 more generation(s)
+full run: start_run.py, then continue_run.py for 5 more generation(s)
 ======================================================================
 
 run 1 in dbtemplates/test_new_run.sqlite3 is prepared -- settings and a dataset, no individuals -- so this runs it
@@ -1624,7 +1624,7 @@ dbtemplates/
 `run_db/`, `run_testing/` and the rest of the repo are untouched; two prepared
 databases cannot tread on each other; and the caches the child processes drop in
 their working directory land there as well, since each script is launched with
-the run folder as its cwd. The folder is chosen in `main.context_for()` — the one
+the run folder as its cwd. The folder is chosen in `start_run.context_for()` — the one
 place both drivers build a `Context` — so whichever of them is turning the crank
 keeps to it. `--run-dir` (and `--into` for the testing pass) still overrides.
 
@@ -1651,7 +1651,7 @@ than on `TESTING_SET` naming a file — the same question, asked of the rows.
 their own:
 
 ```bash
-python main.py --db <prepared> --run 1 --from-db
+python start_run.py --db <prepared> --run 1 --from-db
 python continue_run.py --db <prepared> --run 1 --from-db
 python test_run_with_dataset.py --db <prepared> --run 1 --from-db
 ```
@@ -1755,7 +1755,7 @@ Bad input is reported rather than half-processed:
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
-`launch`, `score` — and `main.py` is what calls them and puts the results here.
+`launch`, `score` — and `start_run.py` is what calls them and puts the results here.
 
 ```
 runs          one sweep: when, which template, which interpreter, which commit
@@ -1848,7 +1848,7 @@ whatever `settings.py` says now. That is what makes a resumed sweep still be the
 same sweep.
 
 ```bash
-python main.py process evaluate
+python start_run.py process evaluate
 ```
 
 Resumes the most recent sweep; `--run 3` names one instead.
@@ -1870,14 +1870,14 @@ holding the database and nothing else — no spent scripts piling up, and no sta
 script for someone to run by hand a week later.
 
 ```bash
-python main.py process --keep-scripts
+python start_run.py process --keep-scripts
 ```
 
 keeps them when you want to read or re-run one. Otherwise they come back from
 the database on demand:
 
 ```bash
-python main.py runs
+python start_run.py runs
 ```
 
 Only the scripts that actually ran are removed. Ones skipped as `BAD`, or left
@@ -2167,7 +2167,7 @@ D:\sage-is\loras\.venv\Scripts\python.exe run_db\run_004.py "Help me plan my wee
 ```
 
 `process` deletes each script it has run, so bring one back with
-`python main.py runs` (or keep them with `--keep-scripts`) before running it by
+`python start_run.py runs` (or keep them with `--keep-scripts`) before running it by
 hand.
 
 ### PATH gotcha
@@ -2286,9 +2286,9 @@ EVAL_PROMPTS = _prompts(TRAINING_SET)
 one knob, resolved once by `generate_runs.training_set_path()` (relative to the
 repo folder unless it is already absolute) and written into every script as a
 literal. Repointing the eval set is therefore a settings change followed by
-`python main.py runs`, and the sweep records which prompts it was scored against,
+`python start_run.py runs`, and the sweep records which prompts it was scored against,
 which matters because the prompts are half of what a fitness number means. A
-resumed sweep keeps reading its own stored value: `main.py` passes
+resumed sweep keeps reading its own stored value: `start_run.py` passes
 `conf["TRAINING_SET"]`, so editing `settings.py` cannot silently move the eval
 set out from under a sweep already under way.
 
@@ -2308,7 +2308,7 @@ the dataset's own answer, a judge shown what the base model said and asked how
 much the blend improved on it, overlap with that answer, local checks, or a
 panel.
 The registry and every knob behind it are described under
-[`evaluators/`](#5-evaluators--exchangesquality) above; `python main.py
+[`evaluators/`](#5-evaluators--exchangesquality) above; `python start_run.py
 --evaluators` lists what is registered. It is the setting the search's direction
 hangs from, so it is worth choosing before a long run rather than after one.
 
@@ -2331,9 +2331,9 @@ warning — the effective cap is unchanged.
 | Path | What it is |
 |---|---|
 | `plan.txt` | the original spec |
-| `main.py` | the entry point and the driver; add future steps to its `STEPS` list |
+| `start_run.py` | the entry point and the driver; add future steps to its `STEPS` list |
 | `continue_run.py` | runs the generation loop on over a sweep already in the database |
-| `full_run.py` | main.py, continue_run.py, then the testing pass — a whole search in one command |
+| `main.py` | start_run.py, continue_run.py, then the testing pass — a whole search in one command |
 | `settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
 | `store.py` | the database: schema, helpers, `--list/--show/--export` |
 | `generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database |
@@ -2365,7 +2365,7 @@ warning — the effective cap is unchanged.
 
 ### Pipeline
 
-`main.py` runs all of this in order. Every module below is a library it calls;
+`start_run.py` runs all of this in order. Every module below is a library it calls;
 the arrows end in tables, not files.
 
 ```
@@ -2401,8 +2401,8 @@ test_run_with_dataset.py              -->  test_results (the best individuals,
 test.py  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
 
 continue_run.py  -->  that whole column again, once per generation
-full_run.py      -->  main.py, continue_run.py, then the testing pass
-full_run.py --db <a prepared database>
+main.py          -->  start_run.py, continue_run.py, then the testing pass
+main.py --db <a prepared database>
                  -->  the same, into the sweep that database already holds:
                       its settings and its stored dataset, nothing local, and
                       everything on disk in one folder beside the database
@@ -2411,19 +2411,19 @@ full_run.py --db <a prepared database>
 Running the whole thing:
 
 ```bash
-python main.py
+python start_run.py
 ```
 
 Or one stage at a time — the same steps, named:
 
 ```bash
-python main.py population trees runs
+python start_run.py population trees runs
 ```
 
 ```bash
-python main.py process --limit 3
+python start_run.py process --limit 3
 ```
 
 ```bash
-python main.py evaluate
+python start_run.py evaluate
 ```

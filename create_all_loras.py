@@ -29,7 +29,7 @@ What varies
                            own length.
 
 Each adapter is trained in its own process. That is not the interpreter dodge
-full_run.py makes -- sys.executable is this same python either way -- it is
+main.py makes -- sys.executable is this same python either way -- it is
 memory: a training run holds the base model, the optimiser and the gradients,
 and letting the process exit is the one reliable way to give all of it back
 before the next load.
@@ -299,7 +299,7 @@ def report(results, options):
               "as they are.")
     else:
         print("\nPaste that into settings.py's LORA_SLOTS, then re-run "
-              "`python main.py runs` so the generated scripts pick it up.")
+              "`python start_run.py runs` so the generated scripts pick it up.")
 
 
 def parse_args(argv=None):

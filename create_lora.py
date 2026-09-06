@@ -353,7 +353,7 @@ def main(argv=None):
           "LORA_SLOTS (mind which rank you displace -- it decides which LIN "
           "combinations are legal):")
     print("    " + slot_line(options.folder))
-    print("then re-run `python main.py runs` so the generated scripts pick it up.")
+    print("then re-run `python start_run.py runs` so the generated scripts pick it up.")
     return 0
 
 

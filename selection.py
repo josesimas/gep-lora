@@ -92,7 +92,7 @@ That inheritance is meant to be *spent*, not kept. The copies exist for whatever
 comes next to vary, and a copy that is varied has a chromosome its inherited
 tree, script, rank and fitness no longer describe -- they are the parent's
 answers to a question the child no longer asks. Re-deriving them is what
-`python main.py trees runs` does, from the chromosome, for every individual;
+`python start_run.py trees runs` does, from the chromosome, for every individual;
 until then a copy carries its parent's, including the script name, so two rows
 can name the same run_NNN.py and the same weight seed while they are still the
 same chromosome anyway.
@@ -106,7 +106,7 @@ A round replacing what it adds does not make the step idempotent: running it
 twice runs two rounds of selection, and the second one culls what the first one
 left -- the population comes out the same size and made of different
 individuals. That is what a second generation *is*, so it is deliberate
--- but it does mean `python main.py selection` is a thing you do on purpose,
+-- but it does mean `python start_run.py selection` is a thing you do on purpose,
 not a thing you repeat to be sure it took.
 
 Zero fitness
@@ -121,7 +121,7 @@ which individuals are the fit ones cannot be trusted to say which are the weak
 ones either, and one that culled on that basis would empty a population instead
 of holding it steady.
 
-main.py calls this as a library:
+start_run.py calls this as a library:
 
     selection.select(conn, run_id, count, rng, conf)
 """

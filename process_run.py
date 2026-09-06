@@ -1,7 +1,7 @@
 """
 process_run.py - Launch a generated script and make sense of what it printed.
 
-main.py writes each individual's script out of the database, hands it to
+start_run.py writes each individual's script out of the database, hands it to
 launch() as its own process, and files everything it said back into the
 database. This module is the part that knows how to do that: how to run one
 script, how to read a transcript out of its stdout, and how to check that this
@@ -235,7 +235,7 @@ def batch_size(value):
 def batches(items, size):
     """`items` in consecutive groups of at most `size`, in the order given.
 
-    Groups rather than a refilling queue: main.py stores a batch's results
+    Groups rather than a refilling queue: start_run.py stores a batch's results
     before it starts the next one, which is what keeps the database written from
     one thread and in the order the individuals were selected in.
     """

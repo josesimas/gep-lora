@@ -1,5 +1,5 @@
 """
-store.py - The sqlite database behind main.py.
+store.py - The sqlite database behind start_run.py.
 
 A sweep scattered across a folder -- a population file, a tree file, an index,
 a script, an output and a transcript per individual -- is easy to read and
@@ -937,7 +937,7 @@ def fitness_generation(conn, run_id):
     and the *same* generation restated if it has not. That is what makes
     re-running
 
-        python main.py fitness
+        python start_run.py fitness
 
     -- pure arithmetic over stored transcripts, and a reasonable thing to redo
     after a re-scored `evaluate` -- rewrite the current generation rather than
