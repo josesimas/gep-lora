@@ -448,7 +448,8 @@ means one zero is enough.
 `llm_judge_baseline` is the one that scores what the search is for: the judge is shown
 the question, what the **bare base model** answered and what the blend answered, and
 rates the improvement on a centred scale where **0.5 is "changed nothing worth
-having"** (`JUDGE_BASELINE_SYSTEM_PROMPT`). It needs a control, which
+having"** (`JUDGE_BASELINE_SYSTEM_PROMPT`, a constant in that evaluator, not a
+setting). It needs a control, which
 [baseline_run.py](blends/baseline_run.py) produces once -- fill `template_baseline.py`, run it,
 read its transcript with `process_run.exchanges` -- and caches in the `baselines` table,
 keyed by `(BASE_MODEL, normalised question)` and hanging off **no run**: a base-model
@@ -771,10 +772,21 @@ appeared to manage VRAM would be claiming to test something it cannot.
   own `Context`, passed for the one evaluator that needs more than settings and rows:
   `llm_judge_baseline` wants the database and the run folder. Everything else ignores it. Its `Prepared.label` is
   what lands in `exchanges.judge_model` — a model id for a judge, the method's name for a
-  local one. **No knob lives in the package**; they are all in `settings.py` under
-  the prefix of whichever evaluator reads them (`JUDGE_*`, `BASELINE_*`, `SIMILARITY_*`,
-  `HEURISTIC_*`, `PANEL_*`). The single exception is the API key, read from `$JUDGE_API_KEY`, because a
-  sweep writes its settings into the database and a bearer token has no business there.
+  local one. **Knobs live in `settings.py`**, under the prefix of whichever evaluator reads
+  them (`JUDGE_*`, `BASELINE_*`, `SIMILARITY_*`, `HEURISTIC_*`, `PANEL_*`), with two
+  exceptions. The API key is read from `$JUDGE_API_KEY`, because a sweep writes its
+  settings into the database and a bearer token has no business there. And
+  `JUDGE_SYSTEM_PROMPT` is a constant in `evaluators/llm_judge.py`, with its own copy in
+  `evaluators/panel.py` -- it is one evaluator's own text rather than a knob, and it sits
+  beside the code that sends it. The price is that it is no longer snapshotted into a
+  sweep, so a sweep no longer records the rubric it was judged under; both readers still
+  let a sweep's *stored* value win, so a sweep created while it was a setting is re-scored
+  against the prompt it actually ran with. `JUDGE_REFERENCE_SYSTEM_PROMPT` and
+  `JUDGE_BASELINE_SYSTEM_PROMPT` moved the same way, into
+  `evaluators/llm_judge_reference.py` and `evaluators/llm_judge_baseline.py`;
+  `panel` keeps its own copy of the merit and reference rubrics, but not of the
+  baseline one, which nothing else grades by. **No prompt is a setting any
+  more** -- `settings.py` holds knobs, the evaluators hold their own text.
   Each module names its two functions `prepare` and `score` — the file says which evaluator
   they belong to — and ends in the `common.register()` call that adds it; **importing the
   module is the registration**, so a new evaluator is a new file plus one import line in

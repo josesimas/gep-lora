@@ -350,121 +350,23 @@ JUDGE_RESPONSE_FORMAT = {"type": "json_object"}
 # every answer, whatever the early ones say.
 JUDGE_ABANDON_FRACTION = 0.1
 
-# How the judge is told to grade, with no reference to compare against. This is
-# the rubric the whole search selects on, so it is worth tuning deliberately.
-JUDGE_SYSTEM_PROMPT = """\
-You are grading the quality of a single answer given by an AI planning coach.
-
-You will be shown the QUESTION a user asked and the ANSWER the coach gave.
-Judge the answer only, on how well it serves the person who asked.
-
-Consider:
-- Relevance: does it address what was actually asked?
-- Usefulness: could the person act on it, or are they left stuck?
-- Specificity: concrete and grounded rather than vague filler.
-- Coherence: well formed and consistent, free of contradictions, repetition,
-  broken grammar or nonsense.
-- Appropriateness: sensible length and tone. Asking one focused clarifying
-  question is fine when the request genuinely needs it; deflecting every
-  request without helping is not.
-
-Score from 0.0 to 1.0:
-  1.0  excellent - directly useful, specific, clear
-  0.7  good - helpful, minor weaknesses
-  0.5  mixed - partly useful, vague or padded
-  0.3  poor - barely addresses the question
-  0.0  useless - incoherent, empty, or entirely off topic
-
-Reply with JSON and nothing else, with the score FIRST:
-{"quality": <number between 0 and 1>, "reason": "<at most 12 words>"}
-"""
-
-# How the judge is told to grade when it is shown the dataset's own answer --
-# the rubric "llm_judge_reference" selects on, and "panel" too when
-# PANEL_USE_REFERENCE is on.
+# The three judging rubrics used to live here. Each is now a constant in the
+# evaluator that sends it, beside the code that sends it:
 #
-# The reference is what the adapters were fine-tuned to produce, so this prompt
-# asks about the thing merit-only grading cannot see: did the blend answer in
-# the manner the training data answers in. It deliberately does not ask for a
-# copy -- a blend that reproduced the reference word for word would score well
-# here and have learned nothing but that one answer.
-JUDGE_REFERENCE_SYSTEM_PROMPT = """\
-You are grading a single answer produced by a fine-tuned AI model.
-
-You will be shown:
-  QUESTION          what the user asked
-  REFERENCE ANSWER  how the model's training data answers that question
-  ANSWER            what the model actually replied
-
-The REFERENCE ANSWER is an example of the intended behaviour, not the only
-correct answer. Do not reward copying it, and do not punish different wording,
-different examples or different details.
-
-Judge the ANSWER on:
-- Manner: does it answer in the same style, voice, form and register as the
-  reference? This matters most -- it is what the model was trained for.
-- Substance: does it actually answer the QUESTION, as the reference does?
-- Coherence: well formed and consistent, free of contradictions, repetition,
-  broken grammar or nonsense.
-
-Score from 0.0 to 1.0:
-  1.0  excellent - same manner as the reference, and a sound answer
-  0.7  good - recognisably the same manner, minor slips
-  0.5  mixed - part of the manner, or the manner without the substance
-  0.3  poor - answers, but in nothing like the intended manner
-  0.0  useless - incoherent, empty, or entirely off topic
-
-Reply with JSON and nothing else, with the score FIRST:
-{"quality": <number between 0 and 1>, "reason": "<at most 12 words>"}
-"""
-
-# How the judge is told to grade when it is shown what the *base model* said to
-# the same question -- the rubric "llm_judge_baseline" selects on, and the one
-# that matches what this whole search is for: not "is this answer good" but "did
-# folding these adapters in make it better than the model was without them".
+#   JUDGE_SYSTEM_PROMPT            evaluators/llm_judge.py
+#   JUDGE_REFERENCE_SYSTEM_PROMPT  evaluators/llm_judge_reference.py
+#   JUDGE_BASELINE_SYSTEM_PROMPT   evaluators/llm_judge_baseline.py
 #
-# The scale is centred, and that is the point. 0.5 is "the blend changed nothing
-# worth having", so a fitness of 0.5 across a transcript says an individual is
-# the base model with extra steps, above it says the blend earned its keep, and
-# below it says it did harm. A merit-only rubric cannot say any of that: a blend
-# that ruins nothing scores well on merit because the base model was already
-# competent, and the search then has nothing to climb.
-JUDGE_BASELINE_SYSTEM_PROMPT = """\
-You are measuring what a LoRA adapter blend did to a base model.
-
-You will be shown:
-  QUESTION      what the user asked
-  BASE ANSWER   what the base model replied, with no adapter attached
-  TUNED ANSWER  what the same model replied with the adapter blend attached
-
-Both answers come from the same model and the same question. Judge only how
-the TUNED ANSWER compares with the BASE ANSWER as a reply to that question.
-
-Consider, in this order:
-- Usefulness: does the tuned answer serve the person who asked better?
-- Specificity: more concrete and grounded, rather than more words.
-- Manner: a clearer, better suited style, voice or form for the request.
-- Coherence: the tuned answer must not be more repetitive, contradictory,
-  truncated or malformed than the base one.
-
-Do not reward length, padding, restated questions or lists for their own sake,
-and do not reward a change of subject. If the two answers are equally good in
-different words, that is no improvement.
-
-Score from 0.0 to 1.0, where 0.5 is "no real difference":
-  1.0  transformed - the tuned answer is far better in every way that matters
-  0.8  clearly better
-  0.6  slightly better
-  0.5  no meaningful difference, or a difference not worth having
-  0.3  slightly worse
-  0.2  clearly worse
-  0.0  ruined - empty, incoherent, repetitive or off topic where the base
-       answer was not
-
-Reply with JSON and nothing else, with the score FIRST:
-{"quality": <number between 0 and 1>, "reason": "<at most 12 words>"}
-"""
-
+# "panel" reads the first two as well, and keeps its own copy of each, so its
+# rubrics can be tuned for a panel without moving what the single-judge
+# evaluators select on.
+#
+# They are prompts rather than knobs: one evaluator's own text, which nothing
+# else reads. What that costs is that they are no longer snapshotted into a
+# sweep, so a sweep no longer records the rubric it was judged under. Every
+# reader therefore still lets a sweep's *stored* value win, and a sweep created
+# while these were settings holds its own copies -- so an old sweep goes on
+# being graded by the rubric it actually ran under.
 
 # --- the base-model answers "llm_judge_baseline" grades against -------------
 #
@@ -540,8 +442,9 @@ PANEL_BASE_URL = None
 PANEL_AGGREGATE = "mean"
 
 # Whether the panel grades against the dataset's own answer -- the
-# JUDGE_REFERENCE_SYSTEM_PROMPT rubric -- rather than on merit alone. Needs a
-# dataset with assistant turns, exactly like "llm_judge_reference".
+# JUDGE_REFERENCE_SYSTEM_PROMPT rubric, panel.py's own copy of it -- rather than
+# on merit alone. Needs a dataset with assistant turns, exactly like
+# "llm_judge_reference".
 PANEL_USE_REFERENCE = False
 
 

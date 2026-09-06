@@ -304,8 +304,12 @@ For a cloud judge, use that provider's URL, name `JUDGE_MODEL`, and set
 `JUDGE_API_KEY` in the environment — the key is the one judge setting that is not
 in `settings.py`, because settings are written into the sweep's database.
 
-`JUDGE_SYSTEM_PROMPT` (or `JUDGE_REFERENCE_SYSTEM_PROMPT`) is what the search
-optimises for. Read it first.
+`JUDGE_SYSTEM_PROMPT` (or `JUDGE_REFERENCE_SYSTEM_PROMPT`, or
+`JUDGE_BASELINE_SYSTEM_PROMPT`) is what the search optimises for. Read it first.
+None of the three is a setting: each is a constant at the top of the evaluator
+that sends it — `evaluators/llm_judge.py`, `evaluators/llm_judge_reference.py`,
+`evaluators/llm_judge_baseline.py` — and `evaluators/panel.py` keeps its own
+copy of the first two.
 
 ### 3d. Set the size
 

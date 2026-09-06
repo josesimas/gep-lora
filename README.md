@@ -689,7 +689,6 @@ of them on its own merits. Every knob is in `settings.py`:
 | `JUDGE_TIMEOUT` / `JUDGE_RETRIES` / `JUDGE_RETRY_WAIT` | 300 / 2 / 3 | one call's patience |
 | `JUDGE_RESPONSE_FORMAT` | `{"type": "json_object"}` | `None` for an endpoint that rejects it |
 | `JUDGE_ABANDON_FRACTION` | `0.1` | give up on an individual whose first 10% of graded answers all score 0 |
-| `JUDGE_SYSTEM_PROMPT` | see the file | **the rubric the search selects on** |
 | `start_run.py --force` | off | re-score answers that already have a quality |
 
 The API key is the one judge setting that is *not* in `settings.py`: a sweep
@@ -700,6 +699,19 @@ writes its settings into the database, so the key is read from the
 usefulness, specificity, coherence and appropriateness, with anchors at 1.0 /
 0.7 / 0.5 / 0.3 / 0.0. Tune it deliberately — the whole search optimises toward
 whatever it rewards.
+
+It is **not a setting**. It is a constant in
+[`evaluators/llm_judge.py`](evaluators/llm_judge.py), beside the code that
+sends it, and `evaluators/panel.py` keeps its own copy — so tuning a panel's
+rubric does not move what the single judge selects on. The two start out
+identical, which is what makes a difference between them worth reading.
+
+The trade-off is worth knowing: `settings.py` is snapshotted into every sweep,
+and this is not, so a new sweep no longer records the rubric it was judged
+under — the module as it stood is the only record, and editing it changes what
+a later `--force` re-score grades by. A sweep created while it *was* a setting
+still holds its own copy in the `settings` table, and that copy still wins, so
+those sweeps stay reproducible.
 
 The score and the reason land on the exchange they grade, with what gave them
 and when:
@@ -740,8 +752,12 @@ grades on whether the blend answered in the manner it was fine-tuned to. Its
 rubric is `JUDGE_REFERENCE_SYSTEM_PROMPT`, which weighs manner first, then
 substance and coherence, and explicitly does not reward copying — a blend that
 reproduced the reference word for word would have learned that one answer and
-nothing else. Everything else — endpoint, model, timeouts — comes from the same
-`JUDGE_*` settings.
+nothing else. Like the other two rubrics it is a constant in the evaluator that
+sends it, [`evaluators/llm_judge_reference.py`](evaluators/llm_judge_reference.py),
+not a setting; `evaluators/panel.py` keeps its own copy. An item with *no*
+reference falls through to `llm_judge.score()` and is graded on merit instead.
+Everything else — endpoint, model, timeouts — comes from the same `JUDGE_*`
+settings.
 
 A prompt with no reference is graded on merit instead of being dropped: a
 shrunken eval set for one individual would make its fitness incomparable with
@@ -770,9 +786,12 @@ That centre is the point of it. A fitness of 0.5 says an individual is the base
 model with extra steps; above it the blend earned its keep, below it the blend
 did harm. Merit-only grading cannot say any of that — a blend that ruins nothing
 scores well on merit because the base model was already competent, and the search
-has nothing to climb. The rubric is `JUDGE_BASELINE_SYSTEM_PROMPT`; everything
-else — endpoint, model, timeouts, retries — comes from the same `JUDGE_*`
-settings as `llm_judge`.
+has nothing to climb. The rubric is `JUDGE_BASELINE_SYSTEM_PROMPT`, a constant
+in [`evaluators/llm_judge_baseline.py`](evaluators/llm_judge_baseline.py) rather
+than a setting — and the one rubric of the three that `panel` does not also keep
+a copy of, since nothing else grades this way. Everything else — endpoint,
+model, timeouts, retries — comes from the same `JUDGE_*` settings as
+`llm_judge`.
 
 **Where the base answers come from, and why you only pay once.**
 `baseline_run.py` fills `template_baseline.py` — the same base model, the same
