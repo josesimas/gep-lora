@@ -8,8 +8,10 @@
 * Log to a file alongside writing to the console
 * Remove redundant data from the sqlite file (trees for example)
 * Create a parallel pipeline that is less batch oriented (process one chromosome only end to end)
-* Create a pipeline that only loads the weights once during the run (if possible) and once during the testing
+* ~~Create a pipeline that only loads the weights once during the run (if possible) and once during the testing~~ (TEMPLATE = "template_remote_code.py": the scripts become clients of blends/lora_server.py, which holds the base model open; the testing pass starts a pool the same way. LORA_SERVER_* in settings.py)
 * Explore ways to avoid loading and unloading the same weights more than once
+    * ~~The base model~~ (lora_server.py loads it once per server per step instead of once per individual)
+    * TBD for the adapters themselves, which are still attached and deleted per blend
 * Add parallelism to the model evaluation and processing steps 
     * ~~Done for lora processing~~
     * TBD for evaluation
@@ -17,6 +19,9 @@
 * Add complexity and "time to load" as values that influence the fitness (or some fitnesses). We may want to favour a combine that loads very fast.
 * Evolve the loras themselves
 * Add a random constant mutation (only changes the values of the weights)
+* Train Loras on random subsets of the training set
+* Change the fitness values to more granular values (maybe 20 options)
+* Add an escalation feature where later generations are scored by better models (cloud models instead local)
 
 * ~~Save timings for each run processing and each evaluation by adding new columns to existing table and recording the time in seconds the process took.~~
 * ~~Move the evaluators to the folder evaluators and put one evaluator per file (with a common file for duplicate functions)~~

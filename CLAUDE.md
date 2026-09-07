@@ -28,8 +28,9 @@ config/       settings.py -- every knob the pipeline reads
 search/       generate_population, draw_trees, calculate_fitness,
               elitism, selection, mutation -- the GEP search itself
 blends/       generate_runs, process_run, baseline_run -- a chromosome,
-              turned into a script and run
-templates/    the four template_*.py -- read and filled, never imported,
+              turned into a script and run; lora_server, server_pool -- the
+              base model held open, so the scripts stop each loading one
+templates/    the five template_*.py -- read and filled, never imported,
               which is why this folder is not a package
 storage/      store, add_dataset, db_datasets -- the database and its datasets
 metrics/      record, report -- what each step cost, measured and read back
@@ -375,6 +376,81 @@ Dry-run the whole pipeline by setting `TEMPLATE = "template_code_mocked.py"` in
 `settings.py`. The mocked template produces the same scripts minus the model: random
 answers, random qualities, no GPU, and no judge. Use it whenever the thing under test is
 the plumbing — but a mocked quality is noise, never a result.
+
+### One model load instead of a hundred
+
+`TEMPLATE = "template_remote_code.py"` is the third setting of that same knob, and the
+whole switch. The scripts are then **clients**: the blend is built on a
+[lora_server.py](blends/lora_server.py) process that already holds the base model open, so
+the `import` (13.3s) and the `model_load` (18.6s) that are ~54% of an average script are
+paid once per server per step rather than once per individual. Everything else about a
+sweep is byte-for-byte what it was.
+
+**The contract is untouched, and that is the point.** One script is still one individual and
+one execution; it still gets stored in `script_source`, still prints `YOU:`/`COACH:` and
+`TIMING:` lines on stdout, still keeps a partial transcript when it is killed, still has an
+exit code that becomes a verdict. The server sits *behind* the scripts rather than in place
+of them, which is why none of `executions`, `exchanges`, `phase_timings`, the mocked path or
+the testing pass had to learn anything. `model_load` simply stops appearing among the phases
+— the report is where you see it go.
+
+[server_pool.py](blends/server_pool.py) is the lifecycle: `pool_for()` starts
+`LORA_SERVER_COUNT` servers on consecutive ports when — and only when — the sweep's own
+scripts are clients (`server_pool.wanted()`, a test on `script_source`, the same shape as
+`process_run.imports_unsloth()`). So a sweep generated from either other template ignores
+every `LORA_SERVER_*` setting, and switching back is the one line switching forward was.
+Both drivers that run scripts start a pool: the `process` step and
+`test_run_with_dataset.run_all()` — a sweep run against a pool is tested against one, since
+the scripts a testing pass runs are that sweep's own.
+
+**Assignment is positional, never a queue.** A server serves one request at a time, so the
+pool caps the batch: `PROCESS_RUN_BATCH_SIZE` is lowered to `LORA_SERVER_COUNT` and the
+k-th script of a batch talks to the k-th server, through `$GEP_LORA_SERVER` in its
+environment. An environment variable rather than a marker, because which server an
+individual ran against is an accident of the batch it landed in — baking it into
+`script_source` would make a stored script describe one particular run of itself.
+
+**What it costs is a guarantee, and the guarantee is recorded rather than dropped.** A cold
+process per individual meant every result came from a model that had never seen another
+blend; a warm server means it had. So every client prints which server built its blend and
+how many that server had built before (`served by http://... build #N`, in the execution's
+stdout), and `LORA_SERVER_RECYCLE_AFTER` restarts a server every N builds — one model load
+back every N individuals, which bounds the drift while keeping most of the saving.
+`GET /health` reports `allocated`/`reserved`/`peak` from the server's own torch, because
+that is the only thing that can answer it per process on Windows.
+
+**Measured so far**: a chromosome built cold (`template_code.py`, fresh interpreter) and the
+same chromosome as build #1 and builds #5–#14 on one warm server — with two `SVD` blends
+built and torn down in between — give **byte-identical transcripts**; resting `allocated`
+stayed in 1.64–1.92 GB across ten builds with no trend, and `peak` was 4.73 GB, the `SVD`
+node. Fourteen builds is not three hundred, so the long form of that test still stands; the
+`build #N` line in every execution's stdout is what would make a failure of it findable
+afterwards.
+
+**The pool lives as long as the driver, not as long as the step.** It hangs off
+`start_run.Context`, which `continue_run.py` builds once and reuses for every generation, so
+generation 2 finds generation 1's servers still up and loads nothing; `release_pool()` is
+what the driver calls in a `finally`. `start_run.wants_the_card(conf)` is the one override —
+with `JUDGE_BACKEND = "unsloth"` the evaluate step loads a judge in this same interpreter,
+and a pool standing through it would be N base models on the card while a judge looks for
+room, so on that backend (and only on it) the pool does come down per step. A whole search
+pays the startup **twice**, since `main.py` runs its first generation through `start_run.py`
+and the rest through `continue_run.py` — two Contexts. That is where it stops: closing the
+last gap would mean a pool outliving the driver that made it. It has its own `start servers`
+row in the report rather than hiding inside the step total.
+
+**Whether a pool of more than one pays is an open question.** Today's 4-way concurrency
+buys 2.4–3.0×, and what overlaps well in it is the CPU-bound import and load — exactly what
+a warm server takes away. What is left is GPU-bound on one card. `LORA_SERVER_COUNT = 1` is
+the experiment; if one warm server is within a few percent of four, the pool and half of
+`server_pool.py` can go.
+
+```bash
+python -m blends.lora_server --base-model unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit --port 8770
+```
+
+Starts one by hand — which is also how a generated client is run on its own, since it reads
+`$GEP_LORA_SERVER` and falls back to `http://127.0.0.1:8770`.
 
 ```bash
 python -m tools.test CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
@@ -786,8 +862,16 @@ prints `TIMING: <phase> <seconds> [label]` lines as it goes -- `import`, `model_
 and `step_process` stores against that individual's `execution_id`. A marker line on stdout,
 like the weights and the mocked score, rather than a second channel out of a child process;
 `process_run.exchanges()` knows to end a reply at one, so a timing line can never land in a
-transcript. **Both templates print them**, so the whole path is exercised by a mocked sweep
-on a machine with no GPU.
+transcript. **All three templates print them**, so the whole path is exercised by a mocked
+sweep on a machine with no GPU.
+
+`template_remote_code.py` prints the same lines for phases that happened somewhere else:
+`/build` hands back the server's own `reset`/`attach`/`combine.*`/`compact`/`inference_setup`
+seconds and the client re-prints them as its own, so `phase_timings` is written exactly as
+before and no reader had to learn about servers. It adds `build` -- the whole round trip --
+which is in `metrics.report.NESTED` beside `compact`, since it contains the phases it is
+printed with. `model_load` stops appearing at all, which is the measurement the switch
+exists to produce.
 
 **`generate` counts calls, not answers**, since the two stopped being the same thing: a
 script asks `ANSWER_BATCH` prompts at once, and the phase's label says how many answers the
@@ -857,11 +941,31 @@ appeared to manage VRAM would be claiming to test something it cannot.
   recorded as an execution row with its exit code and the sweep carries on; only a sweep
   where *nothing* ran exits non-zero. Keep this when adding steps.
 - **The pipeline adapts to which template it ran.** `process` drops its unsloth check when
-  the generated scripts don't import it (`process_run.imports_unsloth`), and a judging
-  `evaluate` reaches for its judge -- an endpoint, or a model of its own -- only when
-  some answer still lacks a quality. Both keep a mocked sweep
+  the generated scripts don't import it (`process_run.imports_unsloth`), starts a pool of
+  lora servers only when they are clients that want one (`server_pool.wanted`), and a
+  judging `evaluate` reaches for its judge -- an endpoint, or a model of its own -- only when
+  some answer still lacks a quality. All three keep a mocked sweep
   runnable on a plain Python 3 with nothing else up; don't reintroduce an unconditional
-  check.
+  check. Each is a test on `script_source`, not on `settings.py`, so what a *stored* sweep
+  needs is decided by what that sweep actually holds -- and switching the whole remote path
+  on or off stays one line of `TEMPLATE`.
+- **Every generated script is launched with `PYTHONIOENCODING=utf-8`**
+  (`process_run.CHILD_ENCODING`), and this is not optional. `launch()` reads the pipes as
+  utf-8; a child left to itself picks the platform's preferred encoding, which on Windows
+  is cp1252 -- so the two ends disagreed about every byte above ASCII. A curly quote or an
+  em dash was written as one cp1252 byte and read back as invalid utf-8, storing U+FFFD in
+  the transcript the judge then scored; a character cp1252 lacks (Greek, CJK, an emoji)
+  raised `UnicodeEncodeError` inside the child's own `print()`, killing it mid-answer, so
+  the individual's fitness became the mean over however many questions it reached before
+  the first awkward character. Neither has anything to do with the blend being scored,
+  which is why it is fixed in the one place every script -- baseline included -- is
+  launched from rather than in each template.
+- **A server's own errors live in its log, not in the execution.** A lora_server client
+  sees one line per failed request and that is all its `stderr` should carry about another
+  process; the traceback, the OOM and PEFT's warnings are in
+  `<run dir>/lora_server_<port>.log`, appended to with a header per server life so a
+  recycled server does not erase the log of the one that failed. The pool prints the path
+  when it starts.
 - **An execution is self-contained.** Its row carries the weight seed, the full `weights`
   draw (all five, not just the referenced ones), stdout, stderr and the `exchanges`, so a
   scorer never has to look anywhere else — `individual_quality` is the view that does the

@@ -79,6 +79,7 @@ from collections import namedtuple
 
 from blends import generate_runs
 from blends import process_run
+from blends import server_pool
 from config import settings as config
 import evaluators
 from metrics import record
@@ -103,7 +104,7 @@ class Context:
     """What every step needs: the database, the sweep, and the options."""
 
     __slots__ = ("conn", "run_id", "conf", "run_dir", "template", "options",
-                 "generation", "meter")
+                 "generation", "meter", "pool")
 
     def __init__(self, conn, run_id, conf, run_dir, template, options):
         self.conn = conn
@@ -122,6 +123,13 @@ class Context:
         # blank one, which accepts everything a step says and writes nothing. So
         # a step never has to ask whether it is being timed.
         self.meter = record.blank()
+        # The lora servers, once the process step has started them. They live
+        # on the Context rather than inside the step because a Context is what
+        # a driver holds for as long as it is driving one sweep -- so the base
+        # model is loaded once for a whole run of generations rather than once
+        # per generation. Whoever built the Context calls release_pool(); see
+        # step_process for the one thing that takes them down early.
+        self.pool = None
 
     # The three things a step says about its own cost. Delegated rather than
     # reached through context.meter so instrumenting a step reads as part of
@@ -143,6 +151,19 @@ class Context:
         """Add phases something else measured -- a generated script's own
         TIMING: lines, read back by process_run.timings()."""
         self.meter.phases_from(records, execution_id=execution_id)
+
+    def release_pool(self):
+        """Stop the lora servers, if this Context started any.
+
+        Called by whoever built the Context, in a finally: the servers hold a
+        copy of the base model each, and a driver that has finished with a sweep
+        must not leave them holding it. Safe to call when there are none, and
+        safe to call twice -- which is what lets both the driver and the one
+        step that releases them early say it without coordinating.
+        """
+        if self.pool is not None:
+            pool, self.pool = self.pool, None
+            pool.stop()
 
 
 # --- the settings a sweep runs under --------------------------------------
@@ -295,6 +316,30 @@ def step_runs(context):
     print("wrote %d script file(s) to %s" % (written, context.run_dir))
 
 
+def wants_the_card(conf):
+    """Will something else in *this* interpreter need the GPU between passes?
+
+    Which is the only reason the lora servers cannot simply stay up for a whole
+    run. They hold a copy of the base model each, and with
+    JUDGE_BACKEND = 'unsloth' the evaluate step loads a judge in this same
+    process -- so leaving a pool standing through it would be N base models on
+    the card while a judge tries to find room for one more. On the endpoint
+    backend the judge is somebody else's process on somebody else's card, and
+    there is nothing to make room for.
+
+    Read from the sweep's own settings, like everything else a step decides on,
+    and pessimistic when it cannot tell: an unreadable EVALUATOR is the evaluate
+    step's problem to report, and until then the safe answer is to give the card
+    back.
+    """
+    try:
+        if evaluators.backend_of(conf) != evaluators.UNSLOTH:
+            return False
+        return bool(evaluators.get(conf.get("EVALUATOR")).needs_judge)
+    except SystemExit:
+        return True
+
+
 def _clear_scripts(context, rows):
     """Delete the script files of individuals whose result is stored.
 
@@ -334,8 +379,11 @@ def step_process(context):
 
     # Whether the venv is needed is a property of the template that was filled:
     # mocked scripts load nothing, and demanding the venv for them would put a
-    # GPU-less machine out of reach.
-    real = process_run.imports_unsloth(rows[0]["script_source"])
+    # GPU-less machine out of reach. A remote script imports nothing itself,
+    # but the servers it talks to are started with sys.executable and do, so it
+    # needs the venv just as much.
+    remote = server_pool.wanted(rows[0]["script_source"])
+    real = process_run.imports_unsloth(rows[0]["script_source"]) or remote
     if real:
         process_run.check_interpreter()
 
@@ -378,6 +426,53 @@ def step_process(context):
     # existed falls back to what settings.py says now.
     size = process_run.batch_size(
         conf.get("PROCESS_RUN_BATCH_SIZE", config.PROCESS_RUN_BATCH_SIZE))
+
+    # The servers those scripts talk to, when they are lora_server clients: the
+    # base-model load is paid per server instead of per individual. A sweep
+    # generated from either of the other two templates gets None here and
+    # everything below is as it was.
+    #
+    # Started at most once per *run*, not once per generation: the pool is kept
+    # on the Context, which continue_run.py builds once and reuses for every
+    # generation it turns. A pool that came down at the end of each process step
+    # would pay its startup again next generation for nothing -- the servers
+    # would be reloading the same model they had just released. The exception is
+    # wants_the_card(), below, which is the one thing that makes releasing them
+    # worth it.
+    #
+    # Started before the batches are cut, because the pool caps them: a server
+    # serves one request at a time, so more scripts in flight than there are
+    # servers would only queue.
+    pool = context.pool
+    if pool is None:
+        with context.timer("start servers"):
+            pool = context.pool = server_pool.pool_for(
+                conf, rows[0]["script_source"],
+                generate_runs.base_model_name(conf.get("BASE_MODEL")),
+                context.run_dir, config)
+    else:
+        # Anything that died while the previous generation was scoring, or that
+        # has worn its recycle count out, is replaced before a script is handed
+        # it -- the same check that runs between batches, run once more across
+        # the gap between generations, which is the longest a server sits idle.
+        moment = time.time()
+        replaced = pool.maintain()
+        if replaced:
+            context.phase("recycle servers", time.time() - moment)
+        print("reusing the %d lora server(s) already up -- the base model has "
+              "not been reloaded since they started%s"
+              % (pool.size,
+                 "" if not replaced else ", bar %d replaced just now" % replaced))
+
+    # Whether they may stay up once this step is over. The step's own finally
+    # honours it; the driver that built the Context releases whatever is left.
+    keep = pool is not None and not wants_the_card(conf)
+
+    if pool is not None and size > pool.size:
+        print("batch size %d capped to the %d server(s) in the pool"
+              % (size, pool.size))
+        size = pool.size
+
     groups = process_run.batches(selected, size)
 
     # How many prompts each script has to get through, so a progress line can
@@ -415,7 +510,22 @@ def step_process(context):
              " (%d skipped as BAD)" % blocked if blocked else "",
              " (%d unchanged since their last run)" % len(unchanged)
              if unchanged else ""))
-    if real:
+    if pool is not None:
+        # The saving, said where it is made: the load already happened, once
+        # per server, and these scripts only send their build plan.
+        print("these are lora_server clients: the base model is already loaded "
+              "on %d server(s), so no individual pays for one%s\n"
+              % (pool.size,
+                 "" if not pool.recycle_after else
+                 " -- each server is restarted every %d build(s)"
+                 % pool.recycle_after))
+        if not keep:
+            # Said before the wait rather than after it, because it is the
+            # reason the next generation will pay for a startup again.
+            print("        they come down when this step ends: JUDGE_BACKEND is "
+                  "%r, so the evaluate step wants the card for its own judge\n"
+                  % conf.get("JUDGE_BACKEND"))
+    elif real:
         # Say what a batch costs where it is paid: every script in one is
         # another copy of the base model resident at the same time.
         print("each one loads the base model, so this takes a while%s\n"
@@ -427,68 +537,92 @@ def step_process(context):
     failures = 0
     started = time.time()
     number = 0
-    for position, group in enumerate(groups, 1):
-        # A whole batch is announced before it is launched, so a long wait says
-        # what it is waiting for.
-        first = number + 1
-        for offset, row in enumerate(group):
-            print("[%d/%d] %s  %s" % (first + offset, len(selected),
-                                      row["script_name"], row["chromosome"]))
-        if size > 1:
-            print("        %sbatch %d/%d: %d running at once"
-                  % ("" if not context.generation
-                     else "gen %s, " % context.generation,
-                     position, len(groups), len(group)))
+    # The pool outlives this step unless something else wants the card, so the
+    # finally below releases it only when `keep` says it must -- including when
+    # the step raised, since a step that fell over is not a reason to hand the
+    # next one N base models it did not ask for. Whatever is left standing is
+    # the Context's, and the driver that built the Context takes it down.
+    try:
+        for position, group in enumerate(groups, 1):
+            # A whole batch is announced before it is launched, so a long wait says
+            # what it is waiting for.
+            first = number + 1
+            for offset, row in enumerate(group):
+                print("[%d/%d] %s  %s" % (first + offset, len(selected),
+                                          row["script_name"], row["chromosome"]))
+            if size > 1:
+                print("        %sbatch %d/%d: %d running at once"
+                      % ("" if not context.generation
+                         else "gen %s, " % context.generation,
+                         position, len(groups), len(group)))
 
-        results = process_run.launch_batch(
-            context.run_dir, [row["script_name"] for row in group],
-            options.timeout, watch)
+            # One server per script of the batch, positionally: the batch is
+            # capped at the pool's size above, so nothing queues.
+            envs = None if pool is None else pool.envs_for(len(group))
 
-        # Stored in the order they were asked for rather than the order they
-        # finished, and from this thread only: the children print to their own
-        # pipes and nothing but this loop touches the database.
-        for row, (code, seconds, out, err) in zip(group, results):
-            number += 1
-            verdict = process_run.verdict_of(code)
-            if code != 0:
-                failures += 1
+            results = process_run.launch_batch(
+                context.run_dir, [row["script_name"] for row in group],
+                options.timeout, watch, envs)
 
-            transcript = process_run.exchanges(out)
-            execution_id = store.add_execution(
-                conn, row["id"], seconds, code, verdict, row["weight_seed"],
-                process_run.drawn_weights(out), out, err)
-            store.add_exchanges(conn, execution_id, transcript)
-            # What the script cost from out here, and what it says it spent the
-            # time on in there -- the TIMING: lines it printed about itself, one
-            # phase row each, tied to the execution that paid for them. A script
-            # that printed none (an older sweep, or one that died before it got
-            # going) leaves the wall time and nothing under it.
-            # The row says whose script it was, rather than leaving that to a
-            # join: selection culls executions and sqlite hands their ids out
-            # again, so an id alone stops meaning one individual the moment a
-            # generation has been culled. Same rule as an execution row and a
-            # fitness_history row -- keep what was true when it was written.
-            context.phase("script", seconds, execution_id=execution_id,
-                          detail={"number": row["number"],
-                                  "chromosome": row["chromosome"],
-                                  "verdict": verdict, "batch": size})
-            context.phases_from(process_run.timings(out),
-                                execution_id=execution_id)
-            # Commit per individual, so an interrupted sweep keeps what it has
-            # done -- a half-finished batch still leaves the ones that came back.
-            conn.commit()
+            # Stored in the order they were asked for rather than the order they
+            # finished, and from this thread only: the children print to their own
+            # pipes and nothing but this loop touches the database.
+            for row, (code, seconds, out, err) in zip(group, results):
+                number += 1
+                verdict = process_run.verdict_of(code)
+                if code != 0:
+                    failures += 1
 
-            # In a batch these lines no longer sit under their own heading, so
-            # they carry the script name; one at a time they read as before.
-            print("        %s%-9s %6.1fs  %d exchange(s) -> execution %d"
-                  % ("" if size == 1 else row["script_name"] + "  ",
-                     verdict, seconds, len(transcript), execution_id))
-            if code != 0:
-                # Show why, so a systemic problem is obvious without a query.
-                tail = [line for line in (out + err).splitlines()
-                        if line.strip()][-1:]
-                if tail:
-                    print("        %s" % tail[0][:100])
+                transcript = process_run.exchanges(out)
+                execution_id = store.add_execution(
+                    conn, row["id"], seconds, code, verdict, row["weight_seed"],
+                    process_run.drawn_weights(out), out, err)
+                store.add_exchanges(conn, execution_id, transcript)
+                # What the script cost from out here, and what it says it spent the
+                # time on in there -- the TIMING: lines it printed about itself, one
+                # phase row each, tied to the execution that paid for them. A script
+                # that printed none (an older sweep, or one that died before it got
+                # going) leaves the wall time and nothing under it.
+                # The row says whose script it was, rather than leaving that to a
+                # join: selection culls executions and sqlite hands their ids out
+                # again, so an id alone stops meaning one individual the moment a
+                # generation has been culled. Same rule as an execution row and a
+                # fitness_history row -- keep what was true when it was written.
+                context.phase("script", seconds, execution_id=execution_id,
+                              detail={"number": row["number"],
+                                      "chromosome": row["chromosome"],
+                                      "verdict": verdict, "batch": size})
+                context.phases_from(process_run.timings(out),
+                                    execution_id=execution_id)
+                # Commit per individual, so an interrupted sweep keeps what it has
+                # done -- a half-finished batch still leaves the ones that came back.
+                conn.commit()
+
+                # In a batch these lines no longer sit under their own heading, so
+                # they carry the script name; one at a time they read as before.
+                print("        %s%-9s %6.1fs  %d exchange(s) -> execution %d"
+                      % ("" if size == 1 else row["script_name"] + "  ",
+                         verdict, seconds, len(transcript), execution_id))
+                if code != 0:
+                    # Show why, so a systemic problem is obvious without a query.
+                    tail = [line for line in (out + err).splitlines()
+                            if line.strip()][-1:]
+                    if tail:
+                        print("        %s" % tail[0][:100])
+
+            # Between batches, never during one: a server is restarted when it
+            # has died or worn its recycle count out, and either way nothing is
+            # talking to it at this moment.
+            # Timed only when it happened, rather than a phase of nothing per
+            # batch: what a recycle costs is a model load, and a row of zeroes
+            # beside it would flatter the average.
+            if pool is not None:
+                moment = time.time()
+                if pool.maintain():
+                    context.phase("recycle servers", time.time() - moment)
+    finally:
+        if not keep:
+            context.release_pool()
 
     print("\nran %d in %.1fs, %d failed" % (len(selected), time.time() - started, failures))
 
@@ -1231,6 +1365,11 @@ def main(argv=None):
     try:
         return run(selected, context)
     finally:
+        # Whatever the process step left standing. main.py calls this as a
+        # library and then hands the same sweep to continue_run.py, so the
+        # servers have to go before that second driver starts its own -- one
+        # interpreter, one card, and no pool outlives the driver that made it.
+        context.release_pool()
         conn.close()
 
 

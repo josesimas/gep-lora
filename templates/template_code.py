@@ -9,6 +9,15 @@
 #~ Everything else is copied through verbatim, which is why this file is kept as
 #~ valid Python: your editor, linter and `python -m compileall` all still work on
 #~ it, and the generated scripts are exactly what you see here.
+#~
+#~ THE BLEND ARITHMETIC BELOW IS MIRRORED IN blends/lora_server.py.
+#~ attach(), combine(), _compact() and _rank() exist there too, on a base model
+#~ that stays loaded between individuals -- which is what
+#~ template_remote_code.py's clients talk to. A generated script is standalone
+#~ by design and can import nothing from this repo, so the copy is unavoidable;
+#~ the rule that goes with it is the one this template and its mocked twin
+#~ already live under: **a change to the arithmetic here belongs there too, and
+#~ the other way round.**
 """
 @@SCRIPT_NAME@@ - Combine LoRAs the way one GEP tree says to, then chat.
 

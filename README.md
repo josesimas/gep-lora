@@ -518,6 +518,168 @@ execution is that script's own wall clock, so within a batch they overlap and no
 longer add up to the time the step took. The scripts in a batch share the run
 folder as their working directory, and so share the caches unsloth drops there.
 
+### Paying for the model load once — `blends/lora_server.py`
+
+"One model load per individual" is a fixed price, and on this machine it is most
+of the bill: `import` at 13.3s plus `model_load` at 18.6s is 31.9s, about **54%**
+of an average script, and no cheaper tree gets out of it.
+
+`TEMPLATE = "template_remote_code.py"` in `settings.py` moves it. The scripts
+become clients of a [`blends/lora_server.py`](blends/lora_server.py) process
+that already holds the base model open: the client sends the build plan its tree
+describes, the server attaches and folds the adapters, and then the client asks
+its eval prompts through the same HTTP connection. That single line is the whole
+switch, and switching back is the same line.
+
+```bash
+# by hand, one server, and one generated script against it
+python -m blends.lora_server --base-model unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit --port 8770
+GEP_LORA_SERVER=http://127.0.0.1:8770 python run_db/run_001.py
+```
+
+Measured here, on this base model: a `CAT` of two leaves went from ~35s to
+**3.0s** — 1.0s to build the blend, 1.9s to answer. An `SVD` tree still costs
+its ~70s fold, because that is arithmetic the server has to do too; what
+vanishes is only the part that was the same for everybody.
+
+**Nothing about what an individual is changes.** One script is still one
+individual and one execution, still stored in `script_source`, still printing
+`YOU:`/`COACH:` and `TIMING:` lines on stdout, still keeping a partial
+transcript when it is killed, still turning an exit code into a verdict. The
+server sits *behind* the scripts rather than in place of them, so `executions`,
+`exchanges`, `phase_timings`, the mocked path and the testing pass all work
+untouched. `model_load` simply stops appearing among the phases —
+`python -m metrics.report` is where you watch it go.
+
+[`blends/server_pool.py`](blends/server_pool.py) is the lifecycle. It starts
+`LORA_SERVER_COUNT` servers on consecutive ports at the top of the `process`
+step and stops them at the end, and it does so **only when the sweep's own
+scripts are clients** — a test on `script_source`, the same shape as the
+`imports_unsloth()` test that decides whether a sweep needs the venv. So a sweep
+generated from either other template ignores every `LORA_SERVER_*` setting.
+`test_run_with_dataset.py` starts a pool the same way, since the scripts a
+testing pass runs are that sweep's own.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `LORA_SERVER_COUNT` | 2 | how many servers, each holding its own copy of the model. Also caps the batch |
+| `LORA_SERVER_HOST` / `LORA_SERVER_PORT` | `127.0.0.1` / 8770 | where they listen — consecutive ports from there |
+| `LORA_SERVER_STARTUP_TIMEOUT` | 900 | seconds to wait for a server to finish loading |
+| `LORA_SERVER_TIMEOUT` | 1800 | seconds one script waits on one request |
+| `LORA_SERVER_RECYCLE_AFTER` | 0 | builds before a server is restarted between batches; 0 never |
+
+**Where a server's own errors go.** A client only ever sees the one line its
+request came back with, and that one line is all an execution's `stderr` can
+honestly hold about somebody else's process. Everything else — the traceback
+inside `add_weighted_adapter`, an OOM, PEFT's warnings, the model load itself —
+is in that server's log, written beside the scripts and named for its port:
+
+```
+run_db/lora_server_8770.log
+run_db/lora_server_8771.log
+```
+
+The pool prints the path when it starts. The files are **appended** to, with a
+header per server life, so a recycled server does not overwrite the log of the
+one whose last build is why you are reading it.
+
+**The pool lives as long as the driver, not as long as the step.** It hangs off
+the `Context`, which `continue_run.py` builds once and reuses for every
+generation it turns, so generation 2 finds generation 1's servers still up and
+loads nothing:
+
+```
+# generation 2 of 3 -- population 4
+reusing the 2 lora server(s) already up -- the base model has not been reloaded since they started
+```
+
+There is one override, `start_run.wants_the_card()`: with
+`JUDGE_BACKEND = "unsloth"` the evaluate step loads a judge in this same
+interpreter, and a pool left standing through it would be N base models on the
+card while a judge looks for room for one more. On that backend, and only on it,
+the pool comes down at the end of each process step and says so.
+
+A whole `main.py` search pays the startup **twice** — the first generation runs
+through `start_run.py` and the rest through `continue_run.py`, and those are two
+Contexts. That is where it stops: closing the last gap would mean a pool
+outliving the driver that made it, which is a worse thing to own than one extra
+model load.
+
+Either way it is measured rather than assumed, as its own `start servers` row:
+
+```
+inside process -- 31.9s of wall time over 1 pass(es)
+  what the step itself did (share of its 31.9s):
+    phase                calls   seconds   share      mean     worst  shape
+    start servers            1     22.4s   70.2%     22.4s     22.4s  per pass
+    waiting on scripts       4      9.5s   29.7%             15.4s of script time, overlapping
+  inside those 4 script(s) -- 15.4s of script time, 3.9s each:
+    generate                 4      8.9s   57.3%      2.2s      2.5s  per script
+    attach                   8      3.7s   24.0%     464ms     854ms  2.0 per script
+    combine.cat              4      2.0s   12.8%     492ms     649ms  per script
+    inference_setup          4     143ms    0.9%      36ms      39ms  per script
+    reset                    2      73ms    0.5%      36ms      37ms  2 of 4 scripts
+    import                   4       0ms    0.0%       0ms       0ms  per script
+```
+
+`model_load` is not in that list, and `import` has collapsed to nothing;
+`generate` — the only part that was ever the point — has gone from a tenth of a
+script to well over half of one. That is the whole measurement.
+
+A server serves one request at a time, so the pool **caps the batch**:
+`PROCESS_RUN_BATCH_SIZE` is lowered to `LORA_SERVER_COUNT`, and the k-th script
+of a batch talks to the k-th server through `$GEP_LORA_SERVER` in its
+environment. Positional, not a queue — the same fixed ceiling the batch already
+was. It is an environment variable rather than something filled into the script
+because which server an individual ran against is an accident of the batch it
+landed in; baking it into `script_source` would make a stored script describe one
+particular run of itself.
+
+**What it costs is a guarantee.** A cold process per individual meant every
+result came from a model that had never seen another blend; a warm server means
+it had. That guarantee is recorded rather than quietly dropped: every client
+prints `served by http://... , build #N`, which lands in the execution's stdout,
+so a stored result says where in a server's life it happened.
+`LORA_SERVER_RECYCLE_AFTER` puts a bound on it — one model load back every N
+individuals, which keeps most of the saving. `GET /health` reports `allocated`,
+`reserved` and `peak` from the server's own `torch`, because Windows' WDDM
+driver gives `nvidia-smi` no per-process figure and that is the number the
+question turns on.
+
+**What has been measured so far**, at 3 eval prompts and `WEIGHT_SEED = 4242`:
+
+| | `CAT.L1.L2.w1.w2` | `CAT.L3.L5.w3.w5` |
+|---|---|---|
+| cold process, `template_code.py` | `37ab08e5b39c`, 27.7s | `ac2516e8b599`, 26.5s |
+| build #1 on a fresh server | `37ab08e5b39c`, 4.1s | `ac2516e8b599`, 3.8s |
+| builds #5–#14, after two `SVD` blends had been built and torn down | `37ab08e5b39c`, 3.1–3.6s | `ac2516e8b599`, 3.7–4.0s |
+
+Byte-identical transcripts cold and warm, and identical on every repeat.
+Resting `allocated` over those ten builds stayed in 1.64–1.92 GB with no upward
+trend, `reserved` in 1.77–1.98 GB, and `peak` was 4.73 GB — the `SVD` node, and
+the same figure [What an `SVD` node costs](#what-an-svd-node-costs) gives.
+
+That is fourteen builds, not three hundred, and it is one base model. The
+standing acceptance test is still the long one: the same chromosome as the 1st
+and as the 300th build must match a cold-process run, with resting VRAM flat.
+The `build #N` line in every execution's stdout is what makes a failure of it
+findable after the fact.
+
+**Whether more than one server pays is an open question.** The 4-way
+concurrency the batch already had buys 2.4–3.0×, and what overlaps well in it is
+the CPU-bound import and load — precisely what a warm server removes. What is
+left is GPU-bound on one card. `LORA_SERVER_COUNT = 1` is the experiment worth
+running before trusting the pool; if one warm server is within a few percent of
+four, the pool can go.
+
+The one piece of design debt this introduces is that the blend arithmetic —
+attach, combine, the rank rule, `_compact()` — now exists in three places:
+`template_code.py`, `template_code_mocked.py`, and `Blend` in `lora_server.py`.
+It has to: a generated script is standalone by design and can import nothing
+from this repo. So they live under the rule the two templates already lived
+under, and both files say so — **a change to the blend arithmetic in one belongs
+in all of them.**
+
 ### Watching it run
 
 A generated script says nothing at all while it loads the base model, then
@@ -2305,6 +2467,19 @@ D:\sage-is\loras\.venv\Scripts\python.exe run_db\run_004.py "Help me plan my wee
 `python start_run.py runs` (or keep them with `--keep-scripts`) before running it by
 hand.
 
+A script generated from `template_remote_code.py` needs a server to talk to, and
+finds it in `$GEP_LORA_SERVER` — falling back to `http://127.0.0.1:8770`, which
+is the default port `blends/lora_server.py` listens on:
+
+```bash
+D:\sage-is\loras\.venv\Scripts\python.exe -m blends.lora_server --base-model unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit
+D:\sage-is\loras\.venv\Scripts\python.exe run_db\run_004.py
+```
+
+The client itself imports nothing but the standard library, so it runs under any
+Python 3 — but the server does not, and the pipeline starts servers with
+`sys.executable`, so the venv rule above is unchanged for a sweep.
+
 ### PATH gotcha
 
 This machine has Python 3.13 first on PATH, and that one has no torch. A
@@ -2368,8 +2543,12 @@ optimise first** -- and it is `process`, every time, because every individual is
 another base-model load. The phase table says **what to do about it**, which the
 step total cannot: `calls` separates a fixed cost from a per-item one, and they
 want opposite fixes. A `model_load` called once per script gets cheaper only by
-running fewer scripts -- a smaller `COUNT`, fewer generations, or the
-`has_changed` skip doing its job. `generate` is one call per `ANSWER_BATCH`
+running fewer scripts -- a smaller `COUNT`, fewer generations, the `has_changed`
+skip doing its job, or, since `template_remote_code.py`, not running it per
+script at all: a sweep against a
+[pool of servers](#paying-for-the-model-load-once--blendslora_serverpy) has no
+`model_load` row, which is the clearest way to see what it was costing.
+`generate` is one call per `ANSWER_BATCH`
 prompts, so `TRAINING_COUNT` moves the tokens in a call rather than the number
 of them, and halving it no longer halves that row. `combine.svd` at 40s a node
 is an argument about the alphabet the search draws from.
@@ -2380,8 +2559,10 @@ itself, printing `TIMING: <phase> <seconds>` lines that `process_run.timings()`
 reads back with the transcript. Script phases are shares of **script** time, not
 of the step's wall time, because `PROCESS_RUN_BATCH_SIZE` of them run at once and
 their seconds overlap; the report says so rather than quietly adding them up.
-Both templates print the lines, so a mocked sweep on a machine with no GPU
-exercises the whole path.
+All three templates print the lines, so a mocked sweep on a machine with no GPU
+exercises the whole path. A remote script prints the server's phases as its own,
+so the rows read the same; the `build` round trip it adds is nested inside them
+the way `compact` is nested inside `combine.svd`.
 
 `--step process` prints one step in full, `--csv` prints the rows behind the
 tables, and `--run N` picks a sweep. Sweeps run before the tables existed have no
@@ -2565,8 +2746,11 @@ tools/        dev aids that are not part of the pipeline
 | `blends/generate_runs.py` | fills `template_code.py`, one runnable script per individual |
 | `blends/process_run.py` | launches a generated script and reads its transcript back |
 | `blends/baseline_run.py` | produces and caches what the base model itself answers, for `llm_judge_baseline` |
+| `blends/lora_server.py` | one base model held open, blending LoRAs on request — the load, paid once instead of per individual |
+| `blends/server_pool.py` | starts those servers, hands one to each script of a batch, recycles and stops them |
 | `templates/template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
 | `templates/template_code_mocked.py` | the same, mocked: no model load, random answers and scores |
+| `templates/template_remote_code.py` | the same, remote: the blend is built on a `lora_server.py` process that already holds the model |
 | `templates/template_baseline.py` | the base model alone on the eval prompts — the control a blend is measured against |
 | `templates/template_baseline_mocked.py` | the same, mocked: no model load, invented answers, cached under `mock:` |
 

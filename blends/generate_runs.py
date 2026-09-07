@@ -99,12 +99,35 @@ def template_path(name=None):
     caller: the runs step and the baseline both have to agree on which file a
     stored TEMPLATE means, or a sweep and its own control would be generated
     from different code.
+
+    A bare name may also be written without its extension -- "template_code" for
+    template_code.py. Every template is a .py file, so both are tried rather
+    than letting four missing characters become a FileNotFoundError from
+    whoever opens the result. What comes back when nothing matches is the
+    templates/ candidate, so the failure names the folder a template was
+    expected in; load_template() is what says so.
     """
     name = name or "template_code.py"
     if os.path.isabs(name) or os.path.exists(name):
         return os.path.abspath(name)
-    beside = os.path.join(_ROOT, name)
-    return beside if os.path.exists(beside) else os.path.join(_ROOT, TEMPLATE_DIR, name)
+    # As written first, then with the extension, so a name that really exists
+    # keeps the meaning it always had.
+    names = [name] if os.path.splitext(name)[1] else [name, name + ".py"]
+    for candidate in names:
+        for folder in (_ROOT, os.path.join(_ROOT, TEMPLATE_DIR)):
+            path = os.path.join(folder, candidate)
+            if os.path.exists(path):
+                return path
+    return os.path.join(_ROOT, TEMPLATE_DIR, names[-1])
+
+
+def templates_available():
+    """The templates this repo actually holds, for a failure to list."""
+    folder = os.path.join(_ROOT, TEMPLATE_DIR)
+    try:
+        return sorted(name for name in os.listdir(folder) if name.endswith(".py"))
+    except OSError:
+        return []
 
 
 def training_set_path(value=None):
@@ -506,10 +529,24 @@ def combine_nodes_block(steps):
 
 
 def load_template(path=TEMPLATE):
-    """Read the template, dropping its #~ notes."""
-    with open(path, encoding="utf-8") as handle:
-        return [line.rstrip("\n") for line in handle
-                if not line.lstrip().startswith(TEMPLATE_COMMENT)]
+    """Read the template, dropping its #~ notes.
+
+    A template that is not there is a mistyped TEMPLATE nine times in ten, and
+    every generated script in the sweep would come from it -- so it is worth one
+    clear failure naming what was looked for and what is actually in templates/,
+    rather than a bare FileNotFoundError from this open().
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return [line.rstrip("\n") for line in handle
+                    if not line.lstrip().startswith(TEMPLATE_COMMENT)]
+    except OSError as error:
+        held = templates_available()
+        raise SystemExit(
+            "cannot read the template %s (%s). TEMPLATE in settings.py names "
+            "the file every generated script is filled from; %s/ holds %s."
+            % (path, error.strerror, TEMPLATE_DIR,
+               ", ".join(held) if held else "nothing"))
 
 
 def fill(template_lines, blocks, values):

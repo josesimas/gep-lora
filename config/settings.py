@@ -12,7 +12,7 @@ Change a value and re-run; nothing else needs editing.
 # --- the population --------------------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 4
+COUNT = 10
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time -- and, since a sweep records what it drew,
@@ -28,7 +28,7 @@ UNIQUE = True
 # and keeps the branch growing -- the shape a population is drawn with, recorded
 # alongside the rest so a stored sweep says what shape that was.
 MAX_DEPTH = 4
-BRANCH_PROB = 0.1
+BRANCH_PROB = 0.2
 
 # --- continuing a sweep ----------------------------------------------------
 
@@ -90,7 +90,7 @@ TRAINING_SET = "datasets/medical_training_lora_dataset.json"
 # prompts ANSWER_BATCH at a time in one generate() call, and a call reads the
 # weights once whatever it is answering, so five prompts cost nothing like five
 # times one. Past ANSWER_BATCH it does start costing another call.
-TRAINING_COUNT = 5
+TRAINING_COUNT = 20
 
 # The other two splits of the same dataset, recorded beside the training one.
 #
@@ -167,7 +167,65 @@ LORA_SLOTS = {
 # answers, and scores that arrive with the transcript, so the whole pipeline
 # finishes in seconds on a machine with no GPU and no judge running. Mocked
 # scores are noise; never read one as a result.
-TEMPLATE = "template_code.py"
+#
+# "template_remote_code.py" is the third: the same script, but the blend is
+# built on a lora_server.py process that already has the base model open, so
+# the import and the model load -- about 54% of what a script costs on this
+# machine -- are paid once per step instead of once per individual. This one
+# line is the whole switch: the process step notices what kind of scripts a
+# sweep holds and starts a pool of servers or does not, and everything else
+# about a sweep (one script per individual, one execution, the transcript on
+# stdout, the phase timings) is identical either way. See LORA_SERVER_* below.
+TEMPLATE = "template_remote_code.py"
+
+# --- the lora servers, for TEMPLATE = "template_remote_code.py" -------------
+#
+# Read only when the scripts a sweep holds are lora_server clients -- a sweep
+# generated from either of the other templates ignores every one of these, so
+# switching back is the same one line switching forward was.
+
+# How many servers the process step starts, each holding its own copy of the
+# base model. It also caps the batch: the k-th script of a batch talks to the
+# k-th server, so a run never has more scripts in flight than there are servers
+# to serve them, whatever PROCESS_RUN_BATCH_SIZE says.
+#
+# The cost is the one a batch always had -- N servers is N copies of the model
+# resident together -- but it is now paid once per driver rather than once per
+# individual: the servers stay up across generations, and only come down early
+# when JUDGE_BACKEND = "unsloth" means the evaluate step wants the card for a
+# judge of its own. Whether more than one pays at all is worth measuring before
+# believing: today's 4-way concurrency buys 2.4-3.0x, and what overlaps well in
+# it is the CPU-bound import and load, which is exactly what a warm server
+# takes away. What is left is GPU-bound on one card. Start at 1 and see.
+LORA_SERVER_COUNT = 2
+
+# Where they listen. Consecutive ports from LORA_SERVER_PORT, one per server,
+# on an interface that should stay local: these speak no authentication and
+# will load any adapter folder they are handed.
+LORA_SERVER_HOST = "127.0.0.1"
+LORA_SERVER_PORT = 8770
+
+# How long to wait for a server to finish loading before giving up on the step,
+# and how long one script waits on one request to it. The first covers a cold
+# model load (a download, on a machine that has never held this model); the
+# second is per build or per batch of answers, so a hung server costs one
+# individual rather than the pass.
+LORA_SERVER_STARTUP_TIMEOUT = 900
+LORA_SERVER_TIMEOUT = 1800
+
+# How many blends one server may build before the pool restarts it between
+# batches. A cold process per individual was a strong guarantee -- every result
+# came from a model that had never seen another blend -- and a warm server is a
+# weaker one: adapters are attached and deleted on a model that stays up, and
+# what a server built before this individual is, in principle, part of what it
+# built for it. This bounds that: the model load is paid again once every N
+# individuals, which keeps most of the saving and puts a number on the drift.
+#
+# 0 never recycles, which is the fastest and the least defensible. Whichever it
+# is set to, every script prints which server built its blend and how many
+# blends that server had built before, so the stdout of a stored execution says
+# where in a server's life it happened.
+LORA_SERVER_RECYCLE_AFTER = 0
 
 # --- the blend weights -----------------------------------------------------
 

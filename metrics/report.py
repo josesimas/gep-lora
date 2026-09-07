@@ -31,10 +31,12 @@ from storage import store
 # Phases that cover other phases, and would be double counting if they were
 # ranked beside them. "script" is the process step's own wall time per
 # individual and "total" is the same span measured from inside the script;
-# "compact" runs inside the combine.svd that called it. They are printed, but
-# under their own heading and out of the shares.
+# "compact" runs inside the combine.svd that called it, and "build" -- a remote
+# script's whole round trip to its lora server -- covers the attach/combine/
+# inference_setup phases that server reports back and the client re-prints as
+# its own. They are printed, but under their own heading and out of the shares.
 WHOLE = ("script", "total")
-NESTED = ("compact",)
+NESTED = ("compact", "build")
 
 
 def _seconds(value):

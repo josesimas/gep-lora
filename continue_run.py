@@ -209,38 +209,47 @@ def evolve(conn, run_id, conf, generations, options):
     context = start_run.context_for(conn, run_id, conf, options)
     started = time.time()
 
-    for number in range(1, generations + 1):
-        size = len(store.individuals(conn, run_id))
-        # The last generation stops at fitness: what follows builds the next
-        # generation, and after this one there is none. See generation_steps().
-        this_one = final if number == generations else steps
-        # Which generation this is, for the step banners inside it: the header
-        # below scrolls away during process, which is the part that takes the
-        # hours. It is display only -- no step reads it, and nothing stores it.
-        context.generation = "%d/%d" % (number, generations)
-        print("#" * 70)
-        print("# generation %d of %d -- population %d%s"
-              % (number, generations, size,
-                 ", the last: it stops after fitness" if this_one is final else ""))
-        print("#" * 70)
-        print()
-
-        code = start_run.run(this_one, context)
-        if code:
+    # The lora servers the process step starts, if this sweep uses them,
+    # belong to this Context and so to this loop -- started once and kept
+    # across every generation rather than reloaded for each. Released here
+    # whichever way the loop ends, including the early return below: they
+    # hold a copy of the base model each, and the testing pass main.py runs
+    # next starts its own.
+    try:
+        for number in range(1, generations + 1):
+            size = len(store.individuals(conn, run_id))
+            # The last generation stops at fitness: what follows builds the next
+            # generation, and after this one there is none. See generation_steps().
+            this_one = final if number == generations else steps
+            # Which generation this is, for the step banners inside it: the header
+            # below scrolls away during process, which is the part that takes the
+            # hours. It is display only -- no step reads it, and nothing stores it.
+            context.generation = "%d/%d" % (number, generations)
+            print("#" * 70)
+            print("# generation %d of %d -- population %d%s"
+                  % (number, generations, size,
+                     ", the last: it stops after fitness" if this_one is final else ""))
+            print("#" * 70)
             print()
-            print("stopped in generation %d of %d, after %.1fs"
-                  % (number, generations, time.time() - started))
-            print("the sweep is marked failed; what the earlier generations did is")
-            print("still in the database -- python -m storage.store --show %d" % run_id)
-            return code
 
-        grown = len(store.individuals(conn, run_id))
-        print("# generation %d done: population %d -> %d" % (number, size, grown))
-        if this_one is final:
-            print("# stopped after fitness: %s build the next generation and there"
-                  % ", ".join(start_run.NEXT_GENERATION))
-            print("# is none, so the population is the one that was just scored")
-        print()
+            code = start_run.run(this_one, context)
+            if code:
+                print()
+                print("stopped in generation %d of %d, after %.1fs"
+                      % (number, generations, time.time() - started))
+                print("the sweep is marked failed; what the earlier generations did is")
+                print("still in the database -- python -m storage.store --show %d" % run_id)
+                return code
+
+            grown = len(store.individuals(conn, run_id))
+            print("# generation %d done: population %d -> %d" % (number, size, grown))
+            if this_one is final:
+                print("# stopped after fitness: %s build the next generation and there"
+                      % ", ".join(start_run.NEXT_GENERATION))
+                print("# is none, so the population is the one that was just scored")
+            print()
+    finally:
+        context.release_pool()
 
     summarise(conn, run_id, generations, time.time() - started)
     return 0

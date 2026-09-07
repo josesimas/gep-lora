@@ -27,6 +27,15 @@ Individuals that fail are recorded, not fatal: a chromosome that cannot run is
 a result, the same as one that can. Only a sweep where nothing at all ran
 returns a failing exit code, since that points at something systemic.
 
+A script generated from template_remote_code.py pays none of the load: it is a
+client for a lora_server.py process that already holds the base model open, and
+server_pool.py is what starts those and tells each script which one to use
+(through the environment -- see launch()). Everything this module does is
+unchanged by that. A remote script is still one process per individual, still
+prints its transcript and its TIMING: lines on stdout, and still has an exit
+code, which is the whole reason the server was put behind the scripts rather
+than in place of them.
+
 None of that cost applies to scripts generated from template_code_mocked.py:
 they load nothing, answer at random, and print their own QUALITY:/REASON: lines,
 which land in the transcript so the evaluate step has nothing left to score.
@@ -210,6 +219,28 @@ def exchanges(stdout):
 # invisible: the wait does nothing but time out.
 TICK = 2.0
 
+# What every child is told to encode its stdout as, and why it is not a choice.
+#
+# launch() reads the pipes as utf-8. A child left to itself picks the platform's
+# preferred encoding for a pipe, which on this machine is cp1252 -- so the two
+# ends disagreed about every byte above ASCII, and a model answer is full of
+# them. Two ways that showed up, both silent about their real cause:
+#
+#   * a character cp1252 *has* -- a curly quote, an em dash -- was written as
+#     one cp1252 byte and read back as invalid utf-8, so the transcript stored
+#     in the database held U+FFFD where the model had written punctuation, and
+#     that is what the judge was then shown and scored.
+#   * a character cp1252 lacks -- Greek, CJK, an emoji -- raised
+#     UnicodeEncodeError inside the child's own print(), killing it mid-answer.
+#     The individual's execution went down as `exit 1` with however much of the
+#     transcript had already been printed, so its fitness became the mean over
+#     the questions it happened to reach before the first awkward character.
+#
+# Neither is anything to do with the blend being scored, which is what made
+# them worth stamping out here rather than in each template: this is the one
+# place every generated script is launched from, the baseline included.
+CHILD_ENCODING = "PYTHONIOENCODING"
+
 
 def _drain(stream, collected, report):
     """Read one of a child's pipes to the end, keeping every line it held.
@@ -226,7 +257,7 @@ def _drain(stream, collected, report):
                 report(line.rstrip("\n"))
 
 
-def launch(run_dir, script, timeout, on_line=None, on_tick=None):
+def launch(run_dir, script, timeout, on_line=None, on_tick=None, env=None):
     """Run one generated script. -> (exit code, seconds, stdout, stderr).
 
     An exit code of None means the script was still going when the timeout
@@ -251,14 +282,30 @@ def launch(run_dir, script, timeout, on_line=None, on_tick=None):
     the exchanges that did come back rather than an empty transcript. A timeout
     of 0 or None is no limit at all, rather than a script killed the instant it
     starts, which is the only thing a caller could mean by it.
+
+    `env` is added to this process's environment for the child, and is how a
+    lora_server client is told which server to talk to (see
+    server_pool.SERVER_ENV). An addition rather than a replacement, because a
+    generated script also needs whatever PATH, HF_HOME and CUDA_* the sweep is
+    being run under; and an environment variable rather than an argument
+    because it must not reach script_source -- which server an individual ran
+    against is an accident of the batch it landed in, not part of what that
+    individual is.
+
+    Every child gets PYTHONIOENCODING as well -- see CHILD_ENCODING, which is
+    not optional and not about servers.
     """
     script_path = os.path.join(run_dir, script)
     started = time.time()
+    child_env = dict(os.environ)
+    child_env[CHILD_ENCODING] = "utf-8"
+    if env:
+        child_env.update({name: str(value) for name, value in env.items()})
     # cwd is the run folder, so the caches unsloth drops stay there.
     child = subprocess.Popen(
         [sys.executable, "-u", script_path],
         cwd=run_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding="utf-8", errors="replace",
+        text=True, encoding="utf-8", errors="replace", env=child_env,
     )
     out, err = [], []
     readers = [threading.Thread(target=_drain, args=(child.stdout, out, on_line)),
@@ -325,9 +372,17 @@ def elapsed(seconds):
 
 # The line a generated script prints once its blend is built and set active --
 # the end of the long silent part, and the only startup line worth repeating.
-# Both templates print it, and both name the rank of the finished blend in it.
+# Every template prints it, and every one names the rank of the finished blend.
 _READY = "Active adapter:"
 _RANK = re.compile(r"rank (\d+)")
+
+# What a lora_server client prints before it sends its build plan. Only the
+# remote template prints it, and it is the last thing said before a silence
+# that can run to minutes on an svd node -- so it is what tells Progress that
+# the silence is a blend being folded on a server rather than a base model
+# being loaded here. Saying "still loading the base model" about a script that
+# never loads one sends you looking in the wrong place.
+_REMOTE = "SERVER:"
 
 
 class Progress:
@@ -351,7 +406,7 @@ class Progress:
     """
 
     __slots__ = ("script", "prompts", "every", "_say", "_clock",
-                 "_started", "_last", "_asked", "_loaded")
+                 "_started", "_last", "_asked", "_loaded", "_remote")
 
     def __init__(self, script, prompts, every, say, clock=time.time):
         self.script = script
@@ -368,10 +423,17 @@ class Progress:
         self._started = self._last = clock()
         self._asked = 0
         self._loaded = False
+        # Set by the script itself, if it turns out to be a lora_server client.
+        # Not asked of the source up front: this reads what a running script
+        # says about itself, and one line is cheaper than another argument
+        # threaded from the step through launch_batch to here.
+        self._remote = None
 
     def line(self, text):
         """Take one line of the script's stdout, and speak if it warrants it."""
-        if text.startswith(_READY):
+        if text.startswith(_REMOTE):
+            self._remote = text[len(_REMOTE):].strip()
+        elif text.startswith(_READY):
             self._loaded = True
             rank = _RANK.search(text)
             self._speak("model ready" if not rank
@@ -385,9 +447,17 @@ class Progress:
 
     def tick(self, seconds):
         """Take a moment in which the script printed nothing. Break long silences."""
-        if self._due():
-            self._speak("still loading the base model" if not self._loaded
-                        else "still on " + self._where())
+        if not self._due():
+            return
+        if self._loaded:
+            self._speak("still on " + self._where())
+        elif self._remote:
+            # Nothing is loading: the model has been up on that server since
+            # before this script started, and what the silence is is the blend
+            # being folded -- an svd node runs to a minute or more on its own.
+            self._speak("still building the blend on %s" % self._remote)
+        else:
+            self._speak("still loading the base model")
 
     def _where(self):
         """The prompt it is on, out of however many there are to do."""
@@ -403,7 +473,7 @@ class Progress:
         self._say(self.script, "%s, %s" % (message, elapsed(self._last - self._started)))
 
 
-def launch_batch(run_dir, scripts, timeout, watch=None):
+def launch_batch(run_dir, scripts, timeout, watch=None, envs=None):
     """Run these scripts at once. -> one launch() result each, in `scripts` order.
 
     Results come back in the order asked for, not the order they finished, so a
@@ -421,17 +491,25 @@ def launch_batch(run_dir, scripts, timeout, watch=None):
 
     The seconds each result carries are still that script's own wall clock, so
     they overlap and no longer add up to the time the batch took.
+
+    `envs` is one environment per script, in the same order -- what
+    server_pool.Pool.envs_for() hands back, so the k-th script of a batch talks
+    to the k-th server. Positional rather than a queue for the reason the batch
+    itself is a fixed ceiling: the caller caps the batch at the pool's size, so
+    every script in one has a server to itself and nothing has to wait.
     """
-    def one(script):
+    def one(index, script):
         reporter = watch(script) if watch is not None else None
+        env = envs[index] if envs else None
         if reporter is None:
-            return launch(run_dir, script, timeout)
-        return launch(run_dir, script, timeout, reporter.line, reporter.tick)
+            return launch(run_dir, script, timeout, env=env)
+        return launch(run_dir, script, timeout, reporter.line, reporter.tick, env)
 
     if len(scripts) == 1:                       # the sequential case, unchanged
-        return [one(scripts[0])]
+        return [one(0, scripts[0])]
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(scripts)) as pool:
-        running = [pool.submit(one, script) for script in scripts]
+        running = [pool.submit(one, index, script)
+                   for index, script in enumerate(scripts)]
         return [future.result() for future in running]
 
 

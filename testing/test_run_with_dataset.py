@@ -63,6 +63,7 @@ import time
 
 from blends import generate_runs
 from blends import process_run
+from blends import server_pool
 from config import settings as config
 import evaluators
 from storage import add_dataset
@@ -219,9 +220,25 @@ def run_all(conn, run_id, rows, run_dir, dataset, prompts, conf, options,
     same rule that an individual which crashes is a row rather than a stopped
     pass, and the same per-individual commit, so an interrupted pass keeps what
     came back.
+
+    And the same servers, when the scripts are lora_server clients: a sweep run
+    against a pool is tested against one too, because the scripts being run here
+    are that sweep's own, re-pointed at other questions. A pass that had to fall
+    back to loading the model per individual would be testing something the
+    search never built.
     """
     size = process_run.batch_size(
         conf.get("PROCESS_RUN_BATCH_SIZE", config.PROCESS_RUN_BATCH_SIZE))
+
+    pool = server_pool.pool_for(conf, rows[0]["script_source"],
+                                generate_runs.base_model_name(
+                                    conf.get("BASE_MODEL")),
+                                run_dir, config, say=say)
+    if pool is not None and size > pool.size:
+        say("batch size %d capped to the %d server(s) in the pool"
+            % (size, pool.size))
+        size = pool.size
+
     groups = process_run.batches(rows, size)
     every = conf.get("PROCESS_RUN_PROGRESS_SECONDS",
                      config.PROCESS_RUN_PROGRESS_SECONDS)
@@ -240,45 +257,60 @@ def run_all(conn, run_id, rows, run_dir, dataset, prompts, conf, options,
     failures = 0
     started = time.time()
     number = 0
-    for position, group in enumerate(groups, 1):
-        first = number + 1
-        for offset, row in enumerate(group):
-            say("[%d/%d] %s  %s  (training quality %.3f)"
-                % (first + offset, len(rows), row["script_name"],
-                   script_chromosome(row["script_source"]) or row["chromosome"],
-                   row["quality"]))
-        if size > 1:
-            say("        batch %d/%d: %d running at once"
-                % (position, len(groups), len(group)))
+    # The pool goes down whatever happens: this pass is the last thing
+    # main.py does, and a server left up would hold a copy of the base
+    # model after the run that started it has finished.
+    try:
+        for position, group in enumerate(groups, 1):
+            first = number + 1
+            for offset, row in enumerate(group):
+                say("[%d/%d] %s  %s  (training quality %.3f)"
+                    % (first + offset, len(rows), row["script_name"],
+                       script_chromosome(row["script_source"]) or row["chromosome"],
+                       row["quality"]))
+            if size > 1:
+                say("        batch %d/%d: %d running at once"
+                    % (position, len(groups), len(group)))
 
-        results = process_run.launch_batch(
-            run_dir, [row["script_name"] for row in group], options.timeout,
-            watch)
+            # One server per script of the batch, positionally -- the batch is
+            # capped at the pool's size above, so nothing queues.
+            envs = None if pool is None else pool.envs_for(len(group))
 
-        # Stored in the order they were asked for rather than the order they
-        # finished, and from this thread only, so the table is written exactly
-        # as it would have been one at a time.
-        for row, (code, seconds, out, err) in zip(group, results):
-            number += 1
-            verdict = process_run.verdict_of(code)
-            if code != 0:
-                failures += 1
-            transcript = process_run.exchanges(out)
-            result_id = store.add_test_result(
-                conn, run_id, row,
-                script_chromosome(row["script_source"]) or row["chromosome"],
-                dataset, prompts, row["quality"], seconds, code, verdict,
-                process_run.drawn_weights(out), out, err, transcript)
-            conn.commit()
-            say("        %s%-9s %6.1fs  %d answer(s) -> test result %d"
-                % ("" if size == 1 else row["script_name"] + "  ",
-                   verdict, seconds, len(transcript), result_id))
-            if code != 0:
-                # Show why, so a systemic problem is obvious without a query.
-                tail = [line for line in (out + err).splitlines()
-                        if line.strip()][-1:]
-                if tail:
-                    say("        %s" % tail[0][:100])
+            results = process_run.launch_batch(
+                run_dir, [row["script_name"] for row in group], options.timeout,
+                watch, envs)
+
+            # Stored in the order they were asked for rather than the order they
+            # finished, and from this thread only, so the table is written exactly
+            # as it would have been one at a time.
+            for row, (code, seconds, out, err) in zip(group, results):
+                number += 1
+                verdict = process_run.verdict_of(code)
+                if code != 0:
+                    failures += 1
+                transcript = process_run.exchanges(out)
+                result_id = store.add_test_result(
+                    conn, run_id, row,
+                    script_chromosome(row["script_source"]) or row["chromosome"],
+                    dataset, prompts, row["quality"], seconds, code, verdict,
+                    process_run.drawn_weights(out), out, err, transcript)
+                conn.commit()
+                say("        %s%-9s %6.1fs  %d answer(s) -> test result %d"
+                    % ("" if size == 1 else row["script_name"] + "  ",
+                       verdict, seconds, len(transcript), result_id))
+                if code != 0:
+                    # Show why, so a systemic problem is obvious without a query.
+                    tail = [line for line in (out + err).splitlines()
+                            if line.strip()][-1:]
+                    if tail:
+                        say("        %s" % tail[0][:100])
+
+            # Between batches only -- see the process step.
+            if pool is not None:
+                pool.maintain()
+    finally:
+        if pool is not None:
+            pool.stop()
 
     say("\ntested %d in %.1fs, %d failed"
         % (len(rows), time.time() - started, failures))
@@ -701,8 +733,10 @@ def main(argv=None):
 
     # Whether the venv is needed is a property of the scripts themselves: the
     # mocked ones load nothing, and demanding it for them would put a GPU-less
-    # machine out of reach.
-    real = process_run.imports_unsloth(rows[0]["script_source"])
+    # machine out of reach. A lora_server client imports nothing itself, but the
+    # servers run_all() starts for it are launched with sys.executable and do.
+    remote = server_pool.wanted(rows[0]["script_source"])
+    real = process_run.imports_unsloth(rows[0]["script_source"]) or remote
     if real:
         process_run.check_interpreter()
 
@@ -712,7 +746,10 @@ def main(argv=None):
           % (len(rows), minimum, prompts))
     print("wrote %d script(s) to %s, each re-pointed at the testing set"
           % (written, run_dir))
-    if real:
+    if remote:
+        print("these are lora_server clients: the servers load the base model "
+              "once between them, not once each\n")
+    elif real:
         print("each one loads the base model, so this takes a while\n")
     else:
         print("these are mocked scripts: nothing is loaded, so this is quick\n")
