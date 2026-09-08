@@ -12,9 +12,12 @@ OpenAI-compatible endpoint, or a model loaded here with unsloth the way the
 generated scripts load theirs. Everything below goes through common.ask_judge()
 either way, so the rubric and the score are the same instrument on both.
 
-The other two judging evaluators beside it are this one plus a bigger prompt:
-llm_judge_reference and llm_judge_baseline both call prepare() and, when they
-have nothing extra to show the judge, score() from here.
+The other judging evaluators beside it are this one plus a prompt of their own:
+llm_judge_reference, llm_judge_answers and llm_judge_baseline all call prepare()
+from here, and the two that show the judge the question fall back to score()
+here as well when they have nothing extra to show it. llm_judge_answers cannot
+-- withholding the question is what it is for -- so it fails such an exchange
+instead.
 """
 
 from evaluators import common
@@ -27,7 +30,9 @@ from evaluators import common
 # text: nothing else reads it, and the module that sends it is the one place a
 # reader looks to find out what "graded on its own merits" actually means.
 # llm_judge_reference falls back to score() below for an item with no reference,
-# so it grades against this too; panel keeps its own copy.
+# so it grades against this too; panel keeps its own copy. llm_judge_answers
+# does not fall back here: its whole point is that the judge is never shown the
+# question, and this rubric sends it.
 #
 # The cost of the move: settings.py is snapshotted into every sweep, and this is
 # not, so a sweep no longer records the rubric it was judged under. score()

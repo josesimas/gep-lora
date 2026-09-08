@@ -497,8 +497,8 @@ and the delta per individual, which is the number the whole script exists to pro
 
 **`testing_conf()` is not optional.** It hands the evaluators the sweep's settings with
 `TRAINING_SET`/`TRAINING_COUNT` swapped for the testing dataset -- the same substitution
-`repoint()` makes to the scripts. `llm_judge_reference` and `similarity` read the reference
-beside each question and `llm_judge_baseline` asks the base model those questions, so
+`repoint()` makes to the scripts. `llm_judge_reference`, `llm_judge_answers` and
+`similarity` read the reference beside each question and `llm_judge_baseline` asks the base model those questions, so
 without the swap all three would silently grade a testing answer against a training
 question's reference.
 
@@ -523,9 +523,9 @@ how many rows have moved on from it and says so. Re-run `trees runs process eval
 to test the current population in that case.
 
 The `evaluate` step scores answers the way `EVALUATOR` in `settings.py` says. Two of the
-six registered evaluators are local (`similarity`, `heuristic`); the other four
-(`llm_judge`, `llm_judge_reference`, `llm_judge_baseline`, `panel`) ask a judge
-model. It is resumable either way — already-scored exchanges
+seven registered evaluators are local (`similarity`, `heuristic`); the other five
+(`llm_judge`, `llm_judge_reference`, `llm_judge_answers`, `llm_judge_baseline`,
+`panel`) ask a judge model. It is resumable either way — already-scored exchanges
 are skipped unless `--force` — and `python start_run.py --evaluators` lists what is
 registered.
 
@@ -982,8 +982,9 @@ appeared to manage VRAM would be claiming to test something it cannot.
   search optimises toward whatever the chosen evaluator rewards, so it is frozen into a
   sweep like every other setting and a step reads the sweep's, never `settings.py`'s.
   The `evaluators/` package is a registry, **one module per evaluator** (`llm_judge.py`,
-  `llm_judge_reference.py`, `llm_judge_baseline.py`, `similarity.py`, `heuristic.py`,
-  `panel.py`) plus `common.py` for what more than one of them needs. An evaluator is a
+  `llm_judge_reference.py`, `llm_judge_answers.py`, `llm_judge_baseline.py`,
+  `similarity.py`, `heuristic.py`, `panel.py`) plus `common.py` for what more than one of
+  them needs. An evaluator is a
   name, a description, `prepare(conf,
   pending, context=None)` (once per step: discover the model, load the eval set's own
   answers, fill the base-answer cache, validate its knobs) and `score(item, prepared)`
@@ -1004,6 +1005,9 @@ appeared to manage VRAM would be claiming to test something it cannot.
   against the prompt it actually ran with. `JUDGE_REFERENCE_SYSTEM_PROMPT` and
   `JUDGE_BASELINE_SYSTEM_PROMPT` moved the same way, into
   `evaluators/llm_judge_reference.py` and `evaluators/llm_judge_baseline.py`;
+  `JUDGE_ANSWERS_SYSTEM_PROMPT` (`evaluators/llm_judge_answers.py`) was never a
+  setting at all -- that evaluator arrived after the move, so it has no stored value
+  in any sweep to fall back to and reads the constant alone;
   `panel` keeps its own copy of the merit and reference rubrics, but not of the
   baseline one, which nothing else grades by. **No prompt is a setting any
   more** -- `settings.py` holds knobs, the evaluators hold their own text.
@@ -1011,11 +1015,20 @@ appeared to manage VRAM would be claiming to test something it cannot.
   they belong to — and ends in the `common.register()` call that adds it; **importing the
   module is the registration**, so a new evaluator is a new file plus one import line in
   `evaluators/__init__.py`, and nothing else in the pipeline changes. That naming is also
-  what lets `llm_judge_reference` and `llm_judge_baseline` be `llm_judge.prepare()` and
-  `llm_judge.score()` plus a bigger prompt. Anything a second evaluator would want too
+  what lets `llm_judge_reference`, `llm_judge_answers` and `llm_judge_baseline` be
+  `llm_judge.prepare()` and a prompt of their own. Anything a second evaluator would want too
   belongs in `common.py`: the registry types, the judge transport (`ask_judge`,
   `endpoint_settings`, `discover_model`, `parse_reply`), the reference answers and the
-  tokeniser all live there because two or more of the six use each.
+  tokeniser all live there because two or more of the seven use each.
+- **`llm_judge_answers` is the one that is shown no question.** It finds the reference
+  the way `llm_judge_reference` does -- keyed on the exchange's question, so an answer
+  cannot be paired with somebody else's reference -- and then sends the judge the
+  reference and the answer alone. With the question in front of it a judge grades merit
+  as well as manner; without it the score is agreement with the reference and nothing
+  else, which is a *match* score rather than a quality one. An exchange with no
+  reference **fails that exchange** rather than falling back to `llm_judge.score()` the
+  way `llm_judge_reference` does: the fallback would send the question, which is the one
+  thing this evaluator exists not to do.
   Two judge parsing traps already fixed: the score is requested *before* the reason (a long
   reason must not truncate it away), and `JUDGE_MAX_TOKENS` is generous because a reasoning
   judge returns an empty message if it runs out mid-thought.

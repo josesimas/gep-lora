@@ -1295,9 +1295,13 @@ def main(argv=None):
         # Where the judge runs is the other half of "how will this be scored",
         # and it is a setting the same way: named here, frozen into the sweep.
         backend = evaluators.backend_of(config.snapshot())
-        print("\n  The four judging evaluators ask their judge through "
+        # Counted off the registry rather than written out, so adding an
+        # evaluator that asks a model does not leave this line saying "four".
+        judging = sum(1 for name, _description in evaluators.available()
+                      if evaluators.get(name).needs_judge)
+        print("\n  The %d judging evaluators ask their judge through "
               "JUDGE_BACKEND = %r:\n  %s"
-              % (backend,
+              % (judging, backend,
                  "loaded here with unsloth, %s"
                  % (config.JUDGE_MODEL or "and JUDGE_MODEL must name one")
                  if backend == evaluators.UNSLOTH else

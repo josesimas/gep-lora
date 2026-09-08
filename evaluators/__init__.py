@@ -22,6 +22,8 @@ a stored sweep can say how:
 
     llm_judge.py             a judge model grades the answer on its own merits
     llm_judge_reference.py   the same, but shown the dataset's own answer too
+    llm_judge_answers.py     the same two answers, without the question: the
+                             blend's reply and the dataset's, and nothing else
     llm_judge_baseline.py    the same, but shown what the base model itself
                              said, and asked how much the blend improved on it
     similarity.py            token overlap with the dataset's answer, no model
@@ -36,7 +38,7 @@ a stored sweep can say how:
 
 **Where the judge runs is not which evaluator ran.** JUDGE_BACKEND picks between
 an OpenAI-compatible endpoint and a model loaded in this process with unsloth --
-the same way the generated scripts load theirs -- and the four judging
+the same way the generated scripts load theirs -- and the five judging
 evaluators above are indifferent to it: they build a prompt and call
 common.ask_judge(), which is where the two backends meet. So a sweep can be run
 with no server up at all, and a sweep graded locally is graded by the same
@@ -62,8 +64,8 @@ resumable.
 
 Every module here keeps the same two names, `prepare` and `score`, because the
 file it lives in already says which evaluator they belong to. That is also what
-lets one build on another: llm_judge_reference and llm_judge_baseline are
-llm_judge's prepare() and score() plus a bigger prompt.
+lets one build on another: llm_judge_reference, llm_judge_answers and
+llm_judge_baseline are llm_judge's prepare() and a prompt of their own.
 
 **No knob lives in this package.** They are all in settings.py, prefixed by the
 evaluator that reads them (JUDGE_*, BASELINE_*, SIMILARITY_*, HEURISTIC_*,
@@ -90,7 +92,8 @@ from evaluators.common import (API_KEY, BACKENDS, DEFAULT, ENDPOINT, UNSLOTH,
 # is happiest to read them in: the judges, then the local ones.
 from evaluators import llm_judge                # noqa: F401,E402
 from evaluators import llm_judge_reference      # noqa: F401,E402
-from evaluators import llm_judge_baseline       # noqa: F401,E402
+from evaluators import llm_judge_answers         # noqa: F401,E402
+from evaluators import llm_judge_baseline        # noqa: F401,E402
 from evaluators import similarity               # noqa: F401,E402
 from evaluators import heuristic                # noqa: F401,E402
 from evaluators import panel                    # noqa: F401,E402

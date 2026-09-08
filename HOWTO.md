@@ -275,6 +275,7 @@ python start_run.py --evaluators
 | --- | --- | --- |
 | `llm_judge` | a judge model grades the answer on its own merits | yes |
 | `llm_judge_reference` | the same judge, also shown the dataset's own answer | yes |
+| `llm_judge_answers` | the same two answers, without the question | yes |
 | `similarity` | word overlap with the dataset's own answer | no |
 | `heuristic` | length, repetition, required/forbidden patterns | no |
 | `panel` | several judge models, aggregated | yes |
@@ -323,9 +324,10 @@ with `BASE_MODEL` would have the model under test marking its own homework.
 `JUDGE_LOCAL_CHAT_TEMPLATE` are the only knobs it adds.
 
 `JUDGE_SYSTEM_PROMPT` (or `JUDGE_REFERENCE_SYSTEM_PROMPT`, or
-`JUDGE_BASELINE_SYSTEM_PROMPT`) is what the search optimises for. Read it first.
-None of the three is a setting: each is a constant at the top of the evaluator
-that sends it — `evaluators/llm_judge.py`, `evaluators/llm_judge_reference.py`,
+`JUDGE_ANSWERS_SYSTEM_PROMPT`, or `JUDGE_BASELINE_SYSTEM_PROMPT`) is what the
+search optimises for. Read it first. None of the four is a setting: each is a
+constant at the top of the evaluator that sends it — `evaluators/llm_judge.py`,
+`evaluators/llm_judge_reference.py`, `evaluators/llm_judge_answers.py`,
 `evaluators/llm_judge_baseline.py` — and `evaluators/panel.py` keeps its own
 copy of the first two.
 

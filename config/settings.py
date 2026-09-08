@@ -12,7 +12,7 @@ Change a value and re-run; nothing else needs editing.
 # --- the population --------------------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 10
+COUNT = 5
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time -- and, since a sweep records what it drew,
@@ -71,7 +71,7 @@ TESTING_RUN_DIR = "run_testing"
 # is used as it stands, so the file need not sit in the project folder at all.
 # generate_runs.py resolves it and stamps the result into each script, so a
 # script no longer has to find this file by walking up from itself.
-TRAINING_SET = "datasets/medical_training_lora_dataset.json"
+TRAINING_SET = "datasets/medical_testing_lora_dataset.json"
 
 # How many records of TRAINING_SET each run is judged on. The first
 # TRAINING_COUNT of them, in file order, or the whole file when it holds fewer
@@ -108,7 +108,7 @@ TRAINING_COUNT = 20
 # and mind that they have to be splits of the same dataset -- a validation set
 # from another task would be recorded as this sweep's, and mean nothing.
 VALIDATION_SET = None
-TESTING_SET = None #"datasets/medical_testing_lora_dataset.json"
+TESTING_SET = "datasets/medical_validation_lora_dataset.json"
 
 # How good an individual has to have been on the training split before
 # test_run_with_dataset.py will spend a base-model load asking it the testing
@@ -324,6 +324,13 @@ PROCESS_RUN_PROGRESS_SECONDS = 5
 #                          can see *style*: a judge grading on merit alone
 #                          happily rewards a helpful prose answer from a blend
 #                          that was supposed to rhyme.
+#   "llm_judge_answers"    the same two answers as "llm_judge_reference" --
+#                          the dataset's and the blend's -- and *not* the
+#                          question. Needs an endpoint and a dataset with
+#                          assistant turns. A judge that can see the question
+#                          quietly grades merit as well as manner; with only
+#                          the two answers in front of it the score is
+#                          agreement with the reference and nothing else.
 #   "llm_judge_baseline"   the same judge, shown what the *base model* replied
 #                          to the same question as well, and asked how much the
 #                          blend improved on it. Needs an endpoint, and one run
@@ -348,12 +355,13 @@ PROCESS_RUN_PROGRESS_SECONDS = 5
 # it does nothing to a sweep already running, which is what keeps every fitness
 # number in one sweep comparable with the others. `python start_run.py --evaluators`
 # lists what is registered.
-EVALUATOR = "llm_judge"
+EVALUATOR = "llm_judge_answers"
 
 
 # --- the judge model, for the evaluators that ask one -----------------------
 #
-# Read by "llm_judge", "llm_judge_reference", "llm_judge_baseline", and by
+# Read by "llm_judge", "llm_judge_reference", "llm_judge_answers",
+# "llm_judge_baseline", and by
 # "panel" for everything except which models sit on it. The API key is deliberately *not* here: a sweep
 # writes its settings into the database, so the key is read from the
 # JUDGE_API_KEY environment variable by evaluators/common.py instead.
@@ -459,7 +467,8 @@ JUDGE_LOCAL_CHAT_TEMPLATE = None
 # scores, and a re-run does not ask about them again.
 #
 # Only the evaluators that ask a model (llm_judge, llm_judge_reference,
-# llm_judge_baseline, panel) abandon anything, whichever backend they ask it
+# llm_judge_answers, llm_judge_baseline, panel) abandon anything, whichever
+# backend they ask it
 # through -- a local *scorer* like "similarity" costs nothing to finish, and
 # cutting it short would only lose detail.
 #
@@ -474,6 +483,10 @@ JUDGE_ABANDON_FRACTION = 0.1
 #   JUDGE_SYSTEM_PROMPT            evaluators/llm_judge.py
 #   JUDGE_REFERENCE_SYSTEM_PROMPT  evaluators/llm_judge_reference.py
 #   JUDGE_BASELINE_SYSTEM_PROMPT   evaluators/llm_judge_baseline.py
+#
+# JUDGE_ANSWERS_SYSTEM_PROMPT (evaluators/llm_judge_answers.py) was never a
+# setting at all -- that evaluator arrived after the move, so it has no stored
+# value in any sweep to fall back to.
 #
 # "panel" reads the first two as well, and keeps its own copy of each, so its
 # rubrics can be tuned for a panel without moving what the single-judge

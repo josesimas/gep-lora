@@ -817,6 +817,7 @@ python start_run.py --evaluators     # what is registered, and which one is curr
 |---|---|---|
 | `llm_judge` | a judge model grades the answer on its own merits | a judge |
 | `llm_judge_reference` | the same judge, shown the dataset's own answer to that question as well | a judge, a dataset with assistant turns |
+| `llm_judge_answers` | the same two answers, **without the question**: the dataset's answer and the blend's | a judge, a dataset with assistant turns |
 | `llm_judge_baseline` | the same judge, shown what the **base model** answered, scoring the improvement | a judge, one cached run of the base model |
 | `similarity` | token or character overlap with the dataset's answer | a dataset with assistant turns |
 | `heuristic` | local checks: length, repetition, a required and a forbidden pattern | nothing |
@@ -825,7 +826,7 @@ python start_run.py --evaluators     # what is registered, and which one is curr
 "A judge" is a model, and `JUDGE_BACKEND` says where it runs: an
 OpenAI-compatible **endpoint**, or one loaded **here with unsloth**, the way the
 generated scripts load the model they blend. See
-[Where the judge runs](#where-the-judge-runs) — the four evaluators above are
+[Where the judge runs](#where-the-judge-runs) — the five evaluators above are
 indifferent to it.
 
 All six produce the same thing — a `quality` in 0..1 and a short `reason` on
@@ -916,7 +917,7 @@ separate backend via the `anthropic` SDK.
 
 The blends are built and prompted with **unsloth**, in a process per individual.
 The judge need not be: `JUDGE_BACKEND` picks between two transports, and the
-four judging evaluators are indifferent to which one a sweep chose.
+five judging evaluators are indifferent to which one a sweep chose.
 
 | `JUDGE_BACKEND` | Where the tokens come from | Needs |
 |---|---|---|
@@ -992,6 +993,38 @@ settings.
 A prompt with no reference is graded on merit instead of being dropped: a
 shrunken eval set for one individual would make its fitness incomparable with
 the rest.
+
+#### `llm_judge_answers` — the two answers, and not the question
+
+The same comparison as `llm_judge_reference` with one thing taken away: the
+judge is handed the **reference answer** and the **blend's answer**, and never
+sees the question either of them is of.
+
+That is the whole difference, and it is the point. With the question in front of
+it a judge quietly grades merit as well as manner — a blend that answers
+helpfully but nothing like its training data still reads as a good answer to the
+question, and picks up score for it. Without the question there is no such
+credit to give: the reference is the only standard in the prompt, so the score
+measures agreement with it and nothing else. The prompt is also a question
+shorter per call, which on a local judge with `JUDGE_LOCAL_MAX_SEQ_LENGTH` to
+spend is not nothing.
+
+The cost is symmetrical, and worth knowing before selecting on it: the judge
+cannot tell a blend that misread the question from one that answered a
+neighbouring question well, because it never sees which question either answer
+is of. It is a *match* score, not a quality score — `llm_judge` grades merit,
+`llm_judge_reference` does both at once.
+
+The question is still what **finds** the reference (`common.reference_for()`
+keys on it, so an answer cannot be paired with somebody else's reference) and is
+then dropped. An exchange with no reference **fails that exchange** rather than
+falling back to merit grading the way `llm_judge_reference` does: the fallback
+would send the question — the one thing this evaluator exists not to do — and
+score a different quantity from the answers around it. Its rubric is
+`JUDGE_ANSWERS_SYSTEM_PROMPT` in
+[`evaluators/llm_judge_answers.py`](evaluators/llm_judge_answers.py), and it
+opens by telling the judge the question is withheld deliberately, because a
+judge that has not been told looks for it and complains instead of grading.
 
 #### `llm_judge_baseline` — grading the improvement on the base model
 
@@ -1202,8 +1235,8 @@ pipeline changes: every step reaches an evaluator through `get(EVALUATOR)`.
 
 Every module here calls its two functions `prepare` and `score`, since the file
 name already says which evaluator they belong to — and that is what lets one
-build on another. `llm_judge_reference.py` and `llm_judge_baseline.py` are
-`llm_judge.prepare()` and `llm_judge.score()` plus a bigger prompt.
+build on another. `llm_judge_reference.py`, `llm_judge_answers.py` and
+`llm_judge_baseline.py` are `llm_judge.prepare()` and a prompt of their own.
 
 `prepare()` is where the once-per-step work goes — discovering a model, loading
 the eval set's answers with `common.load_references()`, filling the base-answer
@@ -2255,9 +2288,10 @@ run, which is what makes the two numbers comparable at all.
 
 **The scoring half reads the sweep's settings with one substitution**: the eval
 set is the testing dataset (`testing_conf()`) — the same swap `repoint()` makes
-to the scripts. Three of the six evaluators grade against the eval set's own
-answers (`llm_judge_reference` and `similarity` read the reference beside each
-question; `llm_judge_baseline` asks the base model those questions), and left
+to the scripts. Four of the seven evaluators grade against the eval set's own
+answers (`llm_judge_reference`, `llm_judge_answers` and `similarity` read the
+reference beside each question; `llm_judge_baseline` asks the base model those
+questions), and left
 pointing at `TRAINING_SET` every one of them would quietly compare a testing
 answer with a training question's reference.
 
@@ -2758,7 +2792,7 @@ tools/        dev aids that are not part of the pipeline
 
 | Path | What it is |
 |---|---|
-| `evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_baseline.py`, `similarity.py`, `heuristic.py`, `panel.py` |
+| `evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_answers.py`, `llm_judge_baseline.py`, `similarity.py`, `heuristic.py`, `panel.py` |
 | `evaluators/common.py` | what they share: the registry, the judge transport, the reference answers, the tokeniser |
 | `evaluators/local_model.py` | the other half of the judge transport: the judge loaded here with unsloth, for `JUDGE_BACKEND = "unsloth"` |
 

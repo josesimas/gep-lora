@@ -7,11 +7,11 @@ evaluators beside it, and nothing here is an evaluator itself:
     the registry        Prepared, Evaluator, register(), get(), available()
     the judge transport ask_judge(), judge_settings(), resolve_model(),
                         discover_model(), parse_reply(), judge_note() --
-                        llm_judge, llm_judge_reference, llm_judge_baseline and
-                        panel all speak to a model
+                        llm_judge, llm_judge_reference, llm_judge_answers,
+                        llm_judge_baseline and panel all speak to a model
     the references      load_references(), reference_for(), prepare_references()
-                        -- llm_judge_reference, similarity and panel all grade
-                        against the dataset's own answer
+                        -- llm_judge_reference, llm_judge_answers, similarity
+                        and panel all grade against the dataset's own answer
     the tokeniser       WORD, tokens() -- similarity and heuristic both count
                         words
     the steps' own      needs_grading(), abandon_after() -- what the evaluate

@@ -39,7 +39,7 @@ up yet, or to change your mind about which evaluator a testing set deserves.
 
 The scoring half reads the sweep's settings with one substitution -- the eval
 set is the testing dataset (`testing_conf()`), the same swap `repoint()` makes
-to the scripts. Three of the six evaluators grade against the eval set's own
+to the scripts. Four of the seven evaluators grade against the eval set's own
 answers, and left pointing at TRAINING_SET every one of them would silently
 compare a testing answer with a training question's reference.
 
@@ -339,10 +339,11 @@ def testing_conf(conf, dataset, count):
     """The sweep's settings, with the eval set pointed at the testing dataset.
 
     The same substitution repoint() makes to the scripts, made to the settings
-    the evaluators read -- and it has to be made, because three of the six
-    grade against the eval set's own answers: llm_judge_reference and
-    similarity read the reference beside each question, and llm_judge_baseline
-    asks the base model the questions it is comparing against. Left pointing at
+    the evaluators read -- and it has to be made, because four of the seven
+    grade against the eval set's own answers: llm_judge_reference,
+    llm_judge_answers and similarity read the reference beside each question,
+    and llm_judge_baseline asks the base model the questions it is comparing
+    against. Left pointing at
     TRAINING_SET, every one of them would grade a testing answer against a
     training question's reference -- silently, since both files parse.
 
@@ -654,7 +655,7 @@ def main(argv=None):
     if args.from_db:
         # The sweep's questions, out of the sweep. repoint() writes every split
         # it holds beside the database and points the settings at them, which is
-        # also what the evaluators need: three of the six read the eval set's
+        # also what the evaluators need: four of the seven read the eval set's
         # own answers, and testing_conf() below swaps in whichever dataset this
         # pass is actually asking.
         conf = db_datasets.repoint(conn, run_id, conf)
