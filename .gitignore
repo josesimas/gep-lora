@@ -15,6 +15,7 @@ unsloth_compiled_cache
 run_tmp
 .idea
 dbtemplates
+NUL
 
 # Ignore everything inside the adapter folders by default. This ignores their
 # *contents* rather than the folders themselves: git cannot re-include a file
@@ -33,3 +34,5 @@ datasets/finetuning_medical_validation.csv
 datasets/medical_testing_lora_dataset.json
 datasets/medical_training_lora_dataset.json
 datasets/medical_validation_lora_dataset.json
+
+*.bat

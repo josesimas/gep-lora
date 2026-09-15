@@ -12,6 +12,7 @@ words the model uses.
     python -m adapters.test_lora                          # keep asking, model stays loaded
     python -m adapters.test_lora --lora Lora003 "Describe autumn."   # or loras/Lora003
     python -m adapters.test_lora --lora path/to/any_adapter "Hi there!"
+    python -m adapters.test_lora --no-unsloth "Hi there!"   # plain transformers, faster import
 
 Both answers come out of a single base-model load. The adapter is attached once
 and switched off for the "before" answer -- `with model.disable_adapter()`, the
@@ -23,16 +24,26 @@ With no question on the command line it stays open and keeps asking, which is
 the point: the load is the expensive part, and a comparison is usually worth
 making several times over before it tells you anything.
 
-Interpreter: needs the venv one level up, like everything else that loads a
-model --
+Every phase is timed and the table is printed when the script ends -- the
+import, the base-model load, attaching the adapter, the inference setup, and
+each answer, base and adapted apart, with the tokens it generated. The phase
+names are the ones the generated scripts print as TIMING: lines, so the two can
+be read side by side. Time spent waiting at the prompt is a phase of its own,
+so an interactive session's wall clock is not mistaken for work.
 
-    D:\\sage-is\\loras\\.venv\\Scripts\\python.exe test_lora.py "Hi there!"
+Interpreter: needs the venv one level up, like everything else that loads a
+model, and runs as a module from the repo root -- `python adapters\\test_lora.py`
+cannot find the `adapters` package it imports from --
+
+    D:\\sage-is\\loras\\.venv\\Scripts\\python.exe -m adapters.test_lora "Hi there!"
 """
 
 import argparse
+import contextlib
 import json
 import os
 import sys
+import time
 
 # Match the training/inference environment: disable Xet download acceleration.
 os.environ["HF_HUB_DISABLE_XET"] = "1"
@@ -49,7 +60,8 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # itself -- and can still be written as the bare folder name now that the set
 # has moved under loras/.
 LORA_DIR = "loras"
-ADAPTER_NAME = "my_planning_coach-lora_adapter"
+#ADAPTER_NAME = "my_planning_coach-lora_adapter"
+ADAPTER_NAME = "Qwen2.5-1.5B-Instruct-medical-lora_adapter"
 DEFAULT_LORA = os.path.join(LORA_DIR, "Lora001", ADAPTER_NAME)
 
 MAX_SEQ = 2048
@@ -61,6 +73,62 @@ DEMO_PROMPTS = [
     "What's the capital of France?",
     "Tell me about the ocean.",
 ]
+
+
+class Timings:
+    """Seconds per phase, folded as they are measured and printed once at the end.
+
+    A phase keeps its calls, its total, its worst single call and the tokens it
+    generated, so a fixed cost paid once reads differently from a per-answer
+    cost paid every question. The clock starts when this is built.
+    """
+
+    def __init__(self):
+        self.started = time.perf_counter()
+        self.phases = {}  # name -> [calls, seconds, worst, tokens], in first-seen order
+
+    def add(self, name, seconds, tokens=0):
+        row = self.phases.setdefault(name, [0, 0.0, 0.0, 0])
+        row[0] += 1
+        row[1] += seconds
+        row[2] = max(row[2], seconds)
+        row[3] += tokens
+
+    @contextlib.contextmanager
+    def phase(self, name):
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.add(name, time.perf_counter() - start)
+
+    def report(self):
+        """The table: one row per phase, then what they add up to and the wall clock."""
+        wall = time.perf_counter() - self.started
+        rule = "=" * 72
+        print(rule)
+        print("TIMINGS")
+        print(rule)
+        print("%-18s %5s %9s %9s %9s %6s %6s %6s" % (
+            "phase", "calls", "total", "mean", "max", "share", "tokens", "tok/s"))
+        accounted = 0.0
+        for name, (calls, seconds, worst, tokens) in self.phases.items():
+            accounted += seconds
+            # Blank rather than 0 for a phase that generates nothing: only the
+            # generate rows have tokens to count.
+            count = "%6d" % tokens if tokens else ""
+            rate = "%6.1f" % (tokens / seconds) if tokens and seconds else ""
+            print(("%-18s %5d %8.2fs %8.2fs %8.2fs %5.1f%% %6s %6s" % (
+                name, calls, seconds, seconds / calls, worst,
+                100.0 * seconds / wall if wall else 0.0, count, rate)).rstrip())
+        print("-" * 72)
+        # What no phase covers: argument parsing, resolving the adapter,
+        # tokenising and decoding, printing.
+        other = max(wall - accounted, 0.0)
+        print("%-18s %5s %8.2fs %9s %9s %5.1f%%" % (
+            "other", "", other, "", "", 100.0 * other / wall if wall else 0.0))
+        print("%-18s %5s %8.2fs" % ("wall", "", wall))
+        print()
 
 
 def resolve_adapter(path):
@@ -105,50 +173,137 @@ def base_model_of(adapter_dir):
     return base
 
 
-def load(adapter_dir, base_model, max_seq):
+def load(adapter_dir, base_model, max_seq, timings, use_unsloth=True):
     """The base model with `adapter_dir` attached, ready to answer either way."""
-    # Unsloth patches transformers and peft as it loads, so it comes first.
-    from unsloth import FastLanguageModel
-    from unsloth.chat_templates import get_chat_template
-    import torch
-    from peft import PeftModel
+    if use_unsloth:
+        return load_unsloth(adapter_dir, base_model, max_seq, timings)
+    return load_plain(adapter_dir, base_model, timings)
 
+
+def describe(torch, base_model, adapter_dir, loader):
     print("GPU available: %s" % torch.cuda.is_available())
+    print("loader:  %s" % loader)
     print("base:    %s" % base_model)
     print("adapter: %s (rank %d)" % (adapter_dir, create_lora.rank_of(adapter_dir)))
 
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=base_model,
-        max_seq_length=max_seq,
-        dtype=None,
-        load_in_4bit=True,
-    )
-    model = PeftModel.from_pretrained(model, adapter_dir)
 
-    # The template both the training and the pipeline's eval use, so neither
-    # answer is being judged on a formatting difference.
-    tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
-    FastLanguageModel.for_inference(model)
-    # Qwen ships max_length in generation_config.json and transformers warns
-    # when both caps are set; clearing it leaves max_new_tokens in charge, the
-    # same fix the generated scripts carry.
-    model.generation_config.max_length = None
+def load_unsloth(adapter_dir, base_model, max_seq, timings):
+    """The pipeline's way: the same loader and chat template the generated scripts use."""
+    with timings.phase("import"):
+        # Unsloth patches transformers and peft as it loads, so it comes first.
+        from unsloth import FastLanguageModel
+        from unsloth.chat_templates import get_chat_template
+        import torch
+        from peft import PeftModel
+
+    describe(torch, base_model, adapter_dir, "unsloth")
+
+    with timings.phase("model_load"):
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=base_model,
+            max_seq_length=max_seq,
+            dtype=None,
+            load_in_4bit=True,
+        )
+    with timings.phase("attach"):
+        model = PeftModel.from_pretrained(model, adapter_dir)
+
+    with timings.phase("inference_setup"):
+        # The template both the training and the pipeline's eval use, so neither
+        # answer is being judged on a formatting difference.
+        tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
+        FastLanguageModel.for_inference(model)
+        # Qwen ships max_length in generation_config.json and transformers warns
+        # when both caps are set; clearing it leaves max_new_tokens in charge, the
+        # same fix the generated scripts carry.
+        model.generation_config.max_length = None
     return model, tokenizer
 
 
-def answer(model, tokenizer, question, max_new_tokens):
-    """One reply, from whatever adapter state the model is currently in."""
-    inputs = tokenizer.apply_chat_template(
+def load_plain(adapter_dir, base_model, timings):
+    """The same model and adapter through plain transformers + bitsandbytes + peft.
+
+    What --no-unsloth runs. Importing unsloth costs about twice what these three
+    do, most of it training libraries this script never touches, plus the
+    patching unsloth does to transformers as it loads. The price is that this
+    is not the loader the pipeline uses, so an answer here is only evidence
+    about a sweep's answers if it comes out the same as without the flag.
+
+    Three things are kept equal on purpose. A pre-quantized repo (the unsloth
+    -bnb-4bit ones) is loaded with its own quantization_config, skip list
+    included, so the weights are the ones unsloth would load; anything else is
+    quantized here as 4-bit NF4 -- where unsloth would swap in its own
+    pre-quantized copy, so that case is close, not identical. The chat template
+    is the tokenizer's own, which for Qwen 2.5 renders byte-for-byte what
+    unsloth's "qwen-2.5" template does. And the dtype is the one unsloth's
+    dtype=None would pick. max_seq is unsloth's cap alone and has no
+    counterpart here.
+    """
+    with timings.phase("import"):
+        import torch
+        from transformers import (AutoConfig, AutoModelForCausalLM,
+                                  AutoTokenizer, BitsAndBytesConfig)
+        from peft import PeftModel
+
+    describe(torch, base_model, adapter_dir, "transformers + peft (no unsloth)")
+
+    cuda = torch.cuda.is_available()
+    dtype = torch.bfloat16 if cuda and torch.cuda.is_bf16_supported() else torch.float16
+    with timings.phase("model_load"):
+        extra = {}
+        if not getattr(AutoConfig.from_pretrained(base_model),
+                       "quantization_config", None):
+            # Only when the repo has none of its own. The keyword is left out
+            # rather than passed as None otherwise: transformers 5.5 reads an
+            # explicit None as a config and fails on it.
+            extra["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=dtype,
+            )
+        model = AutoModelForCausalLM.from_pretrained(
+            base_model,
+            dtype=dtype,
+            device_map={"": 0} if cuda else None,
+            **extra
+        )
+        tokenizer = AutoTokenizer.from_pretrained(base_model)
+    with timings.phase("attach"):
+        model = PeftModel.from_pretrained(model, adapter_dir)
+
+    with timings.phase("inference_setup"):
+        model.eval()
+        # The same max_length fix as the unsloth path.
+        model.generation_config.max_length = None
+    return model, tokenizer
+
+
+def answer(model, tokenizer, question, max_new_tokens, timings, phase):
+    """One reply, from whatever adapter state the model is currently in.
+
+    Only generate() is timed, under `phase`, along with how many tokens it
+    produced -- the rate is what says whether the adapter slows decoding.
+    """
+    rendered = tokenizer.apply_chat_template(
         [{"role": "user", "content": question}],
         add_generation_prompt=True, return_tensors="pt", return_dict=True,
-    ).to(model.device)
+    )
+    if isinstance(rendered, str):
+        # A VLM repo (Qwen3.5 and friends) loads as a processor, and its
+        # apply_chat_template ignores return_tensors/return_dict and gives
+        # back the rendered string. Tokenise it the ordinary way.
+        rendered = tokenizer(text=rendered, return_tensors="pt")
+    inputs = rendered.to(model.device)
+    prompt_length = inputs["input_ids"].shape[-1]
+    start = time.perf_counter()
     out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+    timings.add(phase, time.perf_counter() - start, out.shape[-1] - prompt_length)
     # Slice off the prompt tokens so we only decode the newly generated reply.
-    return tokenizer.decode(out[0][inputs["input_ids"].shape[-1]:],
-                            skip_special_tokens=True).strip()
+    return tokenizer.decode(out[0][prompt_length:], skip_special_tokens=True).strip()
 
 
-def both(model, tokenizer, question, max_new_tokens):
+def both(model, tokenizer, question, max_new_tokens, timings):
     """The bare answer and the adapted one, in that order.
 
     disable_adapter() is a context manager that switches the LoRA out for the
@@ -156,8 +311,10 @@ def both(model, tokenizer, question, max_new_tokens):
     side of one difference.
     """
     with model.disable_adapter():
-        base = answer(model, tokenizer, question, max_new_tokens)
-    tuned = answer(model, tokenizer, question, max_new_tokens)
+        base = answer(model, tokenizer, question, max_new_tokens,
+                      timings, "generate.base")
+    tuned = answer(model, tokenizer, question, max_new_tokens,
+                   timings, "generate.lora")
     return base, tuned
 
 
@@ -178,22 +335,24 @@ def show(question, base, tuned):
     print()
 
 
-def ask_loop(model, tokenizer, max_new_tokens):
+def ask_loop(model, tokenizer, max_new_tokens, timings):
     """Keep taking questions until the user is done.
 
     The base-model load is most of the cost of this script, so staying open is
-    what makes a second question nearly free.
+    what makes a second question nearly free. The wait at the prompt is timed
+    too, so it shows up as itself rather than inflating "other".
     """
     print("\nType a prompt and press Enter. Blank line, 'quit' or Ctrl-C to stop.")
     while True:
         try:
-            question = input("\nprompt> ").strip()
+            with timings.phase("waiting for input"):
+                question = input("\nprompt> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return
         if not question or question.lower() in ("quit", "exit"):
             return
-        base, tuned = both(model, tokenizer, question, max_new_tokens)
+        base, tuned = both(model, tokenizer, question, max_new_tokens, timings)
         show(question, base, tuned)
 
 
@@ -206,7 +365,8 @@ def parse_args(argv=None):
                '  python -m adapters.test_lora "Help me plan my week."\n'
                "  python -m adapters.test_lora                       # ask repeatedly\n"
                '  python -m adapters.test_lora --lora Lora003 "Describe autumn."\n'
-               '  python -m adapters.test_lora --lora loras/Lora003 "Describe autumn."',
+               '  python -m adapters.test_lora --lora loras/Lora003 "Describe autumn."\n'
+               '  python -m adapters.test_lora --no-unsloth "Describe autumn."',
     )
     parser.add_argument(
         "prompt", nargs="*",
@@ -233,6 +393,12 @@ def parse_args(argv=None):
     parser.add_argument(
         "--demo", action="store_true",
         help="run the built-in prompts once instead of asking, then exit.")
+    parser.add_argument(
+        "--no-unsloth", dest="unsloth", action="store_false",
+        help="load through plain transformers + bitsandbytes + peft instead of "
+             "unsloth: roughly half the import time, but not the loader the "
+             "pipeline uses, so compare its answers with a run without the flag "
+             "before trusting them. --max-seq is ignored.")
     return parser.parse_args(argv)
 
 
@@ -242,17 +408,27 @@ def main(argv=None):
 
     adapter = resolve_adapter(options.lora)
     base_model = options.base_model or base_model_of(adapter)
-    model, tokenizer = load(adapter, base_model, options.max_seq)
 
-    if options.prompt:
-        # Everything after the options is one question, so quoting is optional.
-        question = " ".join(options.prompt)
-        show(question, *both(model, tokenizer, question, options.max_new_tokens))
-    elif options.demo:
-        for question in DEMO_PROMPTS:
-            show(question, *both(model, tokenizer, question, options.max_new_tokens))
-    else:
-        ask_loop(model, tokenizer, options.max_new_tokens)
+    timings = Timings()
+    try:
+        model, tokenizer = load(adapter, base_model, options.max_seq, timings,
+                                use_unsloth=options.unsloth)
+
+        if options.prompt:
+            # Everything after the options is one question, so quoting is optional.
+            question = " ".join(options.prompt)
+            show(question, *both(model, tokenizer, question,
+                                 options.max_new_tokens, timings))
+        elif options.demo:
+            for question in DEMO_PROMPTS:
+                show(question, *both(model, tokenizer, question,
+                                     options.max_new_tokens, timings))
+        else:
+            ask_loop(model, tokenizer, options.max_new_tokens, timings)
+    finally:
+        # In a finally so a load that fails, or a Ctrl-C mid-answer, still
+        # says where the time went up to that point.
+        timings.report()
     return 0
 
 

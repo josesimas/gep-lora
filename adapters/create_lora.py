@@ -9,6 +9,8 @@ of duplicated training code:
 
     python -m adapters.create_lora loras/Lora006/poem_adapter --dataset poem
     python -m adapters.create_lora loras/Lora007/shout_adapter --dataset uppercase --rank 8
+    python -m adapters.create_lora loras/Lora001/QWen2.5-0.5b-lora_adapter --dataset medical_training --rank 16
+    python -m adapters.create_lora loras/Lora004/QWen2.5-0.5b-lora_adapter --dataset medical_training --rank 4
 
 The folder it writes is exactly the shape the generated scripts expect -- an
 adapter_config.json naming the same base model, an adapter_model.safetensors,
@@ -47,7 +49,8 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 4-bit variant of this name, because load_in_4bit resolves it, and that
 # resolved name is what the generated scripts load. Passing --base-model
 # something else produces an adapter that cannot be blended with the others.
-BASE_MODEL = "unsloth/Qwen2.5-1.5B-Instruct"
+#BASE_MODEL = "unsloth/Qwen2.5-1.5B-Instruct"
+BASE_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
 # The projections every existing adapter targets. add_weighted_adapter combines
 # adapters module by module, so this list has to match theirs exactly.

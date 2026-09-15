@@ -39,7 +39,8 @@ testing/      test_run_with_dataset -- the held-out pass
 reporting/    generate_html_db_stats -- a sweep as a single HTML page
 adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
               a sweep blends. Not part of a sweep; what a sweep runs against
-tools/        test.py, combination.py -- dev aids, not part of the pipeline
+tools/        test.py, combination.py, compare_servers.py -- dev aids, not
+              part of the pipeline
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -451,6 +452,32 @@ python -m blends.lora_server --base-model unsloth/qwen2.5-1.5b-instruct-unsloth-
 
 Starts one by hand — which is also how a generated client is run on its own, since it reads
 `$GEP_LORA_SERVER` and falls back to `http://127.0.0.1:8770`.
+
+```bash
+python -m tools.compare_servers runs/a/gep.sqlite3 runs/b/gep.sqlite3 --run-a 2 --run-b 1
+```
+
+**How that question gets answered**: two sweeps of the same search at different
+`LORA_SERVER_COUNT`, read side by side as one self-contained HTML page. It pairs the two
+populations' scripts on `(pass, individual)` — the same blend, weight seed and prompts,
+timed twice — and separates the two clocks the setting moves in opposite directions: a
+script's own seconds, which rise with concurrency, and the step's, which fall. It
+reconstructs each pass's batches (`process_run.batches()` cuts consecutive groups, so the
+stored order recovers them), and reads the slowdown against how much of each script's life
+actually had a batch-mate in it, which is what separates contention from a straggler that
+was running alone anyway. Both sides are read out of their own sweep's stored settings, so
+the labels, the batch widths and the individuals it names are derived rather than assumed;
+it says at the top which settings differ and whether the paired individuals ended the same,
+so a comparison that is *not* controlled says so rather than reading as though it were.
+`--out` moves the page, `--open` opens it, `--label-a`/`--label-b` rename the sides, and one
+database with `--run-a`/`--run-b` compares two sweeps stored together. Reads through
+`store.py` like the other readers, writes nothing back.
+
+Measured on this machine so far: 1 → 2 servers is worth it (1.64× throughput on the passes
+with no straggler, −16% on the `process` step, +6% per individual); 2 → 4 is close to free
+of benefit (1.29×, −4%, +23% per individual), because a warm server has already removed the
+CPU-bound `import` and `model_load` that used to overlap well, and what is left is
+GPU-bound on one card.
 
 ```bash
 python -m tools.test CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1

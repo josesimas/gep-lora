@@ -12,14 +12,14 @@ Change a value and re-run; nothing else needs editing.
 # --- the population --------------------------------------------------------
 
 # How many individuals the population holds.
-COUNT = 5
+COUNT = 8
 
 # Seed for the population draw. An int repeats the same population every run;
 # None grows a fresh one each time -- and, since a sweep records what it drew,
 # even that stays repeatable afterwards. Note this is separate from the LoRA
 # blend weights each individual is evaluated under -- those come from
 # WEIGHT_MASTER_SEED below.
-SEED = None
+SEED = 42 #None
 
 # Reject duplicate chromosomes when building the population.
 UNIQUE = True
@@ -132,7 +132,8 @@ TESTING_MIN_QUALITY = 0.5
 # base-model answers: those are stored under this name, so repointing this at
 # another model asks for that model's own baseline rather than reusing the old
 # one's.
-BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
+#BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
+BASE_MODEL = "unsloth/Qwen3.5-0.8B" #Qwen2.5-0.5B-Instruct-bnb-4bit
 
 # Where each of the five LoRAs the trees refer to lives -- the search space
 # itself, so it belongs with the rest of the knobs rather than in the templates:
@@ -151,11 +152,11 @@ BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
 # code handles -- nothing assumes they match, because PEFT's cat sums input
 # ranks, svd takes the max, and linear refuses inputs whose ranks differ.
 LORA_SLOTS = {
-    "L1": "loras/Lora001/my_planning_coach-lora_adapter",
-    "L2": "loras/Lora002/my_planning_coach-lora_adapter",
-    "L3": "loras/Lora003/my_planning_coach-lora_adapter",
-    "L4": "loras/Lora004/my_planning_coach-lora_adapter",
-    "L5": "loras/Lora005/my_planning_coach-lora_adapter",
+    "L1": "loras/Lora001/0.8b_modellora_adapter",
+    "L2": "loras/Lora002/0.8b_modellora_adapter",
+    "L3": "loras/Lora003/0.8b_modellora_adapter",
+    "L4": "loras/Lora004/0.8b_modellora_adapter",
+    "L5": "loras/Lora005/0.8b_modellora_adapter",
 }
 
 
@@ -235,7 +236,7 @@ LORA_SERVER_RECYCLE_AFTER = 0
 # blends. An int makes a whole sweep reproducible from the start; None draws a
 # master seed at run time and stores it, which is just as repeatable after the
 # fact -- the value used is written to the run's settings either way.
-WEIGHT_MASTER_SEED = None
+WEIGHT_MASTER_SEED = 42 #None
 
 # --- selection -------------------------------------------------------------
 
@@ -246,7 +247,7 @@ WEIGHT_MASTER_SEED = None
 # draw in it repeatable -- but a second generation still draws its own parents
 # rather than the first one's again. An int makes a sweep reproducible from the
 # start; None draws a master seed at run time and stores it.
-SELECTION_MASTER_SEED = None
+SELECTION_MASTER_SEED = 42 #None
 
 # How many copies a round of selection appends. It also draws one newcomer and
 # culls that many again -- n+1 in, n+1 out -- so the population stays the size
@@ -270,7 +271,7 @@ MUTATION_RATE = 0.1
 # Where the mutation dice come from, on the same terms as the two seeds above:
 # an int makes a sweep reproducible from the start, None draws one at run time
 # and records it.
-MUTATION_MASTER_SEED = None
+MUTATION_MASTER_SEED = 42 #None
 
 # --- running the generated scripts -----------------------------------------
 

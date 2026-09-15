@@ -12,6 +12,7 @@ LORA_SLOTS already holds keep working:
     python -m adapters.create_all_loras --dataset poem --count 5
     python -m adapters.create_all_loras --dataset poem --values 16 16 8 4 32
     python -m adapters.create_all_loras --dataset poem --dry-run
+    python -m adapters.create_all_loras --dataset medical_training --values 16 16 8 4 32
 
 Rank is the parameter with teeth downstream: PEFT's cat sums input ranks, svd
 takes the max, and linear refuses inputs whose ranks differ, so the spread of
@@ -55,7 +56,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The subfolder each loras/Lora00N folder keeps its adapter in. This is the name
 # the existing five use and the one settings.py's LORA_SLOTS spells out, so
 # leaving it alone means the generated scripts need no edit at all.
-ADAPTER_NAME = "my_planning_coach-lora_adapter"
+ADAPTER_NAME = "QWen2.5-0.5b-lora_adapter"
 
 # The script this one drives, and the folders it fills: loras/Lora001,
 # loras/Lora002, ... One place for the parent, so moving the set again is one
