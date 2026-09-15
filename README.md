@@ -2814,7 +2814,8 @@ tools/        dev aids that are not part of the pipeline
 |---|---|
 | `adapters/create_lora.py` | trains one adapter into a folder |
 | `adapters/create_all_loras.py` | trains the whole set, varying rank or learning rate |
-| `adapters/test_lora.py` | asks one adapter a question, without a blend |
+| `adapters/test_lora.py` | asks one adapter a question, without a blend, and prints where the time went; `--no-unsloth` loads through plain transformers |
+| `adapters/base_models_and_loras_comparison.py` | times loading and inference for every base model under `loras/`, bare and with each of its adapters, into a markdown report in `loras/` -- run it on an idle GPU |
 | `tools/test.py` | try a single chromosome → `run/test_*` |
 | `tools/combination.py` | the original two-adapter script the generated code is modelled on |
 

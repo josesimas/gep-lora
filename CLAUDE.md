@@ -38,7 +38,9 @@ evaluators/   one module per evaluator, plus common.py and local_model.py
 testing/      test_run_with_dataset -- the held-out pass
 reporting/    generate_html_db_stats -- a sweep as a single HTML page
 adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
-              a sweep blends. Not part of a sweep; what a sweep runs against
+              a sweep blends. Not part of a sweep; what a sweep runs against.
+              base_models_and_loras_comparison -- how fast each base model
+              loads and answers, with and without each adapter, as markdown
 tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
 ```

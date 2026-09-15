@@ -174,29 +174,43 @@ def base_model_of(adapter_dir):
 
 
 def load(adapter_dir, base_model, max_seq, timings, use_unsloth=True):
-    """The base model with `adapter_dir` attached, ready to answer either way."""
+    """The base model with `adapter_dir` attached, ready to answer either way.
+
+    Three steps, each its own function so base_models_and_loras_comparison can
+    take them apart -- it loads a base once and attaches several adapters to
+    it in turn -- while still loading exactly the way this script does.
+    """
+    model, tokenizer = load_base(base_model, max_seq, timings, use_unsloth)
+    print("adapter: %s (rank %d)" % (adapter_dir, create_lora.rank_of(adapter_dir)))
+    model = attach(model, adapter_dir, timings)
+    with timings.phase("inference_setup"):
+        tokenizer = chat_template(tokenizer, use_unsloth)
+        for_inference(model, use_unsloth)
+    return model, tokenizer
+
+
+def load_base(base_model, max_seq, timings, use_unsloth=True):
+    """The import and the model load: the base and its tokenizer, nothing attached."""
     if use_unsloth:
-        return load_unsloth(adapter_dir, base_model, max_seq, timings)
-    return load_plain(adapter_dir, base_model, timings)
+        return load_base_unsloth(base_model, max_seq, timings)
+    return load_base_plain(base_model, timings)
 
 
-def describe(torch, base_model, adapter_dir, loader):
+def describe(torch, base_model, loader):
     print("GPU available: %s" % torch.cuda.is_available())
     print("loader:  %s" % loader)
     print("base:    %s" % base_model)
-    print("adapter: %s (rank %d)" % (adapter_dir, create_lora.rank_of(adapter_dir)))
 
 
-def load_unsloth(adapter_dir, base_model, max_seq, timings):
-    """The pipeline's way: the same loader and chat template the generated scripts use."""
+def load_base_unsloth(base_model, max_seq, timings):
+    """The pipeline's way: the same loader the generated scripts use."""
     with timings.phase("import"):
         # Unsloth patches transformers and peft as it loads, so it comes first.
         from unsloth import FastLanguageModel
-        from unsloth.chat_templates import get_chat_template
         import torch
-        from peft import PeftModel
+        import peft  # noqa: F401 -- paid here, so attach() times attaching
 
-    describe(torch, base_model, adapter_dir, "unsloth")
+    describe(torch, base_model, "unsloth")
 
     with timings.phase("model_load"):
         model, tokenizer = FastLanguageModel.from_pretrained(
@@ -205,23 +219,11 @@ def load_unsloth(adapter_dir, base_model, max_seq, timings):
             dtype=None,
             load_in_4bit=True,
         )
-    with timings.phase("attach"):
-        model = PeftModel.from_pretrained(model, adapter_dir)
-
-    with timings.phase("inference_setup"):
-        # The template both the training and the pipeline's eval use, so neither
-        # answer is being judged on a formatting difference.
-        tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
-        FastLanguageModel.for_inference(model)
-        # Qwen ships max_length in generation_config.json and transformers warns
-        # when both caps are set; clearing it leaves max_new_tokens in charge, the
-        # same fix the generated scripts carry.
-        model.generation_config.max_length = None
     return model, tokenizer
 
 
-def load_plain(adapter_dir, base_model, timings):
-    """The same model and adapter through plain transformers + bitsandbytes + peft.
+def load_base_plain(base_model, timings):
+    """The same model through plain transformers + bitsandbytes + peft.
 
     What --no-unsloth runs. Importing unsloth costs about twice what these three
     do, most of it training libraries this script never touches, plus the
@@ -229,30 +231,35 @@ def load_plain(adapter_dir, base_model, timings):
     is not the loader the pipeline uses, so an answer here is only evidence
     about a sweep's answers if it comes out the same as without the flag.
 
-    Three things are kept equal on purpose. A pre-quantized repo (the unsloth
+    Four things are kept equal on purpose. A pre-quantized repo (the unsloth
     -bnb-4bit ones) is loaded with its own quantization_config, skip list
     included, so the weights are the ones unsloth would load; anything else is
     quantized here as 4-bit NF4 -- where unsloth would swap in its own
-    pre-quantized copy, so that case is close, not identical. The chat template
-    is the tokenizer's own, which for Qwen 2.5 renders byte-for-byte what
-    unsloth's "qwen-2.5" template does. And the dtype is the one unsloth's
-    dtype=None would pick. max_seq is unsloth's cap alone and has no
-    counterpart here.
+    pre-quantized copy or pick its own skip list, so that case is close, not
+    identical. The class is the one the repo's config names rather than
+    AutoModelForCausalLM, and a repo with a vision tower gets its processor --
+    both what unsloth hands back for one (Qwen3.5 loads as
+    Qwen3_5ForConditionalGeneration), and the module paths an adapter trained
+    on it is keyed to. The chat template is the tokenizer's own, which for
+    Qwen 2.5 renders byte-for-byte what unsloth's "qwen-2.5" template does. And
+    the dtype is the one unsloth's dtype=None would pick. max_seq is unsloth's
+    cap alone and has no counterpart here.
     """
     with timings.phase("import"):
         import torch
-        from transformers import (AutoConfig, AutoModelForCausalLM,
+        import transformers
+        from transformers import (AutoConfig, AutoModelForCausalLM, AutoProcessor,
                                   AutoTokenizer, BitsAndBytesConfig)
-        from peft import PeftModel
+        import peft  # noqa: F401 -- paid here, so attach() times attaching
 
-    describe(torch, base_model, adapter_dir, "transformers + peft (no unsloth)")
+    describe(torch, base_model, "transformers + peft (no unsloth)")
 
     cuda = torch.cuda.is_available()
     dtype = torch.bfloat16 if cuda and torch.cuda.is_bf16_supported() else torch.float16
     with timings.phase("model_load"):
+        config = AutoConfig.from_pretrained(base_model)
         extra = {}
-        if not getattr(AutoConfig.from_pretrained(base_model),
-                       "quantization_config", None):
+        if not getattr(config, "quantization_config", None):
             # Only when the repo has none of its own. The keyword is left out
             # rather than passed as None otherwise: transformers 5.5 reads an
             # explicit None as a config and fails on it.
@@ -262,21 +269,53 @@ def load_plain(adapter_dir, base_model, timings):
                 bnb_4bit_use_double_quant=True,
                 bnb_4bit_compute_dtype=dtype,
             )
-        model = AutoModelForCausalLM.from_pretrained(
+        architecture = (getattr(config, "architectures", None) or [""])[0]
+        model_class = getattr(transformers, architecture, AutoModelForCausalLM)
+        model = model_class.from_pretrained(
             base_model,
             dtype=dtype,
             device_map={"": 0} if cuda else None,
             **extra
         )
-        tokenizer = AutoTokenizer.from_pretrained(base_model)
-    with timings.phase("attach"):
-        model = PeftModel.from_pretrained(model, adapter_dir)
-
-    with timings.phase("inference_setup"):
-        model.eval()
-        # The same max_length fix as the unsloth path.
-        model.generation_config.max_length = None
+        vision = getattr(config, "vision_config", None) is not None
+        tokenizer = (AutoProcessor if vision else AutoTokenizer).from_pretrained(base_model)
     return model, tokenizer
+
+
+def attach(model, adapter_dir, timings):
+    """`model` with the adapter at `adapter_dir` attached and active."""
+    from peft import PeftModel
+
+    with timings.phase("attach"):
+        return PeftModel.from_pretrained(model, adapter_dir)
+
+
+def chat_template(tokenizer, use_unsloth=True):
+    """The tokenizer, under the chat template the adapters were trained with.
+
+    The template both the training and the pipeline's eval use, so neither
+    answer is being judged on a formatting difference. Without unsloth it is
+    the tokenizer's own -- see load_base_plain().
+    """
+    if use_unsloth:
+        from unsloth.chat_templates import get_chat_template
+
+        return get_chat_template(tokenizer, chat_template="qwen-2.5")
+    return tokenizer
+
+
+def for_inference(model, use_unsloth=True):
+    """Switch `model` to answering. Called again after every attach()."""
+    if use_unsloth:
+        from unsloth import FastLanguageModel
+
+        FastLanguageModel.for_inference(model)
+    else:
+        model.eval()
+    # Qwen ships max_length in generation_config.json and transformers warns
+    # when both caps are set; clearing it leaves max_new_tokens in charge, the
+    # same fix the generated scripts carry.
+    model.generation_config.max_length = None
 
 
 def answer(model, tokenizer, question, max_new_tokens, timings, phase):
