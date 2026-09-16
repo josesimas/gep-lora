@@ -128,6 +128,15 @@ def load(settings):
     # it, exactly as the generated scripts do, so JUDGE_MAX_TOKENS is the only
     # cap in play.
     model.generation_config.max_length = None
+    # And stop at the end of the judge's turn, as the generated scripts do: a
+    # repo with no generation_config.json stops only on <|endoftext|>, and a
+    # judge that ran on past <|im_end|> would spend JUDGE_MAX_TOKENS inventing
+    # turns after its verdict.
+    stops = model.generation_config.eos_token_id
+    stops = stops if isinstance(stops, list) else [] if stops is None else [stops]
+    end_of_turn = getattr(tokenizer, "tokenizer", tokenizer).eos_token_id
+    if end_of_turn is not None and end_of_turn not in stops:
+        model.generation_config.eos_token_id = stops + [end_of_turn]
 
     _LOADED[key] = (model, tokenizer)
     return _LOADED[key]

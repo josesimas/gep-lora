@@ -186,6 +186,8 @@ def command(folder, value, options):
     else:
         argv += ["--rank", str(options.rank), "--learning-rate", repr(value)]
 
+    if options.chat_template:
+        argv += ["--chat-template", options.chat_template]
     if options.no_sample:
         argv.append("--no-sample")
     if options.prompt:
@@ -383,6 +385,11 @@ def parse_args(argv=None):
         "--base-model", default=create_lora.BASE_MODEL,
         help="the one base model every adapter is trained on (default %s)."
              % create_lora.BASE_MODEL)
+    parser.add_argument(
+        "--chat-template", default=None,
+        help="an unsloth chat template name every adapter is trained under, "
+             "such as qwen-2.5 (default: the base model's own). CHAT_TEMPLATE "
+             "in settings.py has to match it.")
     parser.add_argument(
         "--adapter-name", default=ADAPTER_NAME,
         help="subfolder each adapter is written to inside its loras/Lora00N folder "

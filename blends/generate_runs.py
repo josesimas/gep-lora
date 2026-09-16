@@ -167,6 +167,43 @@ def base_model_name(value=None):
     return str(value)
 
 
+# What every sweep ran under before CHAT_TEMPLATE was a setting: unsloth's
+# "qwen-2.5", hardcoded in every template, the lora server and training. A stored
+# sweep that never recorded the setting keeps it, so resuming one does not change
+# the words its prompts are written in.
+LEGACY_CHAT_TEMPLATE = "qwen-2.5"
+
+# render()'s and render_baseline()'s default for `chat_template`: read
+# settings.py. A sentinel rather than None, because None is a real value -- the
+# model's own template.
+FROM_SETTINGS = object()
+
+
+def chat_template_name(conf=FROM_SETTINGS):
+    """The chat template to prompt in: an unsloth template name, or None for
+    the model's own.
+
+    `conf` is a sweep's stored settings. One that holds CHAT_TEMPLATE gets its
+    value; one stored before the setting existed gets LEGACY_CHAT_TEMPLATE,
+    which is what it actually ran under -- not settings.py's, which would change
+    how a resumed sweep's prompts are written. With no `conf`, settings.py.
+    """
+    if conf is FROM_SETTINGS:
+        value = getattr(settings, "CHAT_TEMPLATE", None)
+    elif "CHAT_TEMPLATE" in conf:
+        value = conf["CHAT_TEMPLATE"]
+    else:
+        value = LEGACY_CHAT_TEMPLATE
+    if value is None or not str(value).strip():
+        return None
+    return str(value).strip()
+
+
+def _chat_template(value):
+    """render()'s `chat_template` argument, as the literal a script gets."""
+    return chat_template_name() if value is FROM_SETTINGS else (value or None)
+
+
 def training_count(value=None):
     """The eval-set cap as the templates want it: a positive int, or None.
 
@@ -577,7 +614,8 @@ def fill(template_lines, blocks, values):
 
 def render(expression, steps, final, script_name, provenance, label,
            template_lines=None, template_path=TEMPLATE, weight_seed=None,
-           training_set=None, slots=None, count=None, base_model=None):
+           training_set=None, slots=None, count=None, base_model=None,
+           chat_template=FROM_SETTINGS):
     """The complete text of one runnable script, built from the template.
 
     Callers pass the planning results from plan(); the template supplies
@@ -596,6 +634,8 @@ def render(expression, steps, final, script_name, provenance, label,
     `training_set` is what the script's TRAINING_SET becomes, resolved to an
     absolute path; None takes it from settings.py. `slots` is the same for
     LORA_SLOTS, `count` for TRAINING_COUNT, and `base_model` for BASE_MODEL.
+    `chat_template` is CHAT_TEMPLATE already resolved -- a name, or None for the
+    model's own -- because None is a value here; leave it out to read settings.py.
     start_run.py passes the sweep's stored values for all four, so a resumed sweep
     keeps reading the prompts, reading as many of them, blending the adapters
     and loading the model it was created with even if settings.py has since
@@ -635,6 +675,9 @@ def render(expression, steps, final, script_name, provenance, label,
         # And the model all of them are attached to, from the same one place
         # the baseline script gets it from.
         "BASE_MODEL": ["BASE_MODEL = %r" % base_model_name(base_model)],
+        # And the chat template the prompts are written in, which the baseline
+        # gets from here too: a control asked in other words is no control.
+        "CHAT_TEMPLATE": ["CHAT_TEMPLATE = %r" % _chat_template(chat_template)],
     }
     values = {
         "SCRIPT_NAME": script_name,
@@ -649,7 +692,7 @@ def render(expression, steps, final, script_name, provenance, label,
 
 def render_baseline(script_name, provenance, template_lines=None,
                     template_path=BASELINE_TEMPLATE, training_set=None,
-                    count=None, base_model=None):
+                    count=None, base_model=None, chat_template=FROM_SETTINGS):
     """The complete text of the one baseline script -- the base model alone.
 
     The control the llm_judge_baseline evaluator grades against: the same base
@@ -668,6 +711,7 @@ def render_baseline(script_name, provenance, template_lines=None,
         "BASE_MODEL": ["BASE_MODEL = %r" % base_model_name(base_model)],
         "TRAINING_SET": ["TRAINING_SET = %r" % training_set_path(training_set)],
         "TRAINING_COUNT": ["TRAINING_COUNT = %s" % training_count(count)],
+        "CHAT_TEMPLATE": ["CHAT_TEMPLATE = %r" % _chat_template(chat_template)],
     }
     values = {"SCRIPT_NAME": script_name, "PROVENANCE": provenance}
     return fill(template_lines, blocks, values)

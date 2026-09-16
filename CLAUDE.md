@@ -607,7 +607,9 @@ having"** (`JUDGE_BASELINE_SYSTEM_PROMPT`, a constant in that evaluator, not a
 setting). It needs a control, which
 [baseline_run.py](blends/baseline_run.py) produces once -- fill `template_baseline.py`, run it,
 read its transcript with `process_run.exchanges` -- and caches in the `baselines` table,
-keyed by `(BASE_MODEL, normalised question)` and hanging off **no run**: a base-model
+keyed by `(BASE_MODEL, normalised question)` -- with a named `CHAT_TEMPLATE` folded into
+the model as `<model> [chat_template=<name>]`, since the same question in other words is
+another control (`baseline_run.model_key()`) -- and hanging off **no run**: a base-model
 answer belongs to the model and the question, so every later sweep on the same base
 model reads the same rows and loads nothing. Only missing questions are ever generated.
 A mocked sweep gets `template_baseline_mocked.py` and caches under `mock:<model>`, so an
@@ -821,7 +823,7 @@ as **valid Python** so editors, linters and `python -m compileall` still work on
 `@@NAME@@` inline; a line that is only `@@NAME@@` or `# @@NAME@@` becomes a block; a line
 starting with `#~` is a template-only note that never reaches the output. Blocks: `TREE`,
 `BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`, `WEIGHT_SEED`, `BASE_MODEL`,
-`TRAINING_SET`, `TRAINING_COUNT`, `LORA_SLOTS`. Inline: `SCRIPT_NAME`, `PROVENANCE`,
+`CHAT_TEMPLATE`, `TRAINING_SET`, `TRAINING_COUNT`, `LORA_SLOTS`. Inline: `SCRIPT_NAME`, `PROVENANCE`,
 `LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`.
 
 `WEIGHT_SEED`, `BASE_MODEL`, `TRAINING_SET`, `TRAINING_COUNT` and `LORA_SLOTS` are blocks
@@ -833,8 +835,8 @@ are the names a linter calls undefined in both templates.
 
 `template_baseline.py` and `template_baseline_mocked.py` are the third and fourth
 templates: the base model on its own, answering the same eval prompts with nothing
-attached. They fill three of the same markers (`BASE_MODEL`, `TRAINING_SET`,
-`TRAINING_COUNT`) through `generate_runs.render_baseline()`, and they must keep matching
+attached. They fill four of the same markers (`BASE_MODEL`, `CHAT_TEMPLATE`,
+`TRAINING_SET`, `TRAINING_COUNT`) through `generate_runs.render_baseline()`, and they must keep matching
 `template_code.py`'s chat template and `ask()` -- a control generated under different
 settings would make every improvement score a comparison of the settings rather than of
 the blend.
@@ -978,6 +980,37 @@ appeared to manage VRAM would be claiming to test something it cannot.
   check. Each is a test on `script_source`, not on `settings.py`, so what a *stored* sweep
   needs is decided by what that sweep actually holds -- and switching the whole remote path
   on or off stays one line of `TEMPLATE`.
+- **Every generate() path stops at the end of the turn and tokenises through the
+  text tokenizer**, and the two go together because `unsloth/Qwen3.5-0.8B` broke
+  both. That repo ships no `generation_config.json`, so `generate()` stopped only
+  on `<|endoftext|>`: an answer ending in `<|im_end|>` ran on into invented
+  `user`/`assistant` turns until the cap, and all of it reached the judge. So
+  wherever `max_length = None` is set, the tokenizer's `eos_token_id` is added to
+  `generation_config.eos_token_id`. And a vision-language repo loads as a
+  *processor*, whose `apply_chat_template(return_dict=True)` hands back text,
+  not tensors -- so the prompt is rendered with `tokenize=False` and tokenised by
+  `getattr(tokenizer, "tokenizer", tokenizer)` with `add_special_tokens=False`,
+  which also pads and decodes. Both are no-ops for the Qwen2.5 repos (their
+  config already lists `<|im_end|>`, and the token ids were checked identical,
+  batched and single), so older sweeps stay comparable. The places are
+  `template_code.py`'s setup and `answer()`, `template_baseline.py`'s setup and
+  `ask()`, `lora_server.py`'s `load()`, `build()` and `generate()`,
+  `evaluators/local_model.py`, `create_lora.sample()` and
+  `test_lora.for_inference()` -- a change to one belongs in all of them.
+- **`CHAT_TEMPLATE` is the words every prompt is written in, and it has to be the
+  template the adapters were trained under.** `None` is the base model's own (from its
+  repo); a name is unsloth's template of that name, applied with `get_chat_template()`.
+  It reaches `template_code.py`, `template_baseline.py` and `template_remote_code.py`
+  through a `CHAT_TEMPLATE` block, the lora servers through `--chat-template` (the pool
+  starts them under the sweep's value, and `/health` and `/build` refuse a mismatch the
+  way they refuse another `BASE_MODEL`), training through `create_lora.py
+  --chat-template`, and the baseline cache through its key. **Read it with
+  `generate_runs.chat_template_name(conf)`, never `conf.get()`**: `None` is a value
+  here, so a sweep stored before the setting existed -- which has no key -- resolves to
+  `"qwen-2.5"`, what every template used to hardcode, rather than to `None`.
+  Qwen3.5 is why it exists: under `"qwen-2.5"` it loses the empty `<think>` block its
+  own template writes and reasons out loud until the cap. On the Qwen2.5 repos the two
+  are byte-identical.
 - **Every generated script is launched with `PYTHONIOENCODING=utf-8`**
   (`process_run.CHILD_ENCODING`), and this is not optional. `launch()` reads the pipes as
   utf-8; a child left to itself picks the platform's preferred encoding, which on Windows

@@ -173,7 +173,8 @@ def base_model_of(adapter_dir):
     return base
 
 
-def load(adapter_dir, base_model, max_seq, timings, use_unsloth=True):
+def load(adapter_dir, base_model, max_seq, timings, use_unsloth=True,
+         template=None):
     """The base model with `adapter_dir` attached, ready to answer either way.
 
     Three steps, each its own function so base_models_and_loras_comparison can
@@ -184,8 +185,8 @@ def load(adapter_dir, base_model, max_seq, timings, use_unsloth=True):
     print("adapter: %s (rank %d)" % (adapter_dir, create_lora.rank_of(adapter_dir)))
     model = attach(model, adapter_dir, timings)
     with timings.phase("inference_setup"):
-        tokenizer = chat_template(tokenizer, use_unsloth)
-        for_inference(model, use_unsloth)
+        tokenizer = chat_template(tokenizer, template, use_unsloth)
+        for_inference(model, tokenizer, use_unsloth)
     return model, tokenizer
 
 
@@ -240,8 +241,9 @@ def load_base_plain(base_model, timings):
     AutoModelForCausalLM, and a repo with a vision tower gets its processor --
     both what unsloth hands back for one (Qwen3.5 loads as
     Qwen3_5ForConditionalGeneration), and the module paths an adapter trained
-    on it is keyed to. The chat template is the tokenizer's own, which for
-    Qwen 2.5 renders byte-for-byte what unsloth's "qwen-2.5" template does. And
+    on it is keyed to. The chat template is the model's own, as it is for
+    unsloth unless --chat-template names one (see chat_template()): an unsloth
+    template name cannot be used here. And
     the dtype is the one unsloth's dtype=None would pick. max_seq is unsloth's
     cap alone and has no counterpart here.
     """
@@ -290,21 +292,27 @@ def attach(model, adapter_dir, timings):
         return PeftModel.from_pretrained(model, adapter_dir)
 
 
-def chat_template(tokenizer, use_unsloth=True):
-    """The tokenizer, under the chat template the adapters were trained with.
+def chat_template(tokenizer, name=None, use_unsloth=True):
+    """The tokenizer, under the chat template the adapter was trained with.
 
-    The template both the training and the pipeline's eval use, so neither
-    answer is being judged on a formatting difference. Without unsloth it is
-    the tokenizer's own -- see load_base_plain().
+    None keeps the model's own template -- what CHAT_TEMPLATE = None means in
+    settings.py, and what create_lora.py trains under by default. A name swaps
+    in unsloth's template of that name, which takes unsloth: without it there
+    is nothing to read the template from, so --no-unsloth refuses one rather
+    than quietly prompting in the model's own.
     """
-    if use_unsloth:
-        from unsloth.chat_templates import get_chat_template
+    if not name:
+        return tokenizer
+    if not use_unsloth:
+        raise SystemExit(
+            "--chat-template %s is one of unsloth's templates, and --no-unsloth "
+            "loads without unsloth. Drop one of the two." % name)
+    from unsloth.chat_templates import get_chat_template
 
-        return get_chat_template(tokenizer, chat_template="qwen-2.5")
-    return tokenizer
+    return get_chat_template(tokenizer, chat_template=name)
 
 
-def for_inference(model, use_unsloth=True):
+def for_inference(model, tokenizer, use_unsloth=True):
     """Switch `model` to answering. Called again after every attach()."""
     if use_unsloth:
         from unsloth import FastLanguageModel
@@ -316,6 +324,14 @@ def for_inference(model, use_unsloth=True):
     # when both caps are set; clearing it leaves max_new_tokens in charge, the
     # same fix the generated scripts carry.
     model.generation_config.max_length = None
+    # Stop at the end of the turn, as the generated scripts do: a repo with no
+    # generation_config.json (unsloth/Qwen3.5-0.8B) stops only on <|endoftext|>,
+    # so an answer ending in <|im_end|> ran on into invented turns.
+    stops = model.generation_config.eos_token_id
+    stops = stops if isinstance(stops, list) else [] if stops is None else [stops]
+    end_of_turn = getattr(tokenizer, "tokenizer", tokenizer).eos_token_id
+    if end_of_turn is not None and end_of_turn not in stops:
+        model.generation_config.eos_token_id = stops + [end_of_turn]
 
 
 def answer(model, tokenizer, question, max_new_tokens, timings, phase):
@@ -438,6 +454,12 @@ def parse_args(argv=None):
              "unsloth: roughly half the import time, but not the loader the "
              "pipeline uses, so compare its answers with a run without the flag "
              "before trusting them. --max-seq is ignored.")
+    parser.add_argument(
+        "--chat-template", default=None,
+        help="an unsloth chat template name to prompt in, such as qwen-2.5 "
+             "(default: the model's own, as CHAT_TEMPLATE = None in settings.py). "
+             "Use the one the adapter was trained under: an adapter prompted in "
+             "another format answers like a different model.")
     return parser.parse_args(argv)
 
 
@@ -451,7 +473,8 @@ def main(argv=None):
     timings = Timings()
     try:
         model, tokenizer = load(adapter, base_model, options.max_seq, timings,
-                                use_unsloth=options.unsloth)
+                                use_unsloth=options.unsloth,
+                                template=options.chat_template)
 
         if options.prompt:
             # Everything after the options is one question, so quoting is optional.

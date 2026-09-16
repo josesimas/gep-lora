@@ -135,6 +135,26 @@ TESTING_MIN_QUALITY = 0.5
 #BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
 BASE_MODEL = "unsloth/Qwen3.5-0.8B" #Qwen2.5-0.5B-Instruct-bnb-4bit
 
+# The chat template every prompt is written in -- by the generated scripts, the
+# lora servers and the baseline control alike, so a blend and its control are
+# always asked in the same words. None uses BASE_MODEL's own template, the one
+# shipped in its repo; a name ("qwen-2.5", "llama-3.1", ...) swaps in unsloth's
+# template of that name instead.
+#
+# None is the right answer for any model with a template of its own, and the
+# adapters must have been trained under the same one (create_lora.py
+# --chat-template): an adapter answers in the format it learned, and a base model
+# prompted in a format it was not built for does not behave as itself --
+# Qwen3.5 under "qwen-2.5" loses the empty <think> block its own template writes,
+# and reasons out loud until the length cap. For the Qwen2.5 repos the two are
+# byte-identical.
+#
+# Before this was a setting every template hardcoded "qwen-2.5", so a stored
+# sweep that never recorded it keeps getting "qwen-2.5"
+# (generate_runs.chat_template_name). It is part of what a baseline answer
+# means, so the llm_judge_baseline cache is keyed on it as well as on the model.
+CHAT_TEMPLATE = None
+
 # Where each of the five LoRAs the trees refer to lives -- the search space
 # itself, so it belongs with the rest of the knobs rather than in the templates:
 # repoint a slot here and both templates follow, and the sweep records which
@@ -152,11 +172,11 @@ BASE_MODEL = "unsloth/Qwen3.5-0.8B" #Qwen2.5-0.5B-Instruct-bnb-4bit
 # code handles -- nothing assumes they match, because PEFT's cat sums input
 # ranks, svd takes the max, and linear refuses inputs whose ranks differ.
 LORA_SLOTS = {
-    "L1": "loras/Lora001/0.8b_modellora_adapter",
-    "L2": "loras/Lora002/0.8b_modellora_adapter",
-    "L3": "loras/Lora003/0.8b_modellora_adapter",
-    "L4": "loras/Lora004/0.8b_modellora_adapter",
-    "L5": "loras/Lora005/0.8b_modellora_adapter",
+    "L1": "loras/Lora001/0.8b_own_template_lora_adapter",
+    "L2": "loras/Lora002/0.8b_own_template_lora_adapter",
+    "L3": "loras/Lora003/0.8b_own_template_lora_adapter",
+    "L4": "loras/Lora004/0.8b_own_template_lora_adapter",
+    "L5": "loras/Lora005/0.8b_own_template_lora_adapter",
 }
 
 
@@ -397,7 +417,7 @@ JUDGE_BACKEND = "endpoint"
 # Claude is not OpenAI-compatible; using a Claude model as the judge needs a
 # separate backend through the anthropic SDK. Ignored by the unsloth backend,
 # which has no endpoint to point at.
-JUDGE_BASE_URL = "http://172.22.208.1:1234/v1"
+JUDGE_BASE_URL = "http://192.168.1.61:1234/v1"
 
 # Which model does the grading, and what is stored on every exchange it grades.
 # On the endpoint backend, None asks the endpoint what it has loaded, which is

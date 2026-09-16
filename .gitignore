@@ -21,11 +21,11 @@ NUL
 # *contents* rather than the folders themselves: git cannot re-include a file
 # whose parent directory is excluded, so the two negations below only work if
 # loras/Lora00N/ is itself still visible.
-loras/Lora00*/*
+loras/*
 
 # Re-include only the files you want to track
-!loras/Lora00*/main.py
-!loras/Lora00*/inference.py
+!loras/*.md
+
 
 
 datasets/finetuning_medical_testing.csv

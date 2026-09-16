@@ -139,6 +139,12 @@ def _post(path, payload):
 # wrong base is the one mismatch this script could not otherwise see.
 # @@BASE_MODEL@@
 
+# The chat template its prompts are written in, None for the model's own. The
+# server applies it, so it is sent with the build and checked the same way: a
+# server started under another template would answer this individual's
+# questions in words its adapters were not trained on.
+# @@CHAT_TEMPLATE@@
+
 # Where each of the 5 LoRAs the trees refer to lives, already resolved. Read
 # here (for the ranks) and sent to the server (to load), so the server needs no
 # settings of its own: an individual carries its own adapters.
@@ -320,7 +326,8 @@ FINAL_ADAPTER = "@@FINAL_ADAPTER@@"
 # ---------------------------------------------------------------------------
 _started = time.perf_counter()
 BUILD = _post("/build", {"base_model": BASE_MODEL, "slots": LORA_SLOTS,
-                         "plan": PLAN, "final": FINAL_ADAPTER})
+                         "plan": PLAN, "final": FINAL_ADAPTER,
+                         "chat_template": CHAT_TEMPLATE})
 # The round trip as one phase, and then the server's own account of what went
 # on inside it. The two overlap on purpose -- "build" is a NESTED phase in
 # metrics/report.py, the way "compact" sits inside "combine.svd".

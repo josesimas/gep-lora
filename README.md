@@ -412,7 +412,8 @@ written, minus the markers.
 | a line starting with `#~` | template-only note, never reaches the output |
 
 Blocks are `TREE`, `BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`,
-`WEIGHT_SEED`, `BASE_MODEL`, `TRAINING_SET`, `TRAINING_COUNT`, `LORA_SLOTS`;
+`WEIGHT_SEED`, `BASE_MODEL`, `CHAT_TEMPLATE`, `TRAINING_SET`, `TRAINING_COUNT`,
+`LORA_SLOTS`;
 inline values are `SCRIPT_NAME`, `PROVENANCE`, `LABEL`, `EXPRESSION`,
 `LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`. Any marker left unfilled raises
 rather than being written into a generated file.
@@ -427,6 +428,21 @@ generated from them. `BASE_MODEL` is a setting rather than a line in the
 templates so that one name reaches all three of them — the two individual
 templates and `template_baseline.py`, the control `llm_judge_baseline` grades
 against.
+
+`CHAT_TEMPLATE` travels the same way, to the same three and to the lora servers:
+it is the words every prompt is written in. `None`, the default, is the base
+model's own template, from its repo; a name (`"qwen-2.5"`, `"llama-3.1"`, ...)
+swaps in unsloth's template of that name. It has to be the template the adapters
+were trained under -- `create_lora.py --chat-template` says which, default the
+model's own -- because an adapter answers in the format it learned, and a base
+model prompted in a format it was not built for stops behaving as itself:
+Qwen3.5 under `"qwen-2.5"` loses the empty `<think>` block its own template
+writes and reasons out loud until the length cap. On the Qwen2.5 repos the two
+render byte-for-byte the same. Every template used to hardcode `"qwen-2.5"`, so
+a sweep stored before the setting existed resolves to that
+(`generate_runs.chat_template_name()`) rather than to `settings.py`'s. A
+remote client sends its template with `/build` and the server refuses one it was
+not started under, as it already did for `BASE_MODEL`.
 
 To change what every generated script looks like, edit `template_code.py` and
 re-run `python start_run.py runs`. Only add code to the generator itself when the new
@@ -1090,7 +1106,12 @@ Two guards worth knowing about:
 `BASE_MODEL` in `settings.py` is what ties the two halves together: it is stamped
 into every generated script *and* into the baseline, so the control is the model
 the blends were actually built on, and repointing it asks for that model's own
-baseline instead of reusing the old one's.
+baseline instead of reusing the old one's. `CHAT_TEMPLATE` is the other half of
+the key: a named template caches under `<model> [chat_template=<name>]`, because
+the same question asked in other words is another control. The model's own
+template keeps the bare name, which is where every row cached before the setting
+existed already sits -- those were `"qwen-2.5"` on the Qwen2.5 repos, whose own
+template renders the same.
 
 #### `similarity` — no judge at all
 

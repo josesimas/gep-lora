@@ -73,6 +73,8 @@ import time
 import urllib.error
 import urllib.request
 
+from blends import generate_runs
+
 # The repo folder, one above this one: the servers are started as
 # `python -m blends.lora_server` from there, so they import this package the
 # way every other module does.
@@ -126,8 +128,10 @@ class Pool:
 
     def __init__(self, base_model, count, host="127.0.0.1", port=8770,
                  run_dir=".", startup_timeout=900, request_timeout=1800,
-                 recycle_after=0, say=print):
+                 recycle_after=0, say=print, chat_template=None):
         self.base_model = base_model
+        # None for the model's own chat template, or unsloth's of that name.
+        self.chat_template = chat_template or None
         self.count = max(1, int(count))
         self.host = host
         self.base_port = int(port)
@@ -204,10 +208,13 @@ class Pool:
                             time.strftime("%Y-%m-%dT%H:%M:%S")))
         worker.log.flush()
         worker.builds = 0
+        command = [sys.executable, "-u", "-m", "blends.lora_server",
+                   "--base-model", self.base_model,
+                   "--host", self.host, "--port", str(worker.port)]
+        if self.chat_template:
+            command += ["--chat-template", self.chat_template]
         worker.process = subprocess.Popen(
-            [sys.executable, "-u", "-m", "blends.lora_server",
-             "--base-model", self.base_model,
-             "--host", self.host, "--port", str(worker.port)],
+            command,
             cwd=_ROOT, stdout=worker.log, stderr=subprocess.STDOUT,
         )
 
@@ -226,6 +233,10 @@ class Pool:
                     failures.append("port %d holds %s, not %s"
                                     % (worker.port, health.get("base_model"),
                                        self.base_model))
+                elif (health.get("chat_template") or None) != self.chat_template:
+                    failures.append("port %d prompts in chat template %r, not %r"
+                                    % (worker.port, health.get("chat_template"),
+                                       self.chat_template))
                 return
             time.sleep(_POLL)
         failures.append("port %d was still not ready after %ss"
@@ -387,6 +398,10 @@ def pool_for(conf, source, base_model, run_dir, config, say=print):
                 startup_timeout=setting("LORA_SERVER_STARTUP_TIMEOUT"),
                 request_timeout=setting("LORA_SERVER_TIMEOUT"),
                 recycle_after=setting("LORA_SERVER_RECYCLE_AFTER"),
-                say=say)
+                say=say,
+                # The sweep's own, never settings.py's: the servers write the
+                # prompts, so they must write them the way this sweep's scripts
+                # and its baseline do.
+                chat_template=generate_runs.chat_template_name(conf))
     pool.start()
     return pool

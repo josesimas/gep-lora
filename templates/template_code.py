@@ -103,6 +103,15 @@ _PROJECT = os.path.dirname(_HERE)                  # run/ -> project/
 #~ undefined here and finds defined in every file generated from this.
 # @@BASE_MODEL@@
 
+# The chat template the prompts are written in: None for BASE_MODEL's own, or the
+# name of one of unsloth's. It has to be the template the adapters were trained
+# under -- an adapter answers in the format it learned.
+#~ Whole-line marker, filled from CHAT_TEMPLATE in settings.py -- or, for a sweep
+#~ stored before that setting existed, "qwen-2.5", which every template used to
+#~ hardcode (generate_runs.chat_template_name). The baseline control gets the
+#~ same value, so a blend and its control are asked in the same words.
+# @@CHAT_TEMPLATE@@
+
 # Where each of the 5 LoRAs the trees refer to lives. One independent entry per
 # slot, already resolved: repoint a slot in settings.py and every script built
 # afterwards follows.
@@ -422,17 +431,24 @@ _started = time.perf_counter()
 model.set_adapter(FINAL_ADAPTER)
 print(f"Active adapter: {model.active_adapters} (rank {RANKS[FINAL_ADAPTER]})")
 
-# Same chat template used during training, so inputs are formatted identically.
-tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
+# Same chat template used during training, so inputs are formatted identically:
+# the model's own unless a name was set, in which case unsloth's of that name.
+if CHAT_TEMPLATE:
+    tokenizer = get_chat_template(tokenizer, chat_template=CHAT_TEMPLATE)
 
 # Batched generation pads the short prompts up to the long one, and a decoder
 # continues from the last column of what it is given -- so the padding has to
 # sit on the *left*, or a padded row would be continuing from its own padding
 # and answering nothing. The pad token itself is only ever masked out; Qwen
 # ships one, and eos stands in for a tokenizer that does not.
-tokenizer.padding_side = "left"
-if tokenizer.pad_token_id is None:
-    tokenizer.pad_token = tokenizer.eos_token
+#
+# A vision-language repo (unsloth/Qwen3.5-0.8B) loads as a processor wrapping
+# the tokenizer, and padding, the pad id and decoding all belong to the
+# tokenizer inside it. For a plain tokenizer this is the tokenizer itself.
+text_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
+text_tokenizer.padding_side = "left"
+if text_tokenizer.pad_token_id is None:
+    text_tokenizer.pad_token = text_tokenizer.eos_token
 
 # Switch to Unsloth's fast inference path (~2x faster generation).
 FastLanguageModel.for_inference(model)
@@ -441,6 +457,19 @@ FastLanguageModel.for_inference(model)
 # warns whenever that and max_new_tokens are both set. Clear it so the cap in
 # ask() is the only one in play -- max_new_tokens was winning anyway.
 model.generation_config.max_length = None
+
+# Stop at the end of the turn. generate() stops only on the ids in
+# generation_config.eos_token_id, and a repo that ships no
+# generation_config.json (unsloth/Qwen3.5-0.8B) leaves that as <|endoftext|>
+# alone -- so a model that ends its answer with <|im_end|>, as the chat
+# template trains it to, carried on inventing the next user turn and answering
+# it until the cap, and all of that reached the judge. A no-op for the Qwen2.5
+# repos, which already list <|im_end|>.
+_stops = model.generation_config.eos_token_id
+_stops = _stops if isinstance(_stops, list) else [] if _stops is None else [_stops]
+_end_of_turn = getattr(tokenizer, "tokenizer", tokenizer).eos_token_id
+if _end_of_turn is not None and _end_of_turn not in _stops:
+    model.generation_config.eos_token_id = _stops + [_end_of_turn]
 
 # Selecting the adapter, the chat template and Unsloth's inference path: the
 # rest of the fixed cost, after the model load and before the first question.
@@ -462,17 +491,24 @@ ANSWER_BATCH = 8
 
 def answer(questions, max_new_tokens=250):
     """Answer several questions in one generate() call. -> replies, in order."""
-    messages = [[{"role": "user", "content": question}] for question in questions]
-    inputs = tokenizer.apply_chat_template(
-        messages, add_generation_prompt=True, return_tensors="pt",
-        return_dict=True, padding=True
-    ).to(model.device)
+    # Rendered to text, then tokenised, rather than apply_chat_template(
+    # return_dict=True) in one call: a processor (Qwen3.5) ignores return_tensors
+    # and return_dict and hands back text, which cannot be moved to the GPU.
+    # For a plain tokenizer the ids are the same -- add_special_tokens=False
+    # because the rendered template already holds every special token, which is
+    # also what apply_chat_template does when it tokenises.
+    texts = [tokenizer.apply_chat_template(
+                 [{"role": "user", "content": question}],
+                 add_generation_prompt=True, tokenize=False)
+             for question in questions]
+    inputs = text_tokenizer(texts, padding=True, return_tensors="pt",
+                            add_special_tokens=False).to(model.device)
     out = model.generate(**inputs, max_new_tokens=max_new_tokens,
-                         do_sample=False, pad_token_id=tokenizer.pad_token_id)
+                         do_sample=False, pad_token_id=text_tokenizer.pad_token_id)
     # Padded on the left, so every row's reply starts at the same column and
     # one width slices the prompt off all of them.
     width = inputs["input_ids"].shape[-1]
-    return [tokenizer.decode(row[width:], skip_special_tokens=True).strip()
+    return [text_tokenizer.decode(row[width:], skip_special_tokens=True).strip()
             for row in out]
 
 

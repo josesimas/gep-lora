@@ -303,8 +303,9 @@ def work(spec):
 
         result["environment"] = environment(torch, spec["loader"])
         with timings.phase("inference_setup"):
-            tokenizer = test_lora.chat_template(tokenizer, use_unsloth)
-            test_lora.for_inference(model, use_unsloth)
+            tokenizer = test_lora.chat_template(
+                tokenizer, spec.get("chat_template"), use_unsloth)
+            test_lora.for_inference(model, tokenizer, use_unsloth)
         result["cold"] = {name: row[1] for name, row in timings.phases.items()}
         result["cold"]["vram_after_load"] = (
             torch.cuda.memory_allocated() if torch.cuda.is_available() else None)
@@ -325,7 +326,7 @@ def work(spec):
             try:
                 attached = test_lora.Timings()
                 wrapped = test_lora.attach(model, adapter["path"], attached)
-                test_lora.for_inference(wrapped, use_unsloth)
+                test_lora.for_inference(wrapped, tokenizer, use_unsloth)
                 entry["attach"] = attached.phases["attach"][1]
                 entry.update(measure(Bench(wrapped, tokenizer, torch), spec, label))
             except Exception as error:
@@ -348,7 +349,7 @@ def work(spec):
         # How far it lands from the first measurement is the noise floor --
         # GPU clocks, the allocator, whatever unload() left behind -- and a
         # LoRA effect smaller than that gap is not one.
-        test_lora.for_inference(model, use_unsloth)
+        test_lora.for_inference(model, tokenizer, use_unsloth)
         again = measure(Bench(model, tokenizer, torch), spec, "base, again")
         again.update(name="base_again", slot=None, rank=None)
         result["configs"].append(again)
@@ -714,6 +715,8 @@ def report(results, spec, command, elapsed):
              % (spec["tokens"], spec["repeats"], " and ".join(map(str, sizes)))],
             ["natural test", "%d prompts, generate() calls of %d, up to %d new tokens"
              % (len(PROMPTS), NATURAL_BATCH, spec["natural_tokens"])],
+            ["chat template", "`%s`" % spec["chat_template"] if spec.get("chat_template")
+             else "each model's own"],
             ["base models", ", ".join("`%s`" % m for m in
                                       dict.fromkeys(r["base_model"] for r in results))],
         ]),
@@ -791,6 +794,12 @@ def parse_args(argv=None):
         help="length cap in the natural test (default %d, as the generated "
              "scripts)." % NATURAL_TOKENS)
     parser.add_argument(
+        "--chat-template", default=None,
+        help="an unsloth chat template name to prompt in, such as qwen-2.5 "
+             "(default: each model's own). Only the natural-answer test depends "
+             "on it, and only with the template the adapters were trained under "
+             "does it say what their answers cost. Needs --loader unsloth.")
+    parser.add_argument(
         "--max-seq", type=int, default=test_lora.MAX_SEQ,
         help="unsloth's max sequence length (default %d)." % test_lora.MAX_SEQ)
     parser.add_argument(
@@ -832,7 +841,7 @@ def main(argv=None):
 
     common = {"tokens": options.tokens, "batches": options.batches,
               "repeats": options.repeats, "natural_tokens": options.natural_tokens,
-              "max_seq": options.max_seq}
+              "max_seq": options.max_seq, "chat_template": options.chat_template}
     work_list = [dict(common, base_model=base, loader=loader, adapters=adapters)
                  for base, adapters in groups.items() for loader in loaders]
     started = time.perf_counter()

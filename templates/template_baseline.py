@@ -54,6 +54,11 @@ import torch
 #~ undefined in this template and finds defined in every file generated from it.
 # @@BASE_MODEL@@
 
+#~ Whole-line marker, exactly as in template_code.py: the chat template, None for
+#~ the model's own. The same value the individuals were rendered with, or the
+#~ control would be the same model asked in different words.
+# @@CHAT_TEMPLATE@@
+
 MAX_SEQ = 2048
 
 #~ Whole-line marker, exactly as in template_code.py: the eval prompts file,
@@ -149,8 +154,10 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 # serves both; there is no adapter to name, and no rank to report.
 print("Active adapter: none (base model, rank 0)")
 
-# Same chat template used during training, so inputs are formatted identically.
-tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
+# Same chat template the individuals are asked in: the model's own unless a
+# name was set, in which case unsloth's of that name.
+if CHAT_TEMPLATE:
+    tokenizer = get_chat_template(tokenizer, chat_template=CHAT_TEMPLATE)
 
 # Switch to Unsloth's fast inference path (~2x faster generation).
 FastLanguageModel.for_inference(model)
@@ -160,6 +167,15 @@ FastLanguageModel.for_inference(model)
 # ask() is the only one in play -- max_new_tokens was winning anyway.
 model.generation_config.max_length = None
 
+# Stop at the end of the turn, exactly as template_code.py does -- see the note
+# there. Without it a repo that ships no generation_config.json stops only on
+# <|endoftext|>, and the control would run past its answer into invented turns.
+_stops = model.generation_config.eos_token_id
+_stops = _stops if isinstance(_stops, list) else [] if _stops is None else [_stops]
+_end_of_turn = getattr(tokenizer, "tokenizer", tokenizer).eos_token_id
+if _end_of_turn is not None and _end_of_turn not in _stops:
+    model.generation_config.eos_token_id = _stops + [_end_of_turn]
+
 
 def ask(question, max_new_tokens=250):
     """Send one user turn through the bare base model.
@@ -168,14 +184,20 @@ def ask(question, max_new_tokens=250):
     under different settings would make every improvement score a comparison of
     the settings as much as of the blend.
     """
-    msgs = [{"role": "user", "content": question}]
-    inputs = tokenizer.apply_chat_template(
-        msgs, add_generation_prompt=True, return_tensors="pt", return_dict=True
-    ).to(model.device)
+    # Rendered to text, then tokenised, exactly as template_code.py's answer()
+    # does -- see the note there: a processor (Qwen3.5) hands back text from
+    # apply_chat_template whatever return_dict says. The tokenizer inside a
+    # processor does the tokenising and the decoding; a plain one is itself.
+    text_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
+    text = tokenizer.apply_chat_template(
+        [{"role": "user", "content": question}],
+        add_generation_prompt=True, tokenize=False)
+    inputs = text_tokenizer([text], return_tensors="pt",
+                            add_special_tokens=False).to(model.device)
     out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
     # Slice off the prompt tokens so we only decode the newly generated reply.
-    return tokenizer.decode(out[0][inputs["input_ids"].shape[-1]:],
-                            skip_special_tokens=True).strip()
+    return text_tokenizer.decode(out[0][inputs["input_ids"].shape[-1]:],
+                                 skip_special_tokens=True).strip()
 
 
 if __name__ == "__main__":

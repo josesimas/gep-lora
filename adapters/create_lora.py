@@ -201,8 +201,13 @@ def train(options):
         load_in_4bit=True,
     )
 
-    # The chat template the adapters are trained under and evaluated under.
-    tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
+    # The chat template the adapter is trained under -- and so the one the
+    # pipeline has to prompt it in: CHAT_TEMPLATE in settings.py must match.
+    # None is the base model's own template; a name is unsloth's of that name.
+    # Either way it is saved with the tokenizer below, so the adapter folder's
+    # chat_template.jinja records what it learned.
+    if options.chat_template:
+        tokenizer = get_chat_template(tokenizer, chat_template=options.chat_template)
 
     def to_text(batch):
         return {"text": [tokenizer.apply_chat_template(m, tokenize=False,
@@ -263,13 +268,27 @@ def sample(model, tokenizer, prompt, max_new_tokens=120):
     # when both caps are set; clearing it leaves max_new_tokens in charge, the
     # same fix the generated scripts carry.
     model.generation_config.max_length = None
-    inputs = tokenizer.apply_chat_template(
+    # And stop at the end of the turn, also as they do: a base with no
+    # generation_config.json stops only on <|endoftext|>, and the smoke test
+    # would show a trained adapter running on into invented turns.
+    stops = model.generation_config.eos_token_id
+    stops = stops if isinstance(stops, list) else [] if stops is None else [stops]
+    end_of_turn = getattr(tokenizer, "tokenizer", tokenizer).eos_token_id
+    if end_of_turn is not None and end_of_turn not in stops:
+        model.generation_config.eos_token_id = stops + [end_of_turn]
+    # Rendered to text, then tokenised by the tokenizer inside a processor, as
+    # the generated scripts do: a vision-language base (Qwen3.5) loads as a
+    # processor, whose apply_chat_template hands back text whatever return_dict
+    # says.
+    text_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
+    text = tokenizer.apply_chat_template(
         [{"role": "user", "content": prompt}],
-        add_generation_prompt=True, return_tensors="pt", return_dict=True,
-    ).to(model.device)
+        add_generation_prompt=True, tokenize=False)
+    inputs = text_tokenizer([text], return_tensors="pt",
+                            add_special_tokens=False).to(model.device)
     out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
-    return tokenizer.decode(out[0][inputs["input_ids"].shape[-1]:],
-                            skip_special_tokens=True).strip()
+    return text_tokenizer.decode(out[0][inputs["input_ids"].shape[-1]:],
+                                 skip_special_tokens=True).strip()
 
 
 def parse_args(argv=None):
@@ -317,6 +336,12 @@ def parse_args(argv=None):
         "--base-model", default=BASE_MODEL,
         help="base model (default %s). Change it and the adapter can no longer "
              "be blended with the existing slots." % BASE_MODEL)
+    parser.add_argument(
+        "--chat-template", default=None,
+        help="an unsloth chat template name to train under, such as qwen-2.5 "
+             "(default: the base model's own). Whatever it is, CHAT_TEMPLATE in "
+             "settings.py has to say the same, or the pipeline prompts the "
+             "adapter in a format it never learned.")
     parser.add_argument(
         "--prompt", default="Tell me about the ocean.",
         help="prompt to answer once after training, as a smoke test.")

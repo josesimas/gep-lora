@@ -11,7 +11,8 @@ This is the other way to pay it: one process that loads the base model once and
 then answers requests. A client says "build this blend" and then "answer these
 prompts", and the model, the tokeniser and the chat template are already there.
 
-    POST /build      {base_model, slots, plan, final} -> {rank, timings, builds}
+    POST /build      {base_model, slots, plan, final, chat_template}
+                                                      -> {rank, timings, builds}
     POST /generate   {prompts, max_new_tokens}        -> {replies, seconds}
     GET  /health                                      -> {ready, builds, ...}
     POST /shutdown                                    -> stop
@@ -83,6 +84,22 @@ def _log(message):
     print("[lora_server] %s" % message, flush=True)
 
 
+def _stop_at_end_of_turn(model, tokenizer):
+    """Make generate() stop on the chat template's end-of-turn token.
+
+    generate() stops only on generation_config.eos_token_id, and a repo that
+    ships no generation_config.json (unsloth/Qwen3.5-0.8B) leaves that as
+    <|endoftext|> alone -- so a blend that ends its answer with <|im_end|> went
+    on inventing turns until the cap. The same fix template_code.py carries; a
+    no-op for the Qwen2.5 repos, which already list <|im_end|>.
+    """
+    stops = model.generation_config.eos_token_id
+    stops = stops if isinstance(stops, list) else [] if stops is None else [stops]
+    end_of_turn = getattr(tokenizer, "tokenizer", tokenizer).eos_token_id
+    if end_of_turn is not None and end_of_turn not in stops:
+        model.generation_config.eos_token_id = stops + [end_of_turn]
+
+
 class Blend:
     """The base model, held open, with whatever blend was last asked for on it.
 
@@ -92,12 +109,16 @@ class Blend:
     off before the next one goes on.
     """
 
-    def __init__(self, base_model, max_seq=MAX_SEQ, load_in_4bit=LOAD_IN_4BIT):
+    def __init__(self, base_model, max_seq=MAX_SEQ, load_in_4bit=LOAD_IN_4BIT,
+                 chat_template=None):
         self.base_model = base_model
+        # None for the model's own chat template, or the name of unsloth's.
+        self.chat_template = chat_template or None
         self.max_seq = max_seq
         self.load_in_4bit = load_in_4bit
         self.model = None
         self.tokenizer = None
+        self.text_tokenizer = None   # the tokenizer itself, or the one inside a processor
         self.ranks = {}          # adapter name -> the rank PEFT gave it
         self.built = []          # this blend's adapters, in build order
         self.final = None
@@ -135,14 +156,20 @@ class Blend:
         # identically -- and, as in the templates, left padding, because a
         # decoder continues from the last column of what it is given and a
         # right-padded row would be continuing from its own padding.
-        self.tokenizer = get_chat_template(self.tokenizer, chat_template="qwen-2.5")
-        self.tokenizer.padding_side = "left"
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
+        if self.chat_template:
+            self.tokenizer = get_chat_template(self.tokenizer,
+                                               chat_template=self.chat_template)
+        # A vision-language repo (Qwen3.5) loads as a processor; padding, the
+        # pad id and decoding belong to the tokenizer inside it.
+        self.text_tokenizer = getattr(self.tokenizer, "tokenizer", self.tokenizer)
+        self.text_tokenizer.padding_side = "left"
+        if self.text_tokenizer.pad_token_id is None:
+            self.text_tokenizer.pad_token = self.text_tokenizer.eos_token
 
         # Qwen ships max_length=32768 in its generation_config.json, and
         # transformers warns whenever that and max_new_tokens are both set.
         self.model.generation_config.max_length = None
+        _stop_at_end_of_turn(self.model, self.tokenizer)
 
         self.ready = True
         seconds = time.perf_counter() - started
@@ -313,6 +340,7 @@ class Blend:
         # under it have just changed.
         self._fast.for_inference(self.model)
         self.model.generation_config.max_length = None
+        _stop_at_end_of_turn(self.model, self.tokenizer)
         timings.append({"phase": "inference_setup",
                         "seconds": time.perf_counter() - started})
 
@@ -345,18 +373,21 @@ class Blend:
         if self.final is None:
             raise ValueError("no blend is built on this server yet; POST /build first")
         started = time.perf_counter()
-        messages = [[{"role": "user", "content": prompt}] for prompt in prompts]
-        inputs = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, return_tensors="pt",
-            return_dict=True, padding=True
-        ).to(self.model.device)
+        # Rendered to text, then tokenised -- template_code.py's answer(), and
+        # the note there on why: a processor hands back text.
+        texts = [self.tokenizer.apply_chat_template(
+                     [{"role": "user", "content": prompt}],
+                     add_generation_prompt=True, tokenize=False)
+                 for prompt in prompts]
+        inputs = self.text_tokenizer(texts, padding=True, return_tensors="pt",
+                                     add_special_tokens=False).to(self.model.device)
         out = self.model.generate(**inputs, max_new_tokens=max_new_tokens,
                                   do_sample=False,
-                                  pad_token_id=self.tokenizer.pad_token_id)
+                                  pad_token_id=self.text_tokenizer.pad_token_id)
         # Padded on the left, so every row's reply starts at the same column and
         # one width slices the prompt off all of them.
         width = inputs["input_ids"].shape[-1]
-        replies = [self.tokenizer.decode(row[width:], skip_special_tokens=True).strip()
+        replies = [self.text_tokenizer.decode(row[width:], skip_special_tokens=True).strip()
                    for row in out]
         return replies, time.perf_counter() - started
 
@@ -397,6 +428,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "no such endpoint: %s" % self.path})
         blend = self.blend
         self._send(200, {"ready": blend.ready, "base_model": blend.base_model,
+                         "chat_template": blend.chat_template,
                          "builds": blend.builds, "final": blend.final,
                          "cuda": blend.cuda, "pid": os.getpid(),
                          "memory": blend.memory()})
@@ -425,6 +457,16 @@ class _Handler(BaseHTTPRequestHandler):
                     raise ValueError(
                         "this server holds %s but the script asks for %s"
                         % (blend.base_model, wanted))
+                # And the words the prompts are written in, for the same reason.
+                # Only when the script says: one generated before CHAT_TEMPLATE
+                # was a setting sends nothing, and its pool was started under
+                # what that sweep resolves to.
+                if ("chat_template" in payload
+                        and (payload["chat_template"] or None) != blend.chat_template):
+                    raise ValueError(
+                        "this server prompts in chat template %r but the script "
+                        "asks for %r (None is the model's own)"
+                        % (blend.chat_template, payload["chat_template"]))
                 self._send(200, blend.build(payload.get("slots") or {},
                                             payload.get("plan") or [],
                                             payload.get("final")))
@@ -452,9 +494,9 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def serve(base_model, host="127.0.0.1", port=8770, max_seq=MAX_SEQ,
-          load_in_4bit=LOAD_IN_4BIT):
+          load_in_4bit=LOAD_IN_4BIT, chat_template=None):
     """Load the model, then answer requests until told to stop."""
-    blend = Blend(base_model, max_seq, load_in_4bit)
+    blend = Blend(base_model, max_seq, load_in_4bit, chat_template)
     stopping = []
 
     handler = type("_Bound", (_Handler,), {"blend": blend, "stopping": stopping})
@@ -495,9 +537,12 @@ def main(argv=None):
                         help="context length to load with (default %d)" % MAX_SEQ)
     parser.add_argument("--no-4bit", action="store_true",
                         help="load at full precision instead of 4-bit")
+    parser.add_argument("--chat-template", default=None,
+                        help="an unsloth chat template name to prompt in, such "
+                             "as qwen-2.5; left out, the model's own")
     args = parser.parse_args(argv)
     return serve(args.base_model, args.host, args.port, args.max_seq,
-                 not args.no_4bit)
+                 not args.no_4bit, args.chat_template)
 
 
 if __name__ == "__main__":

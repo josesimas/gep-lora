@@ -75,8 +75,20 @@ def model_key(conf):
     namespaces in one table rather than two tables, because they are the same
     kind of row answering the same question -- one of them just cannot be
     believed.
+
+    A named CHAT_TEMPLATE is part of the key ("<model> [chat_template=qwen-2.5]"):
+    the same question asked in other words is another control, and Qwen3.5 under
+    "qwen-2.5" reasons out loud where under its own template it answers. The
+    model's own template keeps the bare name, which is where every row cached
+    before the setting existed sits -- those were "qwen-2.5" on the Qwen2.5 repos,
+    whose own template renders byte-for-byte the same. A sweep stored before the
+    setting resolves to "qwen-2.5" and so asks for its control once more, under
+    the key that says what it is.
     """
     model = generate_runs.base_model_name(conf.get("BASE_MODEL"))
+    template = generate_runs.chat_template_name(conf)
+    if template:
+        model = "%s [chat_template=%s]" % (model, template)
     return ("mock:" + model) if template_for(conf)[1] else model
 
 
@@ -128,6 +140,7 @@ def generate(conn, conf, run_dir, timeout=None, keep_script=False, say=print):
         training_set=conf.get("TRAINING_SET"),
         count=conf.get("TRAINING_COUNT"),
         base_model=conf.get("BASE_MODEL"),
+        chat_template=generate_runs.chat_template_name(conf),
     )
 
     # The same interpreter check the process step makes, for the same reason:

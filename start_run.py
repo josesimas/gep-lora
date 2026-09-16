@@ -267,6 +267,9 @@ def step_runs(context):
     # And the model they all attach their adapters to -- the same one the
     # baseline the llm_judge_baseline evaluator grades against loads.
     base_model = generate_runs.base_model_name(context.conf.get("BASE_MODEL"))
+    # And the chat template the prompts are written in -- the sweep's own, or
+    # "qwen-2.5" for a sweep stored before it was a setting.
+    chat_template = generate_runs.chat_template_name(context.conf)
     prompts_path, prompt_count, prompt_total = generate_runs.eval_prompt_count(
         training_set, count)
 
@@ -292,6 +295,7 @@ def step_runs(context):
             slots=slots,
             count=count,
             base_model=base_model,
+            chat_template=chat_template,
         )
         broken = any(step.broken for step in steps)
         runnable += not broken
