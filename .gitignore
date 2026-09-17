@@ -39,3 +39,5 @@ datasets/medical_validation_lora_dataset.json
 
 # The async API: its registry and every job folder
 api_jobs
+
+.claude
