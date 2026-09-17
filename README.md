@@ -2520,7 +2520,9 @@ python -m async_api.worker                   # the background half
 Then open **http://127.0.0.1:8780/demo**: a test page, served by the API itself,
 that drives every endpoint -- paste the key, submit a job from a settings form
 built from `GET /settings` (the server's own values, with only what you change
-sent; *Quick demo* is a one-generation mocked sweep, done in seconds), watch it run, read its population,
+sent; *Quick demo* is a one-generation mocked sweep, done in seconds; training and
+testing questions come from a shared file, a file you upload, or pasted lines),
+watch it run, read its population,
 fitness chart, transcripts and log, set an individual live, stream answers in either
 format, unset and delete. It is `async_api/demo.html`, one file with no dependencies.
 
