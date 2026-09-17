@@ -70,6 +70,20 @@
   .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
   .legend i { display: inline-block; width: 10px; height: 3px; margin-right: 4px; vertical-align: middle; }
   .q { margin: 8px 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  details { border-top: 1px solid var(--line); padding: 6px 0 4px; margin-top: 8px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+  .changed-count { color: var(--accent); font-weight: 400; }
+  .grid { display: grid; gap: 2px 12px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  .field.wide { grid-column: 1 / -1; }
+  .field[hidden] { display: none; }
+  .field label { margin-top: 6px; }
+  .field.changed > label::after { content: " \2022"; color: var(--accent); }
+  .field.invalid input { border-color: var(--bad); }
+  .help { font-size: 11px; color: var(--muted); line-height: 1.3; margin-top: 2px; }
+  .help.error { color: var(--bad); }
+  .help:empty { display: none; }
+  label.check { display: flex; gap: 6px; align-items: center; color: var(--ink); font-size: 13px; margin-top: 12px; }
+  label.check input { width: auto; margin: 0; }
 </style>
 </head>
 <body>
@@ -88,28 +102,30 @@
     <h2>1. Submit a job</h2>
     <div class="row">
       <div><label for="label">Label</label><input id="label" value="demo"></div>
-      <div><label for="noTest">Testing pass</label>
-        <select id="noTest"><option value="false">run it</option><option value="true">skip it</option></select></div>
     </div>
-    <label for="settings">Settings overrides (JSON)</label>
-    <textarea id="settings" rows="6">{
-  "TEMPLATE": "template_code_mocked.py",
-  "GENERATIONS": 1,
-  "COUNT": 4,
-  "TRAINING_COUNT": 3
-}</textarea>
-    <div class="row">
-      <div><label for="trainMode">Training dataset</label>
-        <select id="trainMode"><option value="file">shared file</option><option value="inline">inline JSONL</option></select></div>
-      <div><label for="trainFile">Shared file</label><select id="trainFile"></select></div>
+    <div class="actions">
+      <span class="muted">Start from:</span>
+      <button id="presetDemo" type="button" title="Mocked template, 4 individuals, 2 generations, 3 questions: done in seconds">Quick demo</button>
+      <button id="presetDefaults" type="button">Server defaults</button>
     </div>
-    <textarea id="trainInline" rows="5" hidden>{"messages": [{"role": "user", "content": "I have a headache and a fever. What should I do?"}, {"role": "assistant", "content": "Rest, drink fluids, and see a doctor if the fever lasts more than three days."}]}
+    <div id="form"><p class="muted">Enter an API key to load the settings.</p></div>
+
+    <details open>
+      <summary>Datasets and testing</summary>
+      <div class="row">
+        <div><label for="trainMode">Training questions</label>
+          <select id="trainMode"><option value="file">a shared file</option><option value="inline">paste JSON Lines</option></select></div>
+        <div><label for="trainFile">Shared file</label><select id="trainFile"></select></div>
+      </div>
+      <textarea id="trainInline" rows="5" hidden>{"messages": [{"role": "user", "content": "I have a headache and a fever. What should I do?"}, {"role": "assistant", "content": "Rest, drink fluids, and see a doctor if the fever lasts more than three days."}]}
 {"messages": [{"role": "user", "content": "How much water should I drink a day?"}, {"role": "assistant", "content": "About two litres for most adults, more in hot weather or when exercising."}]}
 {"messages": [{"role": "user", "content": "Is it safe to take ibuprofen on an empty stomach?"}, {"role": "assistant", "content": "It can irritate the stomach; take it with food when you can."}]}</textarea>
-    <div class="row">
-      <div><label for="testFile">Testing dataset (shared file)</label><select id="testFile"></select></div>
-      <div><label for="minQuality">Test min quality</label><input id="minQuality" type="number" step="0.05" value="0"></div>
-    </div>
+      <div class="row">
+        <div><label for="testFile">Testing questions</label><select id="testFile"></select></div>
+        <div><label class="check"><input id="runTest" type="checkbox" checked> Run the testing pass</label></div>
+      </div>
+      <div id="testingFields"></div>
+    </details>
     <div class="actions"><button class="primary" id="submit">Submit job</button></div>
     <div id="submitMsg" class="msg"></div>
   </section>
@@ -223,7 +239,8 @@ function recall(name) {
 async function useKey() {
   key = $("key").value.trim();
   remember("key", key);
-  await Promise.all([loadDatasets(), refreshJobs(), refreshLive()]);
+  await loadDatasets();
+  await Promise.all([loadForm(), refreshJobs(), refreshLive()]);
 }
 
 async function refreshHealth() {
@@ -254,23 +271,219 @@ async function loadDatasets() {
   }
 }
 
+// --- the settings form ------------------------------------------------------
+//
+// Built from GET /settings: the server's own values are the defaults, and only
+// fields the user changed are sent, so a submission says what differs from
+// config/settings.py and nothing else.
+
+const FIELDS = [
+  { group: "Search", name: "COUNT", label: "Population size", type: "int", min: 1,
+    help: "Individuals in every generation." },
+  { group: "Search", name: "GENERATIONS", label: "Generations", type: "int", min: 1,
+    help: "Run after the first one, so the search is 1 + this." },
+  { group: "Search", name: "SELECTION_COUNT", label: "Replaced per generation", type: "int", min: 0,
+    nullable: "blank = grow the population",
+    help: "Fit copies added, and weakest removed, each round." },
+  { group: "Search", name: "MUTATION_RATE", label: "Mutation rate", type: "float", min: 0, max: 1, step: 0.01,
+    help: "Chance each symbol of a chromosome changes." },
+  { group: "Search", name: "MAX_DEPTH", label: "Max tree depth", type: "int", min: 1 },
+  { group: "Search", name: "BRANCH_PROB", label: "Branch probability", type: "float", min: 0, max: 1, step: 0.05,
+    help: "Chance a node keeps branching when a tree is drawn." },
+  { group: "Search", name: "UNIQUE", label: "No duplicate chromosomes", type: "bool" },
+
+  { group: "Model", name: "TEMPLATE", label: "How individuals run", type: "choice", wide: true,
+    labels: { "template_code_mocked.py": "Mocked: no model, random scores (seconds)",
+              "template_remote_code.py": "Lora servers: base model loaded once",
+              "template_code.py": "One model load per individual" } },
+  { group: "Model", name: "BASE_MODEL", label: "Base model", type: "text", wide: true,
+    help: "The model every adapter was trained on." },
+  { group: "Model", name: "CHAT_TEMPLATE", label: "Chat template", type: "text",
+    nullable: "blank = the model's own" },
+  { group: "Model", name: "LORA_SERVER_COUNT", label: "Lora servers", type: "int", min: 1,
+    showIf: (v) => v.TEMPLATE === "template_remote_code.py" },
+  { group: "Model", name: "PROCESS_RUN_BATCH_SIZE", label: "Individuals run at once", type: "int", min: 1,
+    showIf: (v) => v.TEMPLATE === "template_code.py" },
+
+  { group: "Scoring", name: "EVALUATOR", label: "Evaluator", type: "choice", wide: true, describe: true },
+  { group: "Scoring", name: "TRAINING_COUNT", label: "Questions per individual", type: "int", min: 1,
+    nullable: "blank = all of them" },
+  { group: "Scoring", name: "JUDGE_BACKEND", label: "Judge runs on", type: "choice",
+    labels: { endpoint: "an OpenAI-compatible endpoint", unsloth: "this machine (unsloth)" },
+    showIf: (v) => needsJudge(v) },
+  { group: "Scoring", name: "JUDGE_BASE_URL", label: "Judge endpoint URL", type: "text", wide: true,
+    showIf: (v) => needsJudge(v) && v.JUDGE_BACKEND === "endpoint" },
+  { group: "Scoring", name: "JUDGE_MODEL", label: "Judge model", type: "text",
+    nullable: "blank = whatever the endpoint serves",
+    showIf: (v) => needsJudge(v) },
+
+  { group: "Testing", name: "TESTING_MIN_QUALITY", label: "Test individuals scoring above", type: "float",
+    min: 0, max: 1, step: 0.05, showIf: () => $("runTest").checked && !!$("testFile").value },
+
+  { group: "Seeds", name: "SEED", label: "Population seed", type: "int", min: 0, nullable: "blank = random" },
+  { group: "Seeds", name: "WEIGHT_MASTER_SEED", label: "Blend weight seed", type: "int", min: 0, nullable: "blank = random" },
+  { group: "Seeds", name: "SELECTION_MASTER_SEED", label: "Selection seed", type: "int", min: 0, nullable: "blank = random" },
+  { group: "Seeds", name: "MUTATION_MASTER_SEED", label: "Mutation seed", type: "int", min: 0, nullable: "blank = random" },
+];
+
+const GROUPS = [["Search", true], ["Model", true], ["Scoring", true], ["Seeds", false]];
+
+const PRESETS = {
+  demo: { TEMPLATE: "template_code_mocked.py", GENERATIONS: 1, COUNT: 4, TRAINING_COUNT: 3,
+          TESTING_MIN_QUALITY: 0 },
+  defaults: {},
+};
+
+let form = null;            // GET /settings
+
+function needsJudge(values) {
+  const chosen = (form.choices.EVALUATOR || []).find((e) => e.value === values.EVALUATOR);
+  return !chosen || chosen.needs_judge;
+}
+
+async function loadForm() {
+  if (!key) return;
+  try {
+    form = await api("GET", "/settings");
+  } catch (error) {
+    form = null;
+    $("form").replaceChildren(el("p", { class: "msg err" }, error.message));
+    return;
+  }
+  const byGroup = (group) => FIELDS.filter((f) => f.group === group && f.name in form.defaults);
+  $("form").replaceChildren(...GROUPS.map(([group, open]) =>
+    el("details", Object.assign({ "data-group": group }, open ? { open: "" } : {}),
+      el("summary", {}, group, el("span", { class: "changed-count" })),
+      el("div", { class: "grid" }, byGroup(group).map(fieldControl)))));
+  $("testingFields").replaceChildren(el("div", { class: "grid" }, byGroup("Testing").map(fieldControl)));
+  applyPreset(recall("preset") || "demo");
+}
+
+function fieldControl(field) {
+  const id = "f_" + field.name;
+  let input;
+  if (field.type === "choice") {
+    input = el("select", { id }, (form.choices[field.name] || []).map((c) =>
+      el("option", { value: c.value }, (field.labels && field.labels[c.value]) || c.label)));
+  } else if (field.type === "bool") {
+    input = el("input", { id, type: "checkbox" });
+  } else {
+    const attrs = { id, type: field.type === "text" ? "text" : "number" };
+    if (field.type !== "text") attrs.step = field.step || (field.type === "int" ? 1 : "any");
+    if (field.min !== undefined) attrs.min = field.min;
+    if (field.max !== undefined) attrs.max = field.max;
+    if (field.nullable) attrs.placeholder = field.nullable;
+    input = el("input", attrs);
+  }
+  input.addEventListener("input", refreshForm);
+  input.addEventListener("change", refreshForm);
+  return el("div", { class: "field" + (field.wide ? " wide" : ""), "data-name": field.name },
+    field.type === "bool"
+      ? el("label", { class: "check" }, input, field.label)
+      : [el("label", { for: id }, field.label), input],
+    el("div", { class: "help" }, field.help || ""),
+    field.describe ? el("div", { class: "help describe" }) : null,
+    el("div", { class: "help error" }));
+}
+
+function setField(field, value) {
+  const input = $("f_" + field.name);
+  if (!input) return;
+  if (field.type === "bool") input.checked = !!value;
+  else input.value = value === null || value === undefined ? "" : value;
+}
+
+// -> [value, error]
+function readField(field) {
+  const input = $("f_" + field.name);
+  if (field.type === "bool") return [input.checked, null];
+  const raw = input.value.trim();
+  if (field.type === "choice") return [raw, null];
+  if (raw === "") return field.nullable ? [null, null] : [null, "Required."];
+  if (field.type === "text") return [raw, null];
+  const number = Number(raw);
+  if (!Number.isFinite(number)) return [null, "Not a number."];
+  if (field.type === "int" && !Number.isInteger(number)) return [null, "A whole number."];
+  if (field.min !== undefined && number < field.min) return [null, "At least " + field.min + "."];
+  if (field.max !== undefined && number > field.max) return [null, "At most " + field.max + "."];
+  return [number, null];
+}
+
+function formValues() {
+  const values = {};
+  for (const field of FIELDS) if ($("f_" + field.name)) values[field.name] = readField(field)[0];
+  return values;
+}
+
+const differs = (field, value) => JSON.stringify(value) !== JSON.stringify(form.defaults[field.name]);
+
+function applyPreset(name) {
+  if (!form) return;
+  remember("preset", name);
+  const preset = PRESETS[name] || {};
+  for (const field of FIELDS) {
+    setField(field, field.name in preset ? preset[field.name] : form.defaults[field.name]);
+  }
+  refreshForm();
+}
+
+// Visibility, the changed markers, descriptions and errors, after any edit.
+function refreshForm() {
+  if (!form) return;
+  const values = formValues();
+  for (const field of FIELDS) {
+    const box = document.querySelector(`.field[data-name="${field.name}"]`);
+    if (!box) continue;
+    box.hidden = !!field.showIf && !field.showIf(values);
+    const [value, error] = readField(field);
+    box.querySelector(".error").textContent = error || "";
+    box.classList.toggle("invalid", !!error);
+    box.classList.toggle("changed", !error && differs(field, value));
+    const describe = box.querySelector(".describe");
+    if (describe) {
+      const chosen = (form.choices[field.name] || []).find((c) => c.value === value);
+      describe.textContent = chosen ? chosen.description : "";
+    }
+  }
+  for (const details of document.querySelectorAll("#form details")) {
+    const count = details.querySelectorAll(".field.changed:not([hidden])").length;
+    details.querySelector(".changed-count").textContent = count ? ` · ${count} changed` : "";
+  }
+}
+
+// -> [overrides, errors]: the visible fields that differ from the server's value.
+function overrides() {
+  const out = {}, errors = [];
+  for (const field of FIELDS) {
+    const box = document.querySelector(`.field[data-name="${field.name}"]`);
+    if (!box || box.hidden) continue;
+    const [value, error] = readField(field);
+    if (error) errors.push(`${field.label}: ${error}`);
+    else if (differs(field, value)) out[field.name] = value;
+  }
+  return [out, errors];
+}
+
 // --- submit -----------------------------------------------------------------
 
 async function submitJob() {
-  say("submitMsg", "Submitting…");
-  let settings;
-  try { settings = JSON.parse($("settings").value || "{}"); }
-  catch (error) { return say("submitMsg", "Settings are not valid JSON: " + error.message, "err"); }
+  if (!form) return say("submitMsg", "Enter an API key first.", "err");
+  refreshForm();
+  const [settings, errors] = overrides();
+  if (errors.length) return say("submitMsg", errors.join(" "), "err");
 
   const datasets = {};
   datasets.training = $("trainMode").value === "file" ? { file: $("trainFile").value } : $("trainInline").value;
   if ($("testFile").value) datasets.testing = { file: $("testFile").value };
-  const options = { no_test: $("noTest").value === "true" };
-  if ($("minQuality").value !== "") options.test_min_quality = Number($("minQuality").value);
+  const options = { no_test: !$("runTest").checked || !$("testFile").value };
 
+  say("submitMsg", "Submitting…");
   try {
     const { job } = await api("POST", "/jobs", { label: $("label").value || null, settings, datasets, options });
-    say("submitMsg", `Job ${job.id} queued at position ${job.queue_position}. Start a worker if none is running: python -m async_api.worker`, "ok");
+    const changed = Object.keys(settings);
+    say("submitMsg", `Job ${job.id} queued at position ${job.queue_position}` +
+      (changed.length ? `, changing ${changed.join(", ")}.` : " with the server's settings.") +
+      " Start a worker if none is running: python -m async_api.worker", "ok");
     await refreshJobs();
     select(job.id);
   } catch (error) {
@@ -561,6 +774,10 @@ async function ask() {
 $("saveKey").addEventListener("click", useKey);
 $("key").addEventListener("keydown", (event) => { if (event.key === "Enter") useKey(); });
 $("submit").addEventListener("click", submitJob);
+$("presetDemo").addEventListener("click", () => applyPreset("demo"));
+$("presetDefaults").addEventListener("click", () => applyPreset("defaults"));
+$("runTest").addEventListener("change", refreshForm);
+$("testFile").addEventListener("change", refreshForm);
 $("trainMode").addEventListener("change", () => {
   const inline = $("trainMode").value === "inline";
   $("trainInline").hidden = !inline;

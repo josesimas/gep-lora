@@ -40,6 +40,7 @@ Inference
     GET    /health                         liveness, and what is loaded
 
 Other
+    GET    /settings                       settings.py's values and the choices, for a form
     GET    /datasets                       shared dataset files a submission may name
     GET    /  or  /demo                    a test page that drives all of the above
 """
@@ -236,6 +237,9 @@ class App:
         self.own_job(user, job_id)
         return 200, {"unset": self.unset(self.registry.deployments(job_id=job_id))}
 
+    def submission_form(self, user):
+        return 200, submit.form()
+
     def list_datasets(self, user):
         """The shared dataset files a submission may name with {"file": name}."""
         folder = os.path.join(submit._ROOT,
@@ -302,6 +306,7 @@ ROUTES = [
     ("POST", r"/jobs/(\d+)/live", "set_live", ("body",)),
     ("GET", r"/jobs/(\d+)/live", "job_live", ()),
     ("DELETE", r"/jobs/(\d+)/live", "unset_job", ()),
+    ("GET", r"/settings", "submission_form", ()),
     ("GET", r"/datasets", "list_datasets", ()),
     ("GET", r"/live", "list_live", ()),
     ("DELETE", r"/live/(\d+)", "unset_one", ()),

@@ -152,6 +152,16 @@ class RefusalTests(ServerTestCase):
         self.assertEqual(status, 200)
         self.assertIsInstance(reply["datasets"], list)
 
+    def test_the_form_offers_what_a_submission_may_change(self):
+        status, form = self.call("GET", "/settings")
+        self.assertEqual(status, 200)
+        self.assertIn("COUNT", form["defaults"])
+        self.assertNotIn("DB_RUN_DIR", form["defaults"])
+        templates = [one["value"] for one in form["choices"]["TEMPLATE"]]
+        self.assertIn("template_code_mocked.py", templates)
+        self.assertFalse([name for name in templates if "baseline" in name])
+        self.assertTrue(all("needs_judge" in one for one in form["choices"]["EVALUATOR"]))
+
     def test_health_needs_no_key(self):
         self.assertEqual(self.call("GET", "/health", key="none")[0], 200)
 

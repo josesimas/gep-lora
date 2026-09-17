@@ -2518,8 +2518,9 @@ python -m async_api.worker                   # the background half
 ```
 
 Then open **http://127.0.0.1:8780/demo**: a test page, served by the API itself,
-that drives every endpoint -- paste the key, submit a job (the defaults are a
-one-generation mocked sweep, done in seconds), watch it run, read its population,
+that drives every endpoint -- paste the key, submit a job from a settings form
+built from `GET /settings` (the server's own values, with only what you change
+sent; *Quick demo* is a one-generation mocked sweep, done in seconds), watch it run, read its population,
 fitness chart, transcripts and log, set an individual live, stream answers in either
 format, unset and delete. It is `async_api/demo.html`, one file with no dependencies.
 
@@ -2575,6 +2576,7 @@ are refused with a 400 before anything is queued.
 | `DELETE /jobs/{id}/live`, `DELETE /live/{id}` | unset for inference |
 | `POST /infer` | `{"token", "prompt", "max_new_tokens"?}` -> the answer, streamed |
 | `GET /health` | no key needed; what is loaded |
+| `GET /settings` | settings.py's values and the choices (templates, evaluators, backends), for a form |
 | `GET /datasets` | the shared dataset files a submission may name |
 | `GET /demo` (or `/`) | no key needed; the test page |
 

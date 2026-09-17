@@ -92,6 +92,33 @@ def settings_for(overrides):
     return conf
 
 
+def form():
+    """What a submission form needs: settings.py's values, and the choices.
+
+    -> {defaults: {NAME: value}, choices: {NAME: [{value, label, ...}]},
+        locked: [NAME]}. Every setting a submission may override is in
+    `defaults`, so a form offers a subset and a client never has to guess a
+    value the server would have used.
+    """
+    import evaluators                   # the registry: importing it registers them
+
+    conf = config.snapshot()
+    templates = [name for name in generate_runs.templates_available()
+                 if not name.startswith("template_baseline")]
+    return {
+        "defaults": {name: value for name, value in conf.items()
+                     if name not in settings.LOCKED_SETTINGS},
+        "choices": {
+            "TEMPLATE": [{"value": name, "label": name} for name in templates],
+            "EVALUATOR": [{"value": name, "label": name, "description": description,
+                           "needs_judge": evaluators.get(name).needs_judge}
+                          for name, description in evaluators.available()],
+            "JUDGE_BACKEND": [{"value": name, "label": name} for name in evaluators.BACKENDS],
+        },
+        "locked": list(settings.LOCKED_SETTINGS),
+    }
+
+
 def options_for(options):
     """The main.py options a submission asked for, checked. -> dict."""
     options = options or {}
