@@ -176,28 +176,33 @@ def new_sweep(conn, label):
     that was drawn, rather than passed along as None. A sweep is then repeatable
     even when it was never asked to be: whatever it used is written down.
     """
-    conf = config.snapshot()
-    # Fail on an unknown EVALUATOR here rather than an hour later, when the
-    # process step has finished and there is a transcript nobody can score.
-    # Same for an unknown JUDGE_BACKEND, which is the other half of that
-    # question: which evaluator grades, and where its judge runs.
-    evaluators.get(conf.get("EVALUATOR"))
-    evaluators.backend_of(conf)
-    if conf.get("SEED") is None:
-        conf["SEED"] = random.randrange(_SEED_LIMIT)
-    if conf.get("WEIGHT_MASTER_SEED") is None:
-        conf["WEIGHT_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
-    if conf.get("SELECTION_MASTER_SEED") is None:
-        conf["SELECTION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
-    if conf.get("MUTATION_MASTER_SEED") is None:
-        conf["MUTATION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
-
+    conf = freeze(config.snapshot())
     run_id = store.create_run(conn, template=conf.get("TEMPLATE") or "template_code.py",
                               label=label)
     print("new run %d in %s" % (run_id, conn.path))
     store.save_settings(conn, run_id, conf)
     add_dataset.save_all(conn, run_id, conf)
     return run_id, conf
+
+
+def freeze(conf):
+    """Check a new sweep's settings and draw its unset seeds. -> the same dict.
+
+    Its own function because a sweep is not only created here: async_api's
+    submit.py prepares one for a worker to run, and the two must agree on what
+    a new sweep is checked for and what it writes down.
+    """
+    # Fail on an unknown EVALUATOR here rather than an hour later, when the
+    # process step has finished and there is a transcript nobody can score.
+    # Same for an unknown JUDGE_BACKEND, which is the other half of that
+    # question: which evaluator grades, and where its judge runs.
+    evaluators.get(conf.get("EVALUATOR"))
+    evaluators.backend_of(conf)
+    for name in ("SEED", "WEIGHT_MASTER_SEED", "SELECTION_MASTER_SEED",
+                 "MUTATION_MASTER_SEED"):
+        if conf.get(name) is None:
+            conf[name] = random.randrange(_SEED_LIMIT)
+    return conf
 
 
 # --- the steps -------------------------------------------------------------

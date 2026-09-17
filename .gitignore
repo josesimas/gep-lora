@@ -36,3 +36,6 @@ datasets/medical_training_lora_dataset.json
 datasets/medical_validation_lora_dataset.json
 
 *.bat
+
+# The async API: its registry and every job folder
+api_jobs
