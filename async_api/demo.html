@@ -426,6 +426,8 @@ const FIELDS = [
     help: "Fit copies added, and weakest removed, each round." },
   { group: "Search", name: "MUTATION_RATE", label: "Mutation rate", type: "float", min: 0, max: 1, step: 0.01,
     help: "Chance each symbol of a chromosome changes." },
+  { group: "Search", name: "WEIGHT_MUTATION_RATE", label: "Weight mutation rate", type: "float", min: 0, max: 1, step: 0.01,
+    help: "Share of all non-elite weights moved each round." },
   { group: "Search", name: "MAX_DEPTH", label: "Max tree depth", type: "int", min: 1 },
   { group: "Search", name: "BRANCH_PROB", label: "Branch probability", type: "float", min: 0, max: 1, step: 0.05,
     help: "Chance a node keeps branching when a tree is drawn." },
@@ -463,6 +465,7 @@ const FIELDS = [
   { group: "Seeds", name: "WEIGHT_MASTER_SEED", label: "Blend weight seed", type: "int", min: 0, nullable: "blank = random" },
   { group: "Seeds", name: "SELECTION_MASTER_SEED", label: "Selection seed", type: "int", min: 0, nullable: "blank = random" },
   { group: "Seeds", name: "MUTATION_MASTER_SEED", label: "Mutation seed", type: "int", min: 0, nullable: "blank = random" },
+  { group: "Seeds", name: "WEIGHT_MUTATION_MASTER_SEED", label: "Weight mutation seed", type: "int", min: 0, nullable: "blank = random" },
 ];
 
 const GROUPS = [["Search", true], ["Model", true], ["Scoring", true], ["Seeds", false]];
