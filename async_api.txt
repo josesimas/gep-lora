@@ -1,0 +1,15 @@
+Create an api, async batch processing and inference for this system. The idea is that a user can submit a job with the settings and datasets for processing over the web and then a background process picks up the request and runs it. Finally the processed run can be selected for inference (goes live).
+
+Implement this in the folder aync_api
+
+- Submit job creates a sqlite database with all the information necessary to run the job. The sqlite db is the same that is created when this process runs (see storage.py).
+
+- The backend does the batch processing in arrival order by picking up each of the sqlite files and puting them through main.py
+
+- The api exposes a job list per user and a job detail that shows the run results
+
+- The api exposes a set run live which marks a job as ready for inference (returns a token for using that run). Going live may mean different things (run locally, upload to a remote server, etc).
+
+- The inference api accepts the token above and a prompt and then streams the answer. The first time it is called it loads the model which is cached for a set time (5 minutes by default)
+
+- Other api functions: cancel run, delete job or run, get job status, unset for inference

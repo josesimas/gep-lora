@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEP LoRA API demo</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2230; --muted: #667085; --line: #e3e6ec;
+    --accent: #3b5bdb; --accent-ink: #ffffff; --ok: #2b8a3e; --warn: #b7791f; --bad: #c92a2a;
+    --code: #f1f3f7; --best: #3b5bdb; --mean: #9aa5b8; --worst: #d0d5de;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --panel: #1a1f29; --ink: #e6e9ef; --muted: #98a2b3; --line: #2a3140;
+      --accent: #748ffc; --accent-ink: #0d1020; --ok: #69db7c; --warn: #ffd43b; --bad: #ff8787;
+      --code: #232a36; --best: #748ffc; --mean: #6b7488; --worst: #3a4252;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+           padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+           position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0 12px 0 0; }
+  main { display: grid; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto;
+         grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+            padding: 14px 16px; min-width: 0; }
+  h2 { font-size: 14px; margin: 0 0 10px; display: flex; gap: 8px; align-items: center; }
+  h3 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); font-weight: 600; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  input, textarea, select { width: 100%; font: inherit; color: var(--ink); background: var(--bg);
+           border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  textarea { font-family: ui-monospace, Consolas, monospace; font-size: 12px; resize: vertical; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+  .row > * { flex: 1 1 120px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           border-radius: 6px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  tr.selected td { background: var(--code); }
+  tr.click { cursor: pointer; }
+  .scroll { overflow-x: auto; }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  pre { background: var(--code); border-radius: 6px; padding: 8px; margin: 0; overflow: auto;
+        max-height: 260px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+          border: 1px solid currentColor; }
+  .s-done { color: var(--ok); } .s-failed, .s-cancelled { color: var(--bad); }
+  .s-running { color: var(--accent); } .s-queued, .s-preparing, .s-deleted { color: var(--muted); }
+  .muted { color: var(--muted); }
+  .msg { margin-top: 8px; font-size: 13px; min-height: 1em; }
+  .msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .answer { background: var(--code); border-radius: 6px; padding: 10px; min-height: 60px;
+            white-space: pre-wrap; margin-top: 8px; }
+  .tiles { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tile { background: var(--code); border-radius: 8px; padding: 6px 10px; }
+  .tile b { display: block; font-size: 16px; }
+  .tile span { font-size: 11px; color: var(--muted); }
+  .span2 { grid-column: 1 / -1; }
+  svg text { fill: var(--muted); font-size: 10px; }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 3px; margin-right: 4px; vertical-align: middle; }
+  .q { margin: 8px 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  details { border-top: 1px solid var(--line); padding: 6px 0 4px; margin-top: 8px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+  .changed-count { color: var(--accent); font-weight: 400; }
+  .grid { display: grid; gap: 2px 12px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  .field.wide { grid-column: 1 / -1; }
+  .field[hidden] { display: none; }
+  .field label { margin-top: 6px; }
+  .field.changed > label::after { content: " \2022"; color: var(--accent); }
+  .field.invalid input { border-color: var(--bad); }
+  .help { font-size: 11px; color: var(--muted); line-height: 1.3; margin-top: 2px; }
+  .help.error { color: var(--bad); }
+  .help.ok { color: var(--ok); }
+  .dataset { margin-top: 4px; }
+  .dataset [hidden] { display: none; }
+  input[type="file"] { padding: 4px; font-size: 12px; }
+  .help:empty { display: none; }
+  label.check { display: flex; gap: 6px; align-items: center; color: var(--ink); font-size: 13px; margin-top: 12px; }
+  label.check input { width: auto; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>GEP LoRA API demo</h1>
+  <div style="flex: 1 1 360px">
+    <input id="key" type="password" placeholder="API key (python -m async_api.users add <name>)">
+  </div>
+  <button id="saveKey">Use key</button>
+  <span id="health" class="muted"></span>
+</header>
+
+<main>
+  <!-- submit -->
+  <section>
+    <h2>1. Submit a job</h2>
+    <div class="row">
+      <div><label for="label">Label</label><input id="label" value="demo"></div>
+    </div>
+    <div class="actions">
+      <span class="muted">Start from:</span>
+      <button id="presetDemo" type="button" title="Mocked template, 4 individuals, 2 generations, 3 questions: done in seconds">Quick demo</button>
+      <button id="presetDefaults" type="button">Server defaults</button>
+    </div>
+    <div id="form"><p class="muted">Enter an API key to load the settings.</p></div>
+
+    <details open>
+      <summary>Datasets and testing</summary>
+      <div class="dataset" data-split="training">
+        <div class="row">
+          <div><label for="trainingMode">Training questions</label>
+            <select id="trainingMode">
+              <option value="shared">a shared file</option>
+              <option value="upload">upload a file</option>
+              <option value="paste">paste JSON Lines</option>
+            </select></div>
+          <div data-mode="shared"><label for="trainingShared">Shared file</label><select id="trainingShared"></select></div>
+          <div data-mode="upload"><label for="trainingUpload">File</label>
+            <input id="trainingUpload" type="file" accept=".json,.jsonl,.txt"></div>
+        </div>
+        <textarea id="trainingPaste" data-mode="paste" rows="5">{"messages": [{"role": "user", "content": "I have a headache and a fever. What should I do?"}, {"role": "assistant", "content": "Rest, drink fluids, and see a doctor if the fever lasts more than three days."}]}
+{"messages": [{"role": "user", "content": "How much water should I drink a day?"}, {"role": "assistant", "content": "About two litres for most adults, more in hot weather or when exercising."}]}
+{"messages": [{"role": "user", "content": "Is it safe to take ibuprofen on an empty stomach?"}, {"role": "assistant", "content": "It can irritate the stomach; take it with food when you can."}]}</textarea>
+        <div class="help" id="trainingStatus"></div>
+      </div>
+      <div class="dataset" data-split="testing">
+        <div class="row">
+          <div><label for="testingMode">Testing questions</label>
+            <select id="testingMode">
+              <option value="none">none</option>
+              <option value="shared" selected>a shared file</option>
+              <option value="upload">upload a file</option>
+            </select></div>
+          <div data-mode="shared"><label for="testingShared">Shared file</label><select id="testingShared"></select></div>
+          <div data-mode="upload"><label for="testingUpload">File</label>
+            <input id="testingUpload" type="file" accept=".json,.jsonl,.txt"></div>
+        </div>
+        <div class="help" id="testingStatus"></div>
+        <label class="check" data-mode="shared upload"><input id="runTest" type="checkbox" checked> Run the testing pass</label>
+      </div>
+      <div id="testingFields"></div>
+    </details>
+    <div class="actions"><button class="primary" id="submit">Submit job</button></div>
+    <div id="submitMsg" class="msg"></div>
+  </section>
+
+  <!-- jobs -->
+  <section>
+    <h2>2. Jobs <span class="muted" style="font-weight: 400">refreshes every 3s</span></h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Label</th><th>Status</th><th>Best</th><th>Created</th></tr></thead>
+        <tbody id="jobs"><tr><td colspan="5" class="muted">Enter an API key.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- detail -->
+  <section class="span2" id="detailSection" hidden>
+    <h2>3. Job <span id="detailTitle"></span></h2>
+    <div class="actions">
+      <button id="aCancel">Cancel</button>
+      <button id="aLive" class="primary">Set live (best)</button>
+      <button id="aUnset">Unset live</button>
+      <button id="aDeleteRun" class="danger">Delete run</button>
+      <button id="aDeleteJob" class="danger">Delete job</button>
+      <button id="aDownload" title="A snapshot of job.sqlite3: settings, dataset, population, transcripts, scores">Download database</button>
+      <button id="aRefresh">Refresh</button>
+    </div>
+    <div id="detailMsg" class="msg"></div>
+    <div class="tiles" id="tiles"></div>
+    <div id="detailBody"></div>
+  </section>
+
+  <!-- inference -->
+  <section class="span2">
+    <h2>4. Inference</h2>
+    <div class="row">
+      <div style="flex: 3 1 300px"><label for="token">Live token</label>
+        <input id="token" class="mono" placeholder="returned by Set live"></div>
+      <div><label for="maxTokens">Max new tokens</label><input id="maxTokens" type="number" value="200"></div>
+      <div><label for="format">Stream as</label>
+        <select id="format"><option value="text">chunked text</option><option value="sse">server-sent events</option></select></div>
+    </div>
+    <label for="prompt">Prompt</label>
+    <textarea id="prompt" rows="3">What are common symptoms of the flu?</textarea>
+    <div class="actions"><button class="primary" id="ask">Ask</button><span id="inferStats" class="muted"></span></div>
+    <div id="answer" class="answer muted">The answer streams here.</div>
+    <h3>Live deployments</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Job</th><th>Individual</th><th>Chromosome</th><th>Engine</th><th>Since</th><th></th></tr></thead>
+        <tbody id="live"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const FINISHED = ["done", "failed", "cancelled", "deleted"];
+let key = "";
+let selected = null;          // job id on screen
+let lastStatus = null;        // its status when detail was last drawn
+
+// --- small helpers ----------------------------------------------------------
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs)) {
+    if (name === "class") node.className = value;
+    else if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
+    else node.setAttribute(name, value);
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined) continue;
+    node.append(child instanceof Node ? child : String(child));
+  }
+  return node;
+}
+
+const fmt = (value, digits = 3) => (value === null || value === undefined) ? "–" : Number(value).toFixed(digits);
+const pill = (status) => el("span", { class: "pill s-" + status }, status);
+
+function say(target, text, kind) {
+  const node = $(target);
+  node.textContent = text || "";
+  node.className = "msg" + (kind ? " " + kind : "");
+}
+
+async function api(method, path, body) {
+  const response = await fetch(path, {
+    method,
+    headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let data = null;
+  try { data = await response.json(); } catch (_) { /* empty body */ }
+  if (!response.ok) throw new Error((data && data.error) || response.status + " " + response.statusText);
+  return data;
+}
+
+function remember(name, value) {
+  try { localStorage.setItem("gep-api-" + name, value); } catch (_) { /* private mode */ }
+}
+function recall(name) {
+  try { return localStorage.getItem("gep-api-" + name) || ""; } catch (_) { return ""; }
+}
+
+// --- key, health, datasets ---------------------------------------------------
+
+async function useKey() {
+  key = $("key").value.trim();
+  remember("key", key);
+  await loadDatasets();
+  await Promise.all([loadForm(), refreshJobs(), refreshLive()]);
+}
+
+async function refreshHealth() {
+  try {
+    const health = await (await fetch("/health")).json();
+    const loaded = health.models.filter((m) => m.loaded);
+    $("health").textContent = loaded.length
+      ? "loaded: " + loaded.map((m) => `${m.base_model} (${m.engine}, unloads in ${Math.round(m.unloads_in)}s)`).join(", ")
+      : "server up · no model loaded";
+  } catch (_) {
+    $("health").textContent = "server unreachable";
+  }
+}
+
+async function loadDatasets() {
+  if (!key) return;
+  try {
+    const { datasets } = await api("GET", "/datasets");
+    for (const [split, preferred] of [["training", "medical_testing_lora_dataset.json"],
+                                      ["testing", "medical_validation_lora_dataset.json"]]) {
+      const select = $(split + "Shared");
+      select.replaceChildren(...datasets.map((name) => el("option", { value: name }, name)));
+      if (datasets.includes(preferred)) select.value = preferred;
+    }
+    const testing = recall("testingMode");
+    if (testing) $("testingMode").value = testing;
+    showDatasetModes();
+  } catch (error) {
+    say("submitMsg", error.message, "err");
+  }
+}
+
+// --- datasets: a shared file, an uploaded one, or pasted lines ------------------
+//
+// An upload is read here and sent as its text -- the API takes a dataset as a
+// list of records, the text of a file, or {"file": name}, so nothing is stored
+// on the server until the job is submitted. A file that is one JSON array is
+// sent as its list of records, since the pipeline reads a dataset a line at a
+// time and would refuse it as a file.
+
+const uploads = { training: null, testing: null };      // split -> {name, dataset, records}
+
+function questionOf(record) {
+  if (typeof record === "string") return record;
+  const turn = ((record && record.messages) || []).find((m) => m && m.role === "user");
+  return turn ? turn.content : null;
+}
+
+// -> {dataset, records, first} for the API, or throws with what is wrong.
+function readDataset(text) {
+  const body = text.replace(/^\uFEFF/, "").trim();
+  if (!body) throw new Error("the file is empty");
+  let records;
+  if (body.startsWith("[")) {
+    try { records = JSON.parse(body); } catch (error) { throw new Error("not valid JSON: " + error.message); }
+    if (!Array.isArray(records)) throw new Error("expected a JSON array of records");
+    return { dataset: records, records: records.length, first: questionOf(records[0]) };
+  }
+  const lines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  let first = lines[0];
+  lines.forEach((line, index) => {
+    if (!line.startsWith("{")) return;
+    let record;
+    try { record = JSON.parse(line); }
+    catch (error) { throw new Error(`line ${index + 1} is not valid JSON: ${error.message}`); }
+    if (!record || !Array.isArray(record.messages)) throw new Error(`line ${index + 1} has no "messages" list`);
+    if (index === 0) first = questionOf(record);
+  });
+  return { dataset: lines.join("\n"), records: lines.length, first };
+}
+
+function datasetStatus(split, text, kind) {
+  const status = $(split + "Status");
+  status.textContent = text || "";
+  status.className = "help" + (kind ? " " + kind : "");
+}
+
+async function uploaded(split) {
+  const file = $(split + "Upload").files[0];
+  uploads[split] = null;
+  if (!file) return datasetStatus(split, "");
+  if (file.size > 60 * 1024 * 1024) return datasetStatus(split, `${file.name} is over 60 MB`, "error");
+  try {
+    const parsed = readDataset(await file.text());
+    const first = parsed.first ? ` First question: \u201c${parsed.first.slice(0, 90)}${parsed.first.length > 90 ? "\u2026" : ""}\u201d` : "";
+    uploads[split] = Object.assign({ name: file.name, summary: `${file.name}: ${parsed.records} record(s).${first}` }, parsed);
+    datasetStatus(split, uploads[split].summary, "ok");
+  } catch (error) {
+    datasetStatus(split, `${file.name}: ${error.message}`, "error");
+  }
+}
+
+function showDatasetModes() {
+  for (const box of document.querySelectorAll(".dataset")) {
+    const split = box.dataset.split;
+    const mode = $(split + "Mode").value;
+    for (const part of box.querySelectorAll("[data-mode]")) {
+      part.hidden = !part.dataset.mode.split(" ").includes(mode);
+    }
+    if (mode !== "upload") datasetStatus(split, "");
+    else if (uploads[split]) datasetStatus(split, uploads[split].summary, "ok");
+  }
+  refreshForm();
+}
+
+// -> [dataset or undefined, error or null] for one split, as the API takes it.
+function datasetFor(split) {
+  const mode = $(split + "Mode").value;
+  if (mode === "none") return [undefined, null];
+  if (mode === "shared") {
+    const name = $(split + "Shared").value;
+    return name ? [{ file: name }, null] : [undefined, `choose a shared ${split} file`];
+  }
+  if (mode === "paste") {
+    try { return [readDataset($(split + "Paste").value).dataset, null]; }
+    catch (error) { return [undefined, `${split} questions: ${error.message}`]; }
+  }
+  if (!$(split + "Upload").files[0]) return [undefined, `choose a ${split} file to upload`];
+  return uploads[split] ? [uploads[split].dataset, null] : [undefined, `the ${split} file cannot be used; see above`];
+}
+
+const testingPass = () => $("testingMode").value !== "none" && $("runTest").checked;
+
+// --- the settings form ------------------------------------------------------
+//
+// Built from GET /settings: the server's own values are the defaults, and only
+// fields the user changed are sent, so a submission says what differs from
+// config/settings.py and nothing else.
+
+// The base models there are trained LoRAs for, and where each one's five
+// adapters live. An adapter only fits the model it was trained on, so choosing
+// a model also chooses its LORA_SLOTS -- sent whenever they differ from the
+// server's. Read from each adapter_config.json's base_model_name_or_path.
+const BASE_MODELS = {
+  "unsloth/Qwen3.5-0.8B": {
+    label: "Qwen3.5 0.8B", folder: "0.8b_own_template_lora_adapter" },
+  "unsloth/qwen2.5-0.5b-instruct-unsloth-bnb-4bit": {
+    label: "Qwen2.5 0.5B Instruct (4-bit)", folder: "QWen2.5-0.5b-lora_adapter" },
+  "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit": {
+    label: "Qwen2.5 1.5B Instruct (4-bit)", folder: "Qwen2.5-1.5B-Instruct-medical-lora_adapter" },
+};
+
+function slotsFor(model) {
+  const known = BASE_MODELS[model];
+  if (!known) return null;
+  const slots = {};
+  for (let n = 1; n <= 5; n++) slots["L" + n] = `loras/Lora00${n}/${known.folder}`;
+  return slots;
+}
+
+const FIELDS = [
+  { group: "Search", name: "COUNT", label: "Population size", type: "int", min: 1,
+    help: "Individuals in every generation." },
+  { group: "Search", name: "GENERATIONS", label: "Generations", type: "int", min: 1,
+    help: "Run after the first one, so the search is 1 + this." },
+  { group: "Search", name: "SELECTION_COUNT", label: "Replaced per generation", type: "int", min: 0,
+    nullable: "blank = grow the population",
+    help: "Fit copies added, and weakest removed, each round." },
+  { group: "Search", name: "MUTATION_RATE", label: "Mutation rate", type: "float", min: 0, max: 1, step: 0.01,
+    help: "Chance each symbol of a chromosome changes." },
+  { group: "Search", name: "MAX_DEPTH", label: "Max tree depth", type: "int", min: 1 },
+  { group: "Search", name: "BRANCH_PROB", label: "Branch probability", type: "float", min: 0, max: 1, step: 0.05,
+    help: "Chance a node keeps branching when a tree is drawn." },
+  { group: "Search", name: "UNIQUE", label: "No duplicate chromosomes", type: "bool" },
+
+  { group: "Model", name: "TEMPLATE", label: "How individuals run", type: "choice", wide: true,
+    labels: { "template_code_mocked.py": "Mocked: no model, random scores (seconds)",
+              "template_remote_code.py": "Lora servers: base model loaded once",
+              "template_code.py": "One model load per individual" } },
+  { group: "Model", name: "BASE_MODEL", label: "Base model", type: "choice", wide: true, describe: true,
+    options: Object.keys(BASE_MODELS).map((value) => ({ value, label: BASE_MODELS[value].label })) },
+  { group: "Model", name: "CHAT_TEMPLATE", label: "Chat template", type: "text",
+    nullable: "blank = the model's own" },
+  { group: "Model", name: "LORA_SERVER_COUNT", label: "Lora servers", type: "int", min: 1,
+    showIf: (v) => v.TEMPLATE === "template_remote_code.py" },
+  { group: "Model", name: "PROCESS_RUN_BATCH_SIZE", label: "Individuals run at once", type: "int", min: 1,
+    showIf: (v) => v.TEMPLATE === "template_code.py" },
+
+  { group: "Scoring", name: "EVALUATOR", label: "Evaluator", type: "choice", wide: true, describe: true },
+  { group: "Scoring", name: "TRAINING_COUNT", label: "Questions per individual", type: "int", min: 1,
+    nullable: "blank = all of them" },
+  { group: "Scoring", name: "JUDGE_BACKEND", label: "Judge runs on", type: "choice",
+    labels: { endpoint: "an OpenAI-compatible endpoint", unsloth: "this machine (unsloth)" },
+    showIf: (v) => needsJudge(v) },
+  { group: "Scoring", name: "JUDGE_BASE_URL", label: "Judge endpoint URL", type: "text", wide: true,
+    showIf: (v) => needsJudge(v) && v.JUDGE_BACKEND === "endpoint" },
+  { group: "Scoring", name: "JUDGE_MODEL", label: "Judge model", type: "text",
+    nullable: "blank = whatever the endpoint serves",
+    showIf: (v) => needsJudge(v) },
+
+  { group: "Testing", name: "TESTING_MIN_QUALITY", label: "Test individuals scoring above", type: "float",
+    min: 0, max: 1, step: 0.05, showIf: testingPass },
+
+  { group: "Seeds", name: "SEED", label: "Population seed", type: "int", min: 0, nullable: "blank = random" },
+  { group: "Seeds", name: "WEIGHT_MASTER_SEED", label: "Blend weight seed", type: "int", min: 0, nullable: "blank = random" },
+  { group: "Seeds", name: "SELECTION_MASTER_SEED", label: "Selection seed", type: "int", min: 0, nullable: "blank = random" },
+  { group: "Seeds", name: "MUTATION_MASTER_SEED", label: "Mutation seed", type: "int", min: 0, nullable: "blank = random" },
+];
+
+const GROUPS = [["Search", true], ["Model", true], ["Scoring", true], ["Seeds", false]];
+
+const PRESETS = {
+  demo: { TEMPLATE: "template_code_mocked.py", GENERATIONS: 1, COUNT: 4, TRAINING_COUNT: 3,
+          TESTING_MIN_QUALITY: 0 },
+  defaults: {},
+};
+
+let form = null;            // GET /settings
+
+function needsJudge(values) {
+  const chosen = (form.choices.EVALUATOR || []).find((e) => e.value === values.EVALUATOR);
+  return !chosen || chosen.needs_judge;
+}
+
+async function loadForm() {
+  if (!key) return;
+  try {
+    form = await api("GET", "/settings");
+  } catch (error) {
+    form = null;
+    $("form").replaceChildren(el("p", { class: "msg err" }, error.message));
+    return;
+  }
+  const byGroup = (group) => FIELDS.filter((f) => f.group === group && f.name in form.defaults);
+  $("form").replaceChildren(...GROUPS.map(([group, open]) =>
+    el("details", Object.assign({ "data-group": group }, open ? { open: "" } : {}),
+      el("summary", {}, group, el("span", { class: "changed-count" })),
+      el("div", { class: "grid" }, byGroup(group).map(fieldControl)))));
+  $("testingFields").replaceChildren(el("div", { class: "grid" }, byGroup("Testing").map(fieldControl)));
+  applyPreset(recall("preset") || "demo");
+}
+
+function fieldControl(field) {
+  const id = "f_" + field.name;
+  let input;
+  if (field.type === "choice") {
+    input = el("select", { id }, choicesOf(field).map((c) =>
+      el("option", { value: c.value }, (field.labels && field.labels[c.value]) || c.label)));
+  } else if (field.type === "bool") {
+    input = el("input", { id, type: "checkbox" });
+  } else {
+    const attrs = { id, type: field.type === "text" ? "text" : "number" };
+    if (field.type !== "text") attrs.step = field.step || (field.type === "int" ? 1 : "any");
+    if (field.min !== undefined) attrs.min = field.min;
+    if (field.max !== undefined) attrs.max = field.max;
+    if (field.nullable) attrs.placeholder = field.nullable;
+    input = el("input", attrs);
+  }
+  input.addEventListener("input", refreshForm);
+  input.addEventListener("change", refreshForm);
+  return el("div", { class: "field" + (field.wide ? " wide" : ""), "data-name": field.name },
+    field.type === "bool"
+      ? el("label", { class: "check" }, input, field.label)
+      : [el("label", { for: id }, field.label), input],
+    el("div", { class: "help" }, field.help || ""),
+    field.describe ? el("div", { class: "help describe" }) : null,
+    el("div", { class: "help error" }));
+}
+
+// A choice field's options: the server's list, or the field's own. A server
+// default missing from a fixed list is added, so the form can still show it.
+function choicesOf(field) {
+  const options = form.choices[field.name] || field.options || [];
+  const current = form.defaults[field.name];
+  if (typeof current === "string" && !options.some((c) => c.value === current)) {
+    return options.concat([{ value: current, label: current + " (server default)" }]);
+  }
+  return options;
+}
+
+function setField(field, value) {
+  const input = $("f_" + field.name);
+  if (!input) return;
+  if (field.type === "bool") input.checked = !!value;
+  else input.value = value === null || value === undefined ? "" : value;
+}
+
+// -> [value, error]
+function readField(field) {
+  const input = $("f_" + field.name);
+  if (field.type === "bool") return [input.checked, null];
+  const raw = input.value.trim();
+  if (field.type === "choice") return [raw, null];
+  if (raw === "") return field.nullable ? [null, null] : [null, "Required."];
+  if (field.type === "text") return [raw, null];
+  const number = Number(raw);
+  if (!Number.isFinite(number)) return [null, "Not a number."];
+  if (field.type === "int" && !Number.isInteger(number)) return [null, "A whole number."];
+  if (field.min !== undefined && number < field.min) return [null, "At least " + field.min + "."];
+  if (field.max !== undefined && number > field.max) return [null, "At most " + field.max + "."];
+  return [number, null];
+}
+
+function formValues() {
+  const values = {};
+  for (const field of FIELDS) if ($("f_" + field.name)) values[field.name] = readField(field)[0];
+  return values;
+}
+
+const differs = (field, value) => JSON.stringify(value) !== JSON.stringify(form.defaults[field.name]);
+
+function applyPreset(name) {
+  if (!form) return;
+  remember("preset", name);
+  const preset = PRESETS[name] || {};
+  for (const field of FIELDS) {
+    setField(field, field.name in preset ? preset[field.name] : form.defaults[field.name]);
+  }
+  refreshForm();
+}
+
+// Visibility, the changed markers, descriptions and errors, after any edit.
+function refreshForm() {
+  if (!form) return;
+  const values = formValues();
+  for (const field of FIELDS) {
+    const box = document.querySelector(`.field[data-name="${field.name}"]`);
+    if (!box) continue;
+    box.hidden = !!field.showIf && !field.showIf(values);
+    const [value, error] = readField(field);
+    box.querySelector(".error").textContent = error || "";
+    box.classList.toggle("invalid", !!error);
+    box.classList.toggle("changed", !error && differs(field, value));
+    const describe = box.querySelector(".describe");
+    if (describe) {
+      const chosen = choicesOf(field).find((c) => c.value === value);
+      describe.textContent = field.name === "BASE_MODEL"
+        ? `${value}, with adapters from loras/Lora001..005/${BASE_MODELS[value] ? BASE_MODELS[value].folder : "?"}`
+        : (chosen ? chosen.description : "");
+    }
+  }
+  for (const details of document.querySelectorAll("#form details")) {
+    const count = details.querySelectorAll(".field.changed:not([hidden])").length;
+    details.querySelector(".changed-count").textContent = count ? ` · ${count} changed` : "";
+  }
+}
+
+// -> [overrides, errors]: the visible fields that differ from the server's value.
+function overrides() {
+  const out = {}, errors = [];
+  for (const field of FIELDS) {
+    const box = document.querySelector(`.field[data-name="${field.name}"]`);
+    if (!box || box.hidden) continue;
+    const [value, error] = readField(field);
+    if (error) errors.push(`${field.label}: ${error}`);
+    else if (differs(field, value)) out[field.name] = value;
+  }
+  const slots = slotsFor(readField(FIELDS.find((f) => f.name === "BASE_MODEL"))[0]);
+  if (slots && JSON.stringify(slots) !== JSON.stringify(form.defaults.LORA_SLOTS)) out.LORA_SLOTS = slots;
+  return [out, errors];
+}
+
+// --- submit -----------------------------------------------------------------
+
+async function submitJob() {
+  if (!form) return say("submitMsg", "Enter an API key first.", "err");
+  refreshForm();
+  const [settings, errors] = overrides();
+  if (errors.length) return say("submitMsg", errors.join(" "), "err");
+
+  const datasets = {};
+  for (const split of ["training", "testing"]) {
+    const [dataset, problem] = datasetFor(split);
+    if (problem) return say("submitMsg", problem.charAt(0).toUpperCase() + problem.slice(1) + ".", "err");
+    if (dataset !== undefined) datasets[split] = dataset;
+  }
+  const options = { no_test: !testingPass() };
+
+  say("submitMsg", "Submitting…");
+  try {
+    const { job } = await api("POST", "/jobs", { label: $("label").value || null, settings, datasets, options });
+    const changed = Object.keys(settings);
+    say("submitMsg", `Job ${job.id} queued at position ${job.queue_position}` +
+      (changed.length ? `, changing ${changed.join(", ")}.` : " with the server's settings.") +
+      " Start a worker if none is running: python -m async_api.worker", "ok");
+    await refreshJobs();
+    select(job.id);
+  } catch (error) {
+    say("submitMsg", error.message, "err");
+  }
+}
+
+// --- jobs list ----------------------------------------------------------------
+
+async function refreshJobs() {
+  if (!key) return;
+  let jobs;
+  try { ({ jobs } = await api("GET", "/jobs")); }
+  catch (error) {
+    $("jobs").replaceChildren(el("tr", {}, el("td", { colspan: 5, class: "msg err" }, error.message)));
+    return;
+  }
+  if (!jobs.length) {
+    $("jobs").replaceChildren(el("tr", {}, el("td", { colspan: 5, class: "muted" }, "No jobs yet.")));
+    return;
+  }
+  $("jobs").replaceChildren(...jobs.map((job) => {
+    const best = job.summary && job.summary.best;
+    return el("tr", { class: "click" + (job.id === selected ? " selected" : ""), onclick: () => select(job.id) },
+      el("td", {}, job.id),
+      el("td", {}, job.label || el("span", { class: "muted" }, "–")),
+      el("td", {}, pill(job.status), job.queue_position ? el("span", { class: "muted" }, " #" + job.queue_position) : null),
+      el("td", { class: "mono" }, best ? `${fmt(best.fitness)} ${best.chromosome}` : "–"),
+      el("td", { class: "muted" }, (job.created_at || "").replace("T", " ")));
+  }));
+  const current = jobs.find((job) => job.id === selected);
+  if (current && current.status !== lastStatus) drawDetail();
+}
+
+// --- detail -----------------------------------------------------------------
+
+function select(jobId) {
+  selected = jobId;
+  lastStatus = null;
+  $("detailSection").hidden = false;
+  say("detailMsg", "");
+  drawDetail();
+  refreshJobs();
+}
+
+async function drawDetail() {
+  if (selected === null) return;
+  let detail, status;
+  try {
+    [detail, status] = await Promise.all([api("GET", `/jobs/${selected}`), api("GET", `/jobs/${selected}/status`)]);
+  } catch (error) {
+    $("detailSection").hidden = true;
+    selected = null;
+    return;
+  }
+  const job = detail.job;
+  lastStatus = job.status;
+  $("detailTitle").replaceChildren(`${job.id} · ${job.label || "unlabelled"} `, pill(job.status));
+
+  $("aCancel").disabled = !["queued", "running"].includes(job.status);
+  $("aLive").disabled = job.status !== "done";
+  $("aUnset").disabled = !detail.live.length;
+  $("aDeleteRun").disabled = !FINISHED.includes(job.status) || job.status === "deleted";
+  $("aDeleteJob").disabled = !FINISHED.includes(job.status);
+  $("aDownload").disabled = job.status === "deleted" || job.status === "preparing";
+
+  const progress = status.progress || {};
+  const results = detail.results;
+  const tiles = [
+    ["status", job.status],
+    ["generations", `${progress.generations_scored ?? 0} / ${progress.generations_expected ?? "?"}`],
+    ["last step", progress.last_step ? `${progress.last_step.step} ${progress.last_step.generation || ""}` : "–"],
+    ["best fitness", results && results.best ? fmt(results.best.fitness) : "–"],
+    ["live tokens", detail.live.length],
+  ];
+  $("tiles").replaceChildren(...tiles.map(([name, value]) => el("div", { class: "tile" }, el("b", {}, value), el("span", {}, name))));
+
+  const body = [];
+  if (job.error) body.push(el("p", { class: "msg " + (job.status === "done" ? "" : "err") }, job.error));
+  if (results) {
+    if (results.best) {
+      body.push(el("h3", {}, "Best individual"),
+        el("p", { class: "mono" }, `#${results.best.number}  ${results.best.chromosome}  fitness ${fmt(results.best.fitness)}  rank ${results.best.rank}`));
+    }
+    if (results.fitness_history.length) body.push(el("h3", {}, "Fitness by generation"), chart(results.fitness_history));
+    body.push(el("h3", {}, "Population — click a row for its transcript"), populationTable(results.population, results.best && results.best.number));
+    body.push(el("div", { id: "transcript" }));
+    if (results.testing.summary.length) {
+      body.push(el("h3", {}, "Testing pass"),
+        el("div", { class: "scroll" }, el("table", {},
+          el("thead", {}, el("tr", {}, ["#", "chromosome", "training", "testing", "verdict"].map((h) => el("th", {}, h)))),
+          el("tbody", {}, results.testing.individuals.map((t) => el("tr", {},
+            el("td", {}, t.number), el("td", { class: "mono" }, t.chromosome),
+            el("td", {}, fmt(t.selected_on)), el("td", {}, fmt(t.quality)), el("td", {}, t.verdict)))))));
+    }
+    if (results.costs.length) {
+      body.push(el("h3", {}, "What it cost"),
+        el("p", { class: "muted" }, results.costs.map((c) => `${c.step} ${c.seconds.toFixed(1)}s`).join(" · ")));
+    }
+  } else {
+    body.push(el("p", { class: "muted" }, job.status === "deleted" ? "The run's results were deleted." : "No results yet."));
+  }
+  body.push(el("h3", {}, "Log (last 40 lines)"), el("pre", { id: "log" }, "…"));
+  $("detailBody").replaceChildren(...body);
+  refreshLog();
+}
+
+async function refreshLog() {
+  if (selected === null || !$("log")) return;
+  try {
+    const { lines } = await api("GET", `/jobs/${selected}/log?lines=40`);
+    const log = $("log");
+    log.textContent = lines.length ? lines.join("\n") : "(nothing logged yet)";
+    log.scrollTop = log.scrollHeight;
+  } catch (_) { /* job went away */ }
+}
+
+function populationTable(population, bestNumber) {
+  return el("div", { class: "scroll" }, el("table", {},
+    el("thead", {}, el("tr", {}, ["#", "chromosome", "state", "rank", "fitness", "answers", ""].map((h) => el("th", {}, h)))),
+    el("tbody", {}, population.map((one) => el("tr", { class: "click", onclick: () => showIndividual(one.number) },
+      el("td", {}, one.number), el("td", { class: "mono" }, one.chromosome),
+      el("td", {}, one.state || "–"), el("td", {}, one.rank ?? "–"),
+      el("td", {}, fmt(one.fitness)), el("td", {}, one.answers),
+      el("td", {}, one.number === bestNumber ? pill("best") : "",
+        one.state === "ok" && lastStatus === "done"
+          ? el("button", { onclick: (event) => { event.stopPropagation(); goLive(one.number); } }, "Set live")
+          : null))))));
+}
+
+async function showIndividual(number) {
+  const target = $("transcript");
+  try {
+    const { individual } = await api("GET", `/jobs/${selected}/individuals/${number}`);
+    const exchanges = individual.execution ? individual.execution.exchanges : [];
+    target.replaceChildren(...[
+      el("h3", {}, `Individual #${number} — ${individual.chromosome}`),
+      individual.tree ? el("pre", {}, individual.tree) : null,
+      exchanges.length ? null : el("p", { class: "muted" }, "Never ran."),
+      ...exchanges.map((x) => el("div", { class: "q" },
+        el("div", {}, el("b", {}, "Q: "), x.question),
+        el("div", {}, el("b", {}, "A: "), x.answer || el("span", { class: "muted" }, "(empty)")),
+        el("div", { class: "muted" }, `quality ${fmt(x.quality, 2)} — ${x.reason || ""}`)))].filter(Boolean));
+    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (error) {
+    target.replaceChildren(el("p", { class: "msg err" }, error.message));
+  }
+}
+
+function chart(history) {
+  const W = 520, H = 150, P = 26;
+  const n = history.length;
+  const x = (i) => P + (n === 1 ? (W - 2 * P) / 2 : i * (W - 2 * P) / (n - 1));
+  const y = (v) => H - P - (v ?? 0) * (H - 2 * P);
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("style", "width: 100%; max-width: 520px; height: auto; display: block");
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    svg.append(node);
+  };
+  for (const v of [0, 0.5, 1]) {
+    add("line", { x1: P, x2: W - P, y1: y(v), y2: y(v), stroke: "var(--line)" });
+    add("text", { x: 4, y: y(v) + 3 }, v.toFixed(1));
+  }
+  for (const [field, color, width] of [["worst", "var(--worst)", 2], ["mean", "var(--mean)", 2], ["best", "var(--best)", 3]]) {
+    add("polyline", { fill: "none", stroke: color, "stroke-width": width,
+                      points: history.map((g, i) => `${x(i)},${y(g[field])}`).join(" ") });
+    history.forEach((g, i) => add("circle", { cx: x(i), cy: y(g[field]), r: 3, fill: color }));
+  }
+  history.forEach((g, i) => add("text", { x: x(i) - 3, y: H - 8 }, g.generation));
+  return el("div", {}, svg,
+    el("div", { class: "legend" },
+      el("span", {}, el("i", { style: "background: var(--best)" }), "best"),
+      el("span", {}, el("i", { style: "background: var(--mean)" }), "mean"),
+      el("span", {}, el("i", { style: "background: var(--worst)" }), "worst")));
+}
+
+// --- job actions --------------------------------------------------------------
+
+async function act(label, method, path, after) {
+  say("detailMsg", label + "…");
+  try {
+    const reply = await api(method, path);
+    say("detailMsg", label + " — ok", "ok");
+    if (after) after(reply);
+  } catch (error) {
+    say("detailMsg", error.message, "err");
+  }
+  await Promise.all([refreshJobs(), refreshLive()]);
+  if (selected !== null) drawDetail();
+}
+
+// A link cannot carry the API key, so the file is fetched and then saved.
+async function downloadDatabase() {
+  const jobId = selected;
+  say("detailMsg", "Preparing the database…");
+  $("aDownload").disabled = true;
+  try {
+    const response = await fetch(`/jobs/${jobId}/database`, { headers: { "Authorization": "Bearer " + key } });
+    if (!response.ok) {
+      let message = response.status + " " + response.statusText;
+      try { message = (await response.json()).error; } catch (_) { /* not JSON */ }
+      throw new Error(message);
+    }
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const name = (disposition.match(/filename="([^"]+)"/) || [, `job${jobId}.sqlite3`])[1];
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = el("a", { href: url, download: name });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    const size = blob.size < 1048576 ? `${(blob.size / 1024).toFixed(0)} KB` : `${(blob.size / 1048576).toFixed(1)} MB`;
+    say("detailMsg", `Downloaded ${name} (${size}). Open it with: python -m storage.store --db ${name} --show 0`, "ok");
+  } catch (error) {
+    say("detailMsg", error.message, "err");
+  } finally {
+    $("aDownload").disabled = false;
+  }
+}
+
+async function goLive(number) {
+  say("detailMsg", "Setting live…");
+  try {
+    const reply = await api("POST", `/jobs/${selected}/live`, number ? { individual: number } : {});
+    $("token").value = reply.token;
+    remember("token", reply.token);
+    say("detailMsg", `Individual #${reply.deployment.individual} is live (${reply.deployment.engine}). Token copied into the inference box — it is shown only once.`, "ok");
+  } catch (error) {
+    say("detailMsg", error.message, "err");
+  }
+  await refreshLive();
+  drawDetail();
+}
+
+// --- live deployments and inference -------------------------------------------
+
+async function refreshLive() {
+  if (!key) return;
+  try {
+    const { live } = await api("GET", "/live");
+    $("live").replaceChildren(...(live.length ? live.map((d) => el("tr", {},
+      el("td", {}, d.id), el("td", {}, d.job_id), el("td", {}, "#" + d.individual),
+      el("td", { class: "mono" }, d.chromosome), el("td", {}, d.engine),
+      el("td", { class: "muted" }, d.created_at.replace("T", " ")),
+      el("td", {}, el("button", { class: "danger", onclick: () => act("Unset", "DELETE", `/live/${d.id}`) }, "Unset"))))
+      : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Nothing is live."))]));
+  } catch (_) { /* reported elsewhere */ }
+}
+
+async function ask() {
+  const answer = $("answer");
+  const sse = $("format").value === "sse";
+  remember("token", $("token").value.trim());
+  answer.className = "answer";
+  answer.textContent = "";
+  $("ask").disabled = true;
+  const started = performance.now();
+  let first = null, chars = 0;
+  $("inferStats").textContent = "waiting for the model (the first call loads it)…";
+  try {
+    const response = await fetch("/infer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(sse ? { "Accept": "text/event-stream" } : {}) },
+      body: JSON.stringify({ token: $("token").value.trim(), prompt: $("prompt").value,
+                             max_new_tokens: Number($("maxTokens").value) || 200 }),
+    });
+    if (!response.ok) {
+      let message = response.status + " " + response.statusText;
+      try { message = (await response.json()).error; } catch (_) { /* not JSON */ }
+      throw new Error(message);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value, { stream: true });
+      if (first === null) {
+        first = performance.now() - started;
+        $("inferStats").textContent = `first chunk after ${(first / 1000).toFixed(2)}s…`;
+      }
+      if (!sse) {
+        answer.textContent += text;
+        chars += text.length;
+        continue;
+      }
+      buffer += text;
+      let cut;
+      while ((cut = buffer.indexOf("\n\n")) >= 0) {
+        const event = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const name = (event.match(/^event: (.*)$/m) || [])[1];
+        const data = JSON.parse((event.match(/^data: (.*)$/m) || [, "{}"])[1]);
+        if (name === "error") throw new Error(data.error);
+        if (data.text) { answer.textContent += data.text; chars += data.text.length; }
+      }
+    }
+    const total = (performance.now() - started) / 1000;
+    $("inferStats").textContent = `first chunk ${((first ?? 0) / 1000).toFixed(2)}s · total ${total.toFixed(2)}s · ${chars} chars`;
+  } catch (error) {
+    answer.className = "answer msg err";
+    answer.textContent = error.message;
+    $("inferStats").textContent = "";
+  } finally {
+    $("ask").disabled = false;
+    refreshHealth();
+  }
+}
+
+// --- wiring -------------------------------------------------------------------
+
+$("saveKey").addEventListener("click", useKey);
+$("key").addEventListener("keydown", (event) => { if (event.key === "Enter") useKey(); });
+$("submit").addEventListener("click", submitJob);
+$("presetDemo").addEventListener("click", () => applyPreset("demo"));
+$("presetDefaults").addEventListener("click", () => applyPreset("defaults"));
+$("runTest").addEventListener("change", refreshForm);
+for (const split of ["training", "testing"]) {
+  $(split + "Mode").addEventListener("change", () => {
+    if (split === "testing") remember("testingMode", $("testingMode").value);
+    showDatasetModes();
+  });
+  $(split + "Upload").addEventListener("change", () => uploaded(split));
+}
+showDatasetModes();
+$("aCancel").addEventListener("click", () => act("Cancel", "POST", `/jobs/${selected}/cancel`));
+$("aLive").addEventListener("click", () => goLive(null));
+$("aUnset").addEventListener("click", () => act("Unset live", "DELETE", `/jobs/${selected}/live`));
+$("aDeleteRun").addEventListener("click", () => {
+  if (confirm(`Delete what job ${selected}'s run produced? The job stays listed.`)) act("Delete run", "DELETE", `/jobs/${selected}/run`);
+});
+$("aDeleteJob").addEventListener("click", () => {
+  if (confirm(`Delete job ${selected} and all its files?`))
+    act("Delete job", "DELETE", `/jobs/${selected}`, () => { selected = null; $("detailSection").hidden = true; });
+});
+$("aRefresh").addEventListener("click", drawDetail);
+$("aDownload").addEventListener("click", downloadDatabase);
+$("ask").addEventListener("click", ask);
+
+$("key").value = recall("key");
+$("token").value = recall("token");
+refreshHealth();
+if ($("key").value) useKey();
+
+setInterval(() => {
+  refreshJobs();
+  if (selected !== null && !FINISHED.includes(lastStatus)) refreshLog();
+}, 3000);
+setInterval(refreshHealth, 10000);
+</script>
+</body>
+</html>

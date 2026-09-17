@@ -2543,6 +2543,112 @@ script it is and link to that individual — which is the truer statement anyway
 
 ---
 
+## The async API
+
+`async_api/` puts the search behind a web service: a user submits a job (settings
+and datasets), a background worker runs it, the user reads the results, puts an
+individual live and streams answers from it. Standard library only, like
+`lora_server.py`.
+
+```bash
+python -m async_api.users add alice          # prints alice's API key, once
+python -m async_api.server                   # http://127.0.0.1:8780
+python -m async_api.worker                   # the background half
+```
+
+Then open **http://127.0.0.1:8780/demo**: a test page, served by the API itself,
+that drives every endpoint -- paste the key, submit a job from a settings form
+built from `GET /settings` (the server's own values, with only what you change
+sent; *Quick demo* is a one-generation mocked sweep, done in seconds; training and
+testing questions come from a shared file, a file you upload, or pasted lines),
+watch it run, download its database, read its population,
+fitness chart, transcripts and log, set an individual live, stream answers in either
+format, unset and delete. It is `async_api/demo.html`, one file with no dependencies.
+
+Start the worker with the venv's python, as you would `main.py` -- it runs
+`main.py` under its own interpreter. Start the server with it too if a real
+(non-mocked) sweep is going to go live, since inference loads the model in the
+server's process. Knobs are in `async_api/settings.py` (not `config/settings.py`,
+whose `snapshot()` would freeze them into every sweep), each overridable as
+`GEP_API_<NAME>` in the environment.
+
+**A job is a prepared database.** `POST /jobs` writes exactly what
+`python main.py --db <it>` already adopts: a run row, its settings and its
+dataset, no individuals, in `api_jobs/user<N>/job<M>/job.sqlite3`. The settings
+are `config/settings.py` plus the submission's overrides, checked and seeded by
+`start_run.freeze()` -- the same function `new_sweep()` uses. The worker takes
+jobs in arrival order (registry ids) and runs
+`main.py --db <job.sqlite3> --run <id>` as a subprocess, so a cancel can stop the
+search and its lora servers, and the console goes to `job.log`. Everything the
+run writes stays in `job_run1/` beside the database.
+
+```json
+POST /jobs
+{
+  "label": "overnight",
+  "settings": {"GENERATIONS": 3, "COUNT": 10},
+  "datasets": {
+    "training": [{"messages": [{"role": "user", "content": "..."},
+                               {"role": "assistant", "content": "..."}]}],
+    "testing": {"file": "medical_validation_lora_dataset.json"}
+  },
+  "options": {"no_test": false, "timeout": 900}
+}
+```
+
+A dataset is a list of records, the text of a JSON Lines / plain file, or
+`{"file": name}` naming a file under `datasets/`. Unknown settings, the path and
+dataset settings (`LOCKED_SETTINGS`), an unknown evaluator and missing adapters
+are refused with a 400 before anything is queued.
+
+| Endpoint | What it does |
+|---|---|
+| `POST /jobs` | submit; 201 with the queued job |
+| `GET /jobs[?status=]` | the user's jobs, each with its best individual |
+| `GET /jobs/{id}` | the job and its results: population, best, fitness history, testing, costs |
+| `GET /jobs/{id}/status` | status, queue position, generations scored so far |
+| `GET /jobs/{id}/log` | the tail of `job.log` |
+| `GET /jobs/{id}/database` | the job's `job.sqlite3`, as a consistent snapshot (sqlite's backup), even while it runs |
+| `GET /jobs/{id}/individuals/{n}` | one individual and its transcript |
+| `POST /jobs/{id}/cancel` | a queued job at once; a running one within a poll |
+| `DELETE /jobs/{id}/run` | delete what the run produced, keep the job listed as `deleted` |
+| `DELETE /jobs/{id}` | delete the job and its folder |
+| `POST /jobs/{id}/live` | `{"individual": n?, "target": "local"?}` -> a token (shown once) |
+| `GET /jobs/{id}/live`, `GET /live` | live deployments |
+| `DELETE /jobs/{id}/live`, `DELETE /live/{id}` | unset for inference |
+| `POST /infer` | `{"token", "prompt", "max_new_tokens"?}` -> the answer, streamed |
+| `GET /health` | no key needed; what is loaded |
+| `GET /settings` | settings.py's values and the choices (templates, evaluators, backends), for a form |
+| `GET /datasets` | the shared dataset files a submission may name |
+| `GET /demo` (or `/`) | no key needed; the test page |
+
+Every endpoint but `/health` and `/infer` takes `Authorization: Bearer <key>`,
+and another user's job is a 404. Only hashes of keys and tokens are stored.
+
+**A job whose search finished but whose testing pass did not is `done`**, with
+the reason in `error`: `main.py` returns the testing pass's exit code in that
+case, but the search's results stand and can go live.
+
+**Going live stores a blend spec** with the deployment: base model, chat
+template, adapter folders, and the lora-server `/build` plan with every weight
+drawn from the individual's own weight seed. It is byte-for-byte the plan that
+individual's `template_remote_code.py` script sends (a unit test runs one to
+check), so a live blend is built by `lora_server.Blend`, the code that built it
+in the search. A target is where it goes: `local` is the one there is --
+`inference.ModelCache` loads the model on the first `/infer`, keeps it for
+`MODEL_TTL` (300s) after the last request, and rebuilds only the blend when
+another deployment on the same base model is asked. Another target is a class
+with `publish`/`stream`/`retire` added to `golive.TARGETS`. A deployment of a
+mocked sweep streams a mock answer and loads nothing.
+
+Measured on this machine (Qwen3.5-0.8B, one `SVD` node): the first `/infer`
+took 53s to its first token (24.5s of it the model load), the next 0.3s.
+
+`/infer` streams chunked `text/plain`, or server-sent events
+(`data: {"text": ...}`, then `event: done`) with `Accept: text/event-stream`.
+
+---
+
 ## Running a generated script
 
 The generated scripts need the project venv, which lives one level up at
@@ -2812,6 +2918,7 @@ testing/      the held-out pass
 reporting/    a sweep, written out as something to look at
 adapters/     making and checking the five LoRAs a sweep blends
 tools/        dev aids that are not part of the pipeline
+async_api/    the search as a web service: jobs, a worker, live inference
 ```
 
 ### The drivers

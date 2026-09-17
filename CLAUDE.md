@@ -44,6 +44,8 @@ adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
               loads and answers, with and without each adapter, as markdown
 tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
+async_api/    server, worker, submit, registry, results, golive, inference,
+              users -- the search as a web service. See "The async API" below.
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -931,6 +933,31 @@ A phase row's `execution_id` is deliberately **not** a foreign key: selection cu
 individuals and takes their executions with them, and what a culled individual cost is
 still what that generation cost -- the same reason `fitness_history` keeps its rows through
 a cull.
+
+## The async API
+
+`async_api/` (see README "The async API") is a service *around* the pipeline, not a
+change to it. Four rules hold it together:
+
+- **A job is a prepared sweep database** (`submit.py`), and the worker runs it with
+  `main.py --db <job.sqlite3> --run <id>` in a subprocess. Settings go through
+  `start_run.freeze()`, the function `new_sweep()` uses. Don't give jobs a second
+  definition of what a sweep needs.
+- **`jobs.sqlite3` is the registry, not a sweep** -- users, jobs in arrival order,
+  deployments -- which is why `registry.py` is the one module besides `store.py` that
+  imports sqlite3. Keys and tokens are stored hashed. One worker per `JOBS_DIR`.
+- **A deployment carries its blend spec**, derived once by `golive.blend_spec()`:
+  the lora-server `/build` plan with weights from the individual's weight seed.
+  `unittests/async_api/test_golive.py` runs a generated `template_remote_code.py`
+  script and checks it sends the same plan -- a change to how scripts build their
+  plan belongs in `golive.build_plan()` too.
+- **Inference reuses `lora_server.Blend`** and adds only streaming and unloading
+  (`inference.UnslothEngine`). The cache is keyed by base model, not deployment; the
+  engine is chosen by the sweep's `script_source` (mocked -> `MockEngine`), not by
+  settings.py.
+
+Its knobs live in `async_api/settings.py`, deliberately outside `config/settings.py`,
+whose `snapshot()` would store them in every sweep.
 
 ## The rank rule
 
