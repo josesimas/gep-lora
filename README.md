@@ -681,12 +681,13 @@ and as the 300th build must match a cold-process run, with resting VRAM flat.
 The `build #N` line in every execution's stdout is what makes a failure of it
 findable after the fact.
 
-**Whether more than one server pays is an open question.** The 4-way
-concurrency the batch already had buys 2.4–3.0×, and what overlaps well in it is
-the CPU-bound import and load — precisely what a warm server removes. What is
-left is GPU-bound on one card. `LORA_SERVER_COUNT = 1` is the experiment worth
-running before trusting the pool; if one warm server is within a few percent of
-four, the pool can go.
+**Two servers pay; four barely do.** A warm server removes the CPU-bound import
+and load that used to overlap well under concurrency, and what is left is
+GPU-bound on one card. Measured with `python -m tools.compare_servers` on paired
+sweeps differing only in `LORA_SERVER_COUNT`: 1 → 2 servers gave 1.64×
+throughput on the passes with no straggler, −16% on the `process` step and +6%
+per individual; 2 → 4 gave 1.29×, −4% and +23% per individual. Past two the
+servers mostly time-share, which is why `LORA_SERVER_COUNT = 2`.
 
 The one piece of design debt this introduces is that the blend arithmetic —
 attach, combine, the rank rule, `_compact()` — now exists in three places:

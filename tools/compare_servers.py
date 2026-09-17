@@ -893,11 +893,10 @@ recorded wall seconds, once any pool startup in that pass is allowed for.</p>
 
 <section>
 <h2>What to set it to</h2>
-<p><code>server_pool.py</code>'s docstring leaves it open &mdash; &ldquo;whether a
-pool of more than one pays is an open question&rdquo; &mdash; on the reasoning
-that a warm server removes exactly the CPU-bound <code>import</code> and
-<code>model_load</code> that used to overlap well, leaving GPU-bound work on one
-card. Measured here, that reasoning holds.</p>
+<p>The reasoning behind the pool is that a warm server removes exactly the
+CPU-bound <code>import</code> and <code>model_load</code> that used to overlap
+well, leaving GPU-bound work on one card &mdash; so each server added should buy
+less than the one before. This is what these two sweeps say about it.</p>
 <ul>
 <li><strong>%(label_a)s &#8594; %(label_b)s buys %(light_gain)s on the clean
 passes and %(heavy_gain)s on pass %(heavy_pass)d</strong>, at the cost of

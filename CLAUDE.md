@@ -442,11 +442,11 @@ and the rest through `continue_run.py` — two Contexts. That is where it stops:
 last gap would mean a pool outliving the driver that made it. It has its own `start servers`
 row in the report rather than hiding inside the step total.
 
-**Whether a pool of more than one pays is an open question.** Today's 4-way concurrency
-buys 2.4–3.0×, and what overlaps well in it is the CPU-bound import and load — exactly what
-a warm server takes away. What is left is GPU-bound on one card. `LORA_SERVER_COUNT = 1` is
-the experiment; if one warm server is within a few percent of four, the pool and half of
-`server_pool.py` can go.
+**A pool of two pays; a pool of four barely does.** A warm server takes away the
+CPU-bound import and load that used to overlap well under concurrency, and what is left is
+GPU-bound on one card, so past two the servers mostly time-share. That was measured with
+`tools.compare_servers` (numbers below), and is why `LORA_SERVER_COUNT = 2` and
+`server_pool.py` is more than a single-server lifecycle.
 
 ```bash
 python -m blends.lora_server --base-model unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit --port 8770

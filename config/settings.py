@@ -214,10 +214,11 @@ TEMPLATE = "template_remote_code.py"
 # resident together -- but it is now paid once per driver rather than once per
 # individual: the servers stay up across generations, and only come down early
 # when JUDGE_BACKEND = "unsloth" means the evaluate step wants the card for a
-# judge of its own. Whether more than one pays at all is worth measuring before
-# believing: today's 4-way concurrency buys 2.4-3.0x, and what overlaps well in
-# it is the CPU-bound import and load, which is exactly what a warm server
-# takes away. What is left is GPU-bound on one card. Start at 1 and see.
+# judge of its own. Measured on one card (tools/compare_servers.py): 1 -> 2
+# servers gave 1.64x throughput and -16% on the process step; 2 -> 4 gave only
+# 1.29x and -4%, at +23% per individual. A warm server has already removed the
+# CPU-bound import and load that used to overlap well, and what is left is
+# GPU-bound, so past two the servers mostly time-share. Two is the sweet spot.
 LORA_SERVER_COUNT = 2
 
 # Where they listen. Consecutive ports from LORA_SERVER_PORT, one per server,

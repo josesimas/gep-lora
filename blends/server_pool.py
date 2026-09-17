@@ -14,13 +14,14 @@ request at a time, so N scripts want N servers. The number is a setting rather
 than a guess because the cost is the same one a batch has always had: every
 server holds its own copy of the base model.
 
-Whether it pays is an open question and worth measuring before believing.
-Concurrency today buys 2.4-3.0x on four scripts, and the parts that overlap
-well are the CPU-bound import and load -- which is exactly what a warm server
-removes. What is left is GPU-bound on one card, so N servers may time-share
-rather than multiply. LORA_SERVER_COUNT = 1 is the experiment, and if one warm
-server is within a few percent of four, this module's whole reason to exist
-goes with it.
+It was measured rather than assumed (tools/compare_servers.py, paired sweeps
+differing only in LORA_SERVER_COUNT). 1 -> 2 servers pays: 1.64x throughput on
+the passes with no straggler, -16% on the process step, +6% per individual.
+2 -> 4 barely does: 1.29x, -4%, +23% per individual. The parts that used to
+overlap well under concurrency are the CPU-bound import and load, which a warm
+server has already taken away; what is left is GPU-bound on one card, so past
+two the servers mostly time-share. Two is the setting, and the reason this
+module is more than a single-server lifecycle.
 
 Assignment is positional, not a queue
 -------------------------------------
