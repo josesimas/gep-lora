@@ -38,6 +38,10 @@ Inference
                                               or server-sent events with
                                               Accept: text/event-stream)
     GET    /health                         liveness, and what is loaded
+
+Other
+    GET    /datasets                       shared dataset files a submission may name
+    GET    /  or  /demo                    a test page that drives all of the above
 """
 
 import argparse
@@ -55,6 +59,11 @@ from async_api import registry as reg
 from async_api import results
 from async_api import settings
 from async_api import submit
+
+
+# A page that exercises every endpoint, served at / and /demo. Same origin as
+# the API, so it needs no CORS; it holds no secrets of its own.
+DEMO_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo.html")
 
 
 class ApiError(Exception):
@@ -227,6 +236,17 @@ class App:
         self.own_job(user, job_id)
         return 200, {"unset": self.unset(self.registry.deployments(job_id=job_id))}
 
+    def list_datasets(self, user):
+        """The shared dataset files a submission may name with {"file": name}."""
+        folder = os.path.join(submit._ROOT,
+                              settings.SHARED_DATASETS_DIR)
+        try:
+            names = sorted(name for name in os.listdir(folder)
+                           if os.path.isfile(os.path.join(folder, name)))
+        except OSError:
+            names = []
+        return 200, {"datasets": names}
+
     def list_live(self, user):
         return 200, {"live": [deployment_json(row)
                               for row in self.registry.deployments(user_id=user["id"])]}
@@ -282,6 +302,7 @@ ROUTES = [
     ("POST", r"/jobs/(\d+)/live", "set_live", ("body",)),
     ("GET", r"/jobs/(\d+)/live", "job_live", ()),
     ("DELETE", r"/jobs/(\d+)/live", "unset_job", ()),
+    ("GET", r"/datasets", "list_datasets", ()),
     ("GET", r"/live", "list_live", ()),
     ("DELETE", r"/live/(\d+)", "unset_one", ()),
 ]
@@ -325,6 +346,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         path = url.path.rstrip("/") or "/"
         try:
+            if path in ("/", "/demo") and self.command == "GET":
+                return self._page(DEMO_PAGE)
             if path == "/health" and self.command == "GET":
                 return self._send(200, {"ok": True, "models": self.app.cache.status()})
             if path == "/infer" and self.command == "POST":
@@ -358,6 +381,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": "%s: %s" % (type(error).__name__, error)})
 
     do_GET = do_POST = do_DELETE = do_PUT = do_PATCH = _dispatch
+
+    def _page(self, path):
+        with open(path, "rb") as handle:
+            body = handle.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     # --- streaming ---------------------------------------------------------
 

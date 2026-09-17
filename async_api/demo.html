@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEP LoRA API demo</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2230; --muted: #667085; --line: #e3e6ec;
+    --accent: #3b5bdb; --accent-ink: #ffffff; --ok: #2b8a3e; --warn: #b7791f; --bad: #c92a2a;
+    --code: #f1f3f7; --best: #3b5bdb; --mean: #9aa5b8; --worst: #d0d5de;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --panel: #1a1f29; --ink: #e6e9ef; --muted: #98a2b3; --line: #2a3140;
+      --accent: #748ffc; --accent-ink: #0d1020; --ok: #69db7c; --warn: #ffd43b; --bad: #ff8787;
+      --code: #232a36; --best: #748ffc; --mean: #6b7488; --worst: #3a4252;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+           padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+           position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0 12px 0 0; }
+  main { display: grid; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto;
+         grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+            padding: 14px 16px; min-width: 0; }
+  h2 { font-size: 14px; margin: 0 0 10px; display: flex; gap: 8px; align-items: center; }
+  h3 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); font-weight: 600; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  input, textarea, select { width: 100%; font: inherit; color: var(--ink); background: var(--bg);
+           border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  textarea { font-family: ui-monospace, Consolas, monospace; font-size: 12px; resize: vertical; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+  .row > * { flex: 1 1 120px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           border-radius: 6px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  tr.selected td { background: var(--code); }
+  tr.click { cursor: pointer; }
+  .scroll { overflow-x: auto; }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  pre { background: var(--code); border-radius: 6px; padding: 8px; margin: 0; overflow: auto;
+        max-height: 260px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+          border: 1px solid currentColor; }
+  .s-done { color: var(--ok); } .s-failed, .s-cancelled { color: var(--bad); }
+  .s-running { color: var(--accent); } .s-queued, .s-preparing, .s-deleted { color: var(--muted); }
+  .muted { color: var(--muted); }
+  .msg { margin-top: 8px; font-size: 13px; min-height: 1em; }
+  .msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .answer { background: var(--code); border-radius: 6px; padding: 10px; min-height: 60px;
+            white-space: pre-wrap; margin-top: 8px; }
+  .tiles { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tile { background: var(--code); border-radius: 8px; padding: 6px 10px; }
+  .tile b { display: block; font-size: 16px; }
+  .tile span { font-size: 11px; color: var(--muted); }
+  .span2 { grid-column: 1 / -1; }
+  svg text { fill: var(--muted); font-size: 10px; }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 3px; margin-right: 4px; vertical-align: middle; }
+  .q { margin: 8px 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <h1>GEP LoRA API demo</h1>
+  <div style="flex: 1 1 360px">
+    <input id="key" type="password" placeholder="API key (python -m async_api.users add <name>)">
+  </div>
+  <button id="saveKey">Use key</button>
+  <span id="health" class="muted"></span>
+</header>
+
+<main>
+  <!-- submit -->
+  <section>
+    <h2>1. Submit a job</h2>
+    <div class="row">
+      <div><label for="label">Label</label><input id="label" value="demo"></div>
+      <div><label for="noTest">Testing pass</label>
+        <select id="noTest"><option value="false">run it</option><option value="true">skip it</option></select></div>
+    </div>
+    <label for="settings">Settings overrides (JSON)</label>
+    <textarea id="settings" rows="6">{
+  "TEMPLATE": "template_code_mocked.py",
+  "GENERATIONS": 1,
+  "COUNT": 4,
+  "TRAINING_COUNT": 3
+}</textarea>
+    <div class="row">
+      <div><label for="trainMode">Training dataset</label>
+        <select id="trainMode"><option value="file">shared file</option><option value="inline">inline JSONL</option></select></div>
+      <div><label for="trainFile">Shared file</label><select id="trainFile"></select></div>
+    </div>
+    <textarea id="trainInline" rows="5" hidden>{"messages": [{"role": "user", "content": "I have a headache and a fever. What should I do?"}, {"role": "assistant", "content": "Rest, drink fluids, and see a doctor if the fever lasts more than three days."}]}
+{"messages": [{"role": "user", "content": "How much water should I drink a day?"}, {"role": "assistant", "content": "About two litres for most adults, more in hot weather or when exercising."}]}
+{"messages": [{"role": "user", "content": "Is it safe to take ibuprofen on an empty stomach?"}, {"role": "assistant", "content": "It can irritate the stomach; take it with food when you can."}]}</textarea>
+    <div class="row">
+      <div><label for="testFile">Testing dataset (shared file)</label><select id="testFile"></select></div>
+      <div><label for="minQuality">Test min quality</label><input id="minQuality" type="number" step="0.05" value="0"></div>
+    </div>
+    <div class="actions"><button class="primary" id="submit">Submit job</button></div>
+    <div id="submitMsg" class="msg"></div>
+  </section>
+
+  <!-- jobs -->
+  <section>
+    <h2>2. Jobs <span class="muted" style="font-weight: 400">refreshes every 3s</span></h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Label</th><th>Status</th><th>Best</th><th>Created</th></tr></thead>
+        <tbody id="jobs"><tr><td colspan="5" class="muted">Enter an API key.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- detail -->
+  <section class="span2" id="detailSection" hidden>
+    <h2>3. Job <span id="detailTitle"></span></h2>
+    <div class="actions">
+      <button id="aCancel">Cancel</button>
+      <button id="aLive" class="primary">Set live (best)</button>
+      <button id="aUnset">Unset live</button>
+      <button id="aDeleteRun" class="danger">Delete run</button>
+      <button id="aDeleteJob" class="danger">Delete job</button>
+      <button id="aRefresh">Refresh</button>
+    </div>
+    <div id="detailMsg" class="msg"></div>
+    <div class="tiles" id="tiles"></div>
+    <div id="detailBody"></div>
+  </section>
+
+  <!-- inference -->
+  <section class="span2">
+    <h2>4. Inference</h2>
+    <div class="row">
+      <div style="flex: 3 1 300px"><label for="token">Live token</label>
+        <input id="token" class="mono" placeholder="returned by Set live"></div>
+      <div><label for="maxTokens">Max new tokens</label><input id="maxTokens" type="number" value="200"></div>
+      <div><label for="format">Stream as</label>
+        <select id="format"><option value="text">chunked text</option><option value="sse">server-sent events</option></select></div>
+    </div>
+    <label for="prompt">Prompt</label>
+    <textarea id="prompt" rows="3">What are common symptoms of the flu?</textarea>
+    <div class="actions"><button class="primary" id="ask">Ask</button><span id="inferStats" class="muted"></span></div>
+    <div id="answer" class="answer muted">The answer streams here.</div>
+    <h3>Live deployments</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Job</th><th>Individual</th><th>Chromosome</th><th>Engine</th><th>Since</th><th></th></tr></thead>
+        <tbody id="live"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const FINISHED = ["done", "failed", "cancelled", "deleted"];
+let key = "";
+let selected = null;          // job id on screen
+let lastStatus = null;        // its status when detail was last drawn
+
+// --- small helpers ----------------------------------------------------------
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs)) {
+    if (name === "class") node.className = value;
+    else if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
+    else node.setAttribute(name, value);
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined) continue;
+    node.append(child instanceof Node ? child : String(child));
+  }
+  return node;
+}
+
+const fmt = (value, digits = 3) => (value === null || value === undefined) ? "–" : Number(value).toFixed(digits);
+const pill = (status) => el("span", { class: "pill s-" + status }, status);
+
+function say(target, text, kind) {
+  const node = $(target);
+  node.textContent = text || "";
+  node.className = "msg" + (kind ? " " + kind : "");
+}
+
+async function api(method, path, body) {
+  const response = await fetch(path, {
+    method,
+    headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let data = null;
+  try { data = await response.json(); } catch (_) { /* empty body */ }
+  if (!response.ok) throw new Error((data && data.error) || response.status + " " + response.statusText);
+  return data;
+}
+
+function remember(name, value) {
+  try { localStorage.setItem("gep-api-" + name, value); } catch (_) { /* private mode */ }
+}
+function recall(name) {
+  try { return localStorage.getItem("gep-api-" + name) || ""; } catch (_) { return ""; }
+}
+
+// --- key, health, datasets ---------------------------------------------------
+
+async function useKey() {
+  key = $("key").value.trim();
+  remember("key", key);
+  await Promise.all([loadDatasets(), refreshJobs(), refreshLive()]);
+}
+
+async function refreshHealth() {
+  try {
+    const health = await (await fetch("/health")).json();
+    const loaded = health.models.filter((m) => m.loaded);
+    $("health").textContent = loaded.length
+      ? "loaded: " + loaded.map((m) => `${m.base_model} (${m.engine}, unloads in ${Math.round(m.unloads_in)}s)`).join(", ")
+      : "server up · no model loaded";
+  } catch (_) {
+    $("health").textContent = "server unreachable";
+  }
+}
+
+async function loadDatasets() {
+  if (!key) return;
+  try {
+    const { datasets } = await api("GET", "/datasets");
+    for (const [id, preferred] of [["trainFile", "medical_testing_lora_dataset.json"],
+                                   ["testFile", "medical_validation_lora_dataset.json"]]) {
+      const select = $(id);
+      select.replaceChildren(...(id === "testFile" ? [el("option", { value: "" }, "(none)")] : []),
+        ...datasets.map((name) => el("option", { value: name }, name)));
+      if (datasets.includes(preferred)) select.value = preferred;
+    }
+  } catch (error) {
+    say("submitMsg", error.message, "err");
+  }
+}
+
+// --- submit -----------------------------------------------------------------
+
+async function submitJob() {
+  say("submitMsg", "Submitting…");
+  let settings;
+  try { settings = JSON.parse($("settings").value || "{}"); }
+  catch (error) { return say("submitMsg", "Settings are not valid JSON: " + error.message, "err"); }
+
+  const datasets = {};
+  datasets.training = $("trainMode").value === "file" ? { file: $("trainFile").value } : $("trainInline").value;
+  if ($("testFile").value) datasets.testing = { file: $("testFile").value };
+  const options = { no_test: $("noTest").value === "true" };
+  if ($("minQuality").value !== "") options.test_min_quality = Number($("minQuality").value);
+
+  try {
+    const { job } = await api("POST", "/jobs", { label: $("label").value || null, settings, datasets, options });
+    say("submitMsg", `Job ${job.id} queued at position ${job.queue_position}. Start a worker if none is running: python -m async_api.worker`, "ok");
+    await refreshJobs();
+    select(job.id);
+  } catch (error) {
+    say("submitMsg", error.message, "err");
+  }
+}
+
+// --- jobs list ----------------------------------------------------------------
+
+async function refreshJobs() {
+  if (!key) return;
+  let jobs;
+  try { ({ jobs } = await api("GET", "/jobs")); }
+  catch (error) {
+    $("jobs").replaceChildren(el("tr", {}, el("td", { colspan: 5, class: "msg err" }, error.message)));
+    return;
+  }
+  if (!jobs.length) {
+    $("jobs").replaceChildren(el("tr", {}, el("td", { colspan: 5, class: "muted" }, "No jobs yet.")));
+    return;
+  }
+  $("jobs").replaceChildren(...jobs.map((job) => {
+    const best = job.summary && job.summary.best;
+    return el("tr", { class: "click" + (job.id === selected ? " selected" : ""), onclick: () => select(job.id) },
+      el("td", {}, job.id),
+      el("td", {}, job.label || el("span", { class: "muted" }, "–")),
+      el("td", {}, pill(job.status), job.queue_position ? el("span", { class: "muted" }, " #" + job.queue_position) : null),
+      el("td", { class: "mono" }, best ? `${fmt(best.fitness)} ${best.chromosome}` : "–"),
+      el("td", { class: "muted" }, (job.created_at || "").replace("T", " ")));
+  }));
+  const current = jobs.find((job) => job.id === selected);
+  if (current && current.status !== lastStatus) drawDetail();
+}
+
+// --- detail -----------------------------------------------------------------
+
+function select(jobId) {
+  selected = jobId;
+  lastStatus = null;
+  $("detailSection").hidden = false;
+  say("detailMsg", "");
+  drawDetail();
+  refreshJobs();
+}
+
+async function drawDetail() {
+  if (selected === null) return;
+  let detail, status;
+  try {
+    [detail, status] = await Promise.all([api("GET", `/jobs/${selected}`), api("GET", `/jobs/${selected}/status`)]);
+  } catch (error) {
+    $("detailSection").hidden = true;
+    selected = null;
+    return;
+  }
+  const job = detail.job;
+  lastStatus = job.status;
+  $("detailTitle").replaceChildren(`${job.id} · ${job.label || "unlabelled"} `, pill(job.status));
+
+  $("aCancel").disabled = !["queued", "running"].includes(job.status);
+  $("aLive").disabled = job.status !== "done";
+  $("aUnset").disabled = !detail.live.length;
+  $("aDeleteRun").disabled = !FINISHED.includes(job.status) || job.status === "deleted";
+  $("aDeleteJob").disabled = !FINISHED.includes(job.status);
+
+  const progress = status.progress || {};
+  const results = detail.results;
+  const tiles = [
+    ["status", job.status],
+    ["generations", `${progress.generations_scored ?? 0} / ${progress.generations_expected ?? "?"}`],
+    ["last step", progress.last_step ? `${progress.last_step.step} ${progress.last_step.generation || ""}` : "–"],
+    ["best fitness", results && results.best ? fmt(results.best.fitness) : "–"],
+    ["live tokens", detail.live.length],
+  ];
+  $("tiles").replaceChildren(...tiles.map(([name, value]) => el("div", { class: "tile" }, el("b", {}, value), el("span", {}, name))));
+
+  const body = [];
+  if (job.error) body.push(el("p", { class: "msg " + (job.status === "done" ? "" : "err") }, job.error));
+  if (results) {
+    if (results.best) {
+      body.push(el("h3", {}, "Best individual"),
+        el("p", { class: "mono" }, `#${results.best.number}  ${results.best.chromosome}  fitness ${fmt(results.best.fitness)}  rank ${results.best.rank}`));
+    }
+    if (results.fitness_history.length) body.push(el("h3", {}, "Fitness by generation"), chart(results.fitness_history));
+    body.push(el("h3", {}, "Population — click a row for its transcript"), populationTable(results.population, results.best && results.best.number));
+    body.push(el("div", { id: "transcript" }));
+    if (results.testing.summary.length) {
+      body.push(el("h3", {}, "Testing pass"),
+        el("div", { class: "scroll" }, el("table", {},
+          el("thead", {}, el("tr", {}, ["#", "chromosome", "training", "testing", "verdict"].map((h) => el("th", {}, h)))),
+          el("tbody", {}, results.testing.individuals.map((t) => el("tr", {},
+            el("td", {}, t.number), el("td", { class: "mono" }, t.chromosome),
+            el("td", {}, fmt(t.selected_on)), el("td", {}, fmt(t.quality)), el("td", {}, t.verdict)))))));
+    }
+    if (results.costs.length) {
+      body.push(el("h3", {}, "What it cost"),
+        el("p", { class: "muted" }, results.costs.map((c) => `${c.step} ${c.seconds.toFixed(1)}s`).join(" · ")));
+    }
+  } else {
+    body.push(el("p", { class: "muted" }, job.status === "deleted" ? "The run's results were deleted." : "No results yet."));
+  }
+  body.push(el("h3", {}, "Log (last 40 lines)"), el("pre", { id: "log" }, "…"));
+  $("detailBody").replaceChildren(...body);
+  refreshLog();
+}
+
+async function refreshLog() {
+  if (selected === null || !$("log")) return;
+  try {
+    const { lines } = await api("GET", `/jobs/${selected}/log?lines=40`);
+    const log = $("log");
+    log.textContent = lines.length ? lines.join("\n") : "(nothing logged yet)";
+    log.scrollTop = log.scrollHeight;
+  } catch (_) { /* job went away */ }
+}
+
+function populationTable(population, bestNumber) {
+  return el("div", { class: "scroll" }, el("table", {},
+    el("thead", {}, el("tr", {}, ["#", "chromosome", "state", "rank", "fitness", "answers", ""].map((h) => el("th", {}, h)))),
+    el("tbody", {}, population.map((one) => el("tr", { class: "click", onclick: () => showIndividual(one.number) },
+      el("td", {}, one.number), el("td", { class: "mono" }, one.chromosome),
+      el("td", {}, one.state || "–"), el("td", {}, one.rank ?? "–"),
+      el("td", {}, fmt(one.fitness)), el("td", {}, one.answers),
+      el("td", {}, one.number === bestNumber ? pill("best") : "",
+        one.state === "ok" && lastStatus === "done"
+          ? el("button", { onclick: (event) => { event.stopPropagation(); goLive(one.number); } }, "Set live")
+          : null))))));
+}
+
+async function showIndividual(number) {
+  const target = $("transcript");
+  try {
+    const { individual } = await api("GET", `/jobs/${selected}/individuals/${number}`);
+    const exchanges = individual.execution ? individual.execution.exchanges : [];
+    target.replaceChildren(...[
+      el("h3", {}, `Individual #${number} — ${individual.chromosome}`),
+      individual.tree ? el("pre", {}, individual.tree) : null,
+      exchanges.length ? null : el("p", { class: "muted" }, "Never ran."),
+      ...exchanges.map((x) => el("div", { class: "q" },
+        el("div", {}, el("b", {}, "Q: "), x.question),
+        el("div", {}, el("b", {}, "A: "), x.answer || el("span", { class: "muted" }, "(empty)")),
+        el("div", { class: "muted" }, `quality ${fmt(x.quality, 2)} — ${x.reason || ""}`)))].filter(Boolean));
+    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (error) {
+    target.replaceChildren(el("p", { class: "msg err" }, error.message));
+  }
+}
+
+function chart(history) {
+  const W = 520, H = 150, P = 26;
+  const n = history.length;
+  const x = (i) => P + (n === 1 ? (W - 2 * P) / 2 : i * (W - 2 * P) / (n - 1));
+  const y = (v) => H - P - (v ?? 0) * (H - 2 * P);
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("style", "width: 100%; max-width: 520px; height: auto; display: block");
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    svg.append(node);
+  };
+  for (const v of [0, 0.5, 1]) {
+    add("line", { x1: P, x2: W - P, y1: y(v), y2: y(v), stroke: "var(--line)" });
+    add("text", { x: 4, y: y(v) + 3 }, v.toFixed(1));
+  }
+  for (const [field, color, width] of [["worst", "var(--worst)", 2], ["mean", "var(--mean)", 2], ["best", "var(--best)", 3]]) {
+    add("polyline", { fill: "none", stroke: color, "stroke-width": width,
+                      points: history.map((g, i) => `${x(i)},${y(g[field])}`).join(" ") });
+    history.forEach((g, i) => add("circle", { cx: x(i), cy: y(g[field]), r: 3, fill: color }));
+  }
+  history.forEach((g, i) => add("text", { x: x(i) - 3, y: H - 8 }, g.generation));
+  return el("div", {}, svg,
+    el("div", { class: "legend" },
+      el("span", {}, el("i", { style: "background: var(--best)" }), "best"),
+      el("span", {}, el("i", { style: "background: var(--mean)" }), "mean"),
+      el("span", {}, el("i", { style: "background: var(--worst)" }), "worst")));
+}
+
+// --- job actions --------------------------------------------------------------
+
+async function act(label, method, path, after) {
+  say("detailMsg", label + "…");
+  try {
+    const reply = await api(method, path);
+    say("detailMsg", label + " — ok", "ok");
+    if (after) after(reply);
+  } catch (error) {
+    say("detailMsg", error.message, "err");
+  }
+  await Promise.all([refreshJobs(), refreshLive()]);
+  if (selected !== null) drawDetail();
+}
+
+async function goLive(number) {
+  say("detailMsg", "Setting live…");
+  try {
+    const reply = await api("POST", `/jobs/${selected}/live`, number ? { individual: number } : {});
+    $("token").value = reply.token;
+    remember("token", reply.token);
+    say("detailMsg", `Individual #${reply.deployment.individual} is live (${reply.deployment.engine}). Token copied into the inference box — it is shown only once.`, "ok");
+  } catch (error) {
+    say("detailMsg", error.message, "err");
+  }
+  await refreshLive();
+  drawDetail();
+}
+
+// --- live deployments and inference -------------------------------------------
+
+async function refreshLive() {
+  if (!key) return;
+  try {
+    const { live } = await api("GET", "/live");
+    $("live").replaceChildren(...(live.length ? live.map((d) => el("tr", {},
+      el("td", {}, d.id), el("td", {}, d.job_id), el("td", {}, "#" + d.individual),
+      el("td", { class: "mono" }, d.chromosome), el("td", {}, d.engine),
+      el("td", { class: "muted" }, d.created_at.replace("T", " ")),
+      el("td", {}, el("button", { class: "danger", onclick: () => act("Unset", "DELETE", `/live/${d.id}`) }, "Unset"))))
+      : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Nothing is live."))]));
+  } catch (_) { /* reported elsewhere */ }
+}
+
+async function ask() {
+  const answer = $("answer");
+  const sse = $("format").value === "sse";
+  remember("token", $("token").value.trim());
+  answer.className = "answer";
+  answer.textContent = "";
+  $("ask").disabled = true;
+  const started = performance.now();
+  let first = null, chars = 0;
+  $("inferStats").textContent = "waiting for the model (the first call loads it)…";
+  try {
+    const response = await fetch("/infer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(sse ? { "Accept": "text/event-stream" } : {}) },
+      body: JSON.stringify({ token: $("token").value.trim(), prompt: $("prompt").value,
+                             max_new_tokens: Number($("maxTokens").value) || 200 }),
+    });
+    if (!response.ok) {
+      let message = response.status + " " + response.statusText;
+      try { message = (await response.json()).error; } catch (_) { /* not JSON */ }
+      throw new Error(message);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value, { stream: true });
+      if (first === null) {
+        first = performance.now() - started;
+        $("inferStats").textContent = `first chunk after ${(first / 1000).toFixed(2)}s…`;
+      }
+      if (!sse) {
+        answer.textContent += text;
+        chars += text.length;
+        continue;
+      }
+      buffer += text;
+      let cut;
+      while ((cut = buffer.indexOf("\n\n")) >= 0) {
+        const event = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const name = (event.match(/^event: (.*)$/m) || [])[1];
+        const data = JSON.parse((event.match(/^data: (.*)$/m) || [, "{}"])[1]);
+        if (name === "error") throw new Error(data.error);
+        if (data.text) { answer.textContent += data.text; chars += data.text.length; }
+      }
+    }
+    const total = (performance.now() - started) / 1000;
+    $("inferStats").textContent = `first chunk ${((first ?? 0) / 1000).toFixed(2)}s · total ${total.toFixed(2)}s · ${chars} chars`;
+  } catch (error) {
+    answer.className = "answer msg err";
+    answer.textContent = error.message;
+    $("inferStats").textContent = "";
+  } finally {
+    $("ask").disabled = false;
+    refreshHealth();
+  }
+}
+
+// --- wiring -------------------------------------------------------------------
+
+$("saveKey").addEventListener("click", useKey);
+$("key").addEventListener("keydown", (event) => { if (event.key === "Enter") useKey(); });
+$("submit").addEventListener("click", submitJob);
+$("trainMode").addEventListener("change", () => {
+  const inline = $("trainMode").value === "inline";
+  $("trainInline").hidden = !inline;
+  $("trainFile").disabled = inline;
+});
+$("aCancel").addEventListener("click", () => act("Cancel", "POST", `/jobs/${selected}/cancel`));
+$("aLive").addEventListener("click", () => goLive(null));
+$("aUnset").addEventListener("click", () => act("Unset live", "DELETE", `/jobs/${selected}/live`));
+$("aDeleteRun").addEventListener("click", () => {
+  if (confirm(`Delete what job ${selected}'s run produced? The job stays listed.`)) act("Delete run", "DELETE", `/jobs/${selected}/run`);
+});
+$("aDeleteJob").addEventListener("click", () => {
+  if (confirm(`Delete job ${selected} and all its files?`))
+    act("Delete job", "DELETE", `/jobs/${selected}`, () => { selected = null; $("detailSection").hidden = true; });
+});
+$("aRefresh").addEventListener("click", drawDetail);
+$("ask").addEventListener("click", ask);
+
+$("key").value = recall("key");
+$("token").value = recall("token");
+refreshHealth();
+if ($("key").value) useKey();
+
+setInterval(() => {
+  refreshJobs();
+  if (selected !== null && !FINISHED.includes(lastStatus)) refreshLog();
+}, 3000);
+setInterval(refreshHealth, 10000);
+</script>
+</body>
+</html>

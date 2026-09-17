@@ -92,10 +92,12 @@ def population(conn, run_id):
 
 
 def best(individuals):
-    """The elite if one is marked, else the fittest runnable individual."""
-    marked = [one for one in individuals if one["is_best"]]
-    if marked:
-        return marked[0]
+    """The fittest runnable individual: elitism's rule, applied to fitness now.
+
+    Not the `is_best` flag. A finished sweep's last generation stops after
+    `fitness`, so the flag is still the one elitism set a generation earlier,
+    and the population has been scored again since.
+    """
     runnable = [one for one in individuals if one["state"] != "BAD" and one["fitness"]]
     if not runnable:
         return None

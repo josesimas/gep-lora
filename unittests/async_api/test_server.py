@@ -141,6 +141,17 @@ class RefusalTests(ServerTestCase):
         self.assertEqual(self.call("GET", "/nothing")[0], 404)
         self.assertEqual(self.call("PUT", "/jobs")[0], 405)
 
+    def test_the_demo_page_is_served_without_a_key(self):
+        request = urllib.request.Request(self.base + "/demo")
+        with urllib.request.urlopen(request, timeout=10) as reply:
+            self.assertIn("text/html", reply.headers["Content-Type"])
+            self.assertIn(b"/infer", reply.read())
+
+    def test_shared_datasets_are_listed(self):
+        status, reply = self.call("GET", "/datasets")
+        self.assertEqual(status, 200)
+        self.assertIsInstance(reply["datasets"], list)
+
     def test_health_needs_no_key(self):
         self.assertEqual(self.call("GET", "/health", key="none")[0], 200)
 
