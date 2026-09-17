@@ -277,6 +277,27 @@ async function loadDatasets() {
 // fields the user changed are sent, so a submission says what differs from
 // config/settings.py and nothing else.
 
+// The base models there are trained LoRAs for, and where each one's five
+// adapters live. An adapter only fits the model it was trained on, so choosing
+// a model also chooses its LORA_SLOTS -- sent whenever they differ from the
+// server's. Read from each adapter_config.json's base_model_name_or_path.
+const BASE_MODELS = {
+  "unsloth/Qwen3.5-0.8B": {
+    label: "Qwen3.5 0.8B", folder: "0.8b_own_template_lora_adapter" },
+  "unsloth/qwen2.5-0.5b-instruct-unsloth-bnb-4bit": {
+    label: "Qwen2.5 0.5B Instruct (4-bit)", folder: "QWen2.5-0.5b-lora_adapter" },
+  "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit": {
+    label: "Qwen2.5 1.5B Instruct (4-bit)", folder: "Qwen2.5-1.5B-Instruct-medical-lora_adapter" },
+};
+
+function slotsFor(model) {
+  const known = BASE_MODELS[model];
+  if (!known) return null;
+  const slots = {};
+  for (let n = 1; n <= 5; n++) slots["L" + n] = `loras/Lora00${n}/${known.folder}`;
+  return slots;
+}
+
 const FIELDS = [
   { group: "Search", name: "COUNT", label: "Population size", type: "int", min: 1,
     help: "Individuals in every generation." },
@@ -296,8 +317,8 @@ const FIELDS = [
     labels: { "template_code_mocked.py": "Mocked: no model, random scores (seconds)",
               "template_remote_code.py": "Lora servers: base model loaded once",
               "template_code.py": "One model load per individual" } },
-  { group: "Model", name: "BASE_MODEL", label: "Base model", type: "text", wide: true,
-    help: "The model every adapter was trained on." },
+  { group: "Model", name: "BASE_MODEL", label: "Base model", type: "choice", wide: true, describe: true,
+    options: Object.keys(BASE_MODELS).map((value) => ({ value, label: BASE_MODELS[value].label })) },
   { group: "Model", name: "CHAT_TEMPLATE", label: "Chat template", type: "text",
     nullable: "blank = the model's own" },
   { group: "Model", name: "LORA_SERVER_COUNT", label: "Lora servers", type: "int", min: 1,
@@ -363,7 +384,7 @@ function fieldControl(field) {
   const id = "f_" + field.name;
   let input;
   if (field.type === "choice") {
-    input = el("select", { id }, (form.choices[field.name] || []).map((c) =>
+    input = el("select", { id }, choicesOf(field).map((c) =>
       el("option", { value: c.value }, (field.labels && field.labels[c.value]) || c.label)));
   } else if (field.type === "bool") {
     input = el("input", { id, type: "checkbox" });
@@ -384,6 +405,17 @@ function fieldControl(field) {
     el("div", { class: "help" }, field.help || ""),
     field.describe ? el("div", { class: "help describe" }) : null,
     el("div", { class: "help error" }));
+}
+
+// A choice field's options: the server's list, or the field's own. A server
+// default missing from a fixed list is added, so the form can still show it.
+function choicesOf(field) {
+  const options = form.choices[field.name] || field.options || [];
+  const current = form.defaults[field.name];
+  if (typeof current === "string" && !options.some((c) => c.value === current)) {
+    return options.concat([{ value: current, label: current + " (server default)" }]);
+  }
+  return options;
 }
 
 function setField(field, value) {
@@ -441,8 +473,10 @@ function refreshForm() {
     box.classList.toggle("changed", !error && differs(field, value));
     const describe = box.querySelector(".describe");
     if (describe) {
-      const chosen = (form.choices[field.name] || []).find((c) => c.value === value);
-      describe.textContent = chosen ? chosen.description : "";
+      const chosen = choicesOf(field).find((c) => c.value === value);
+      describe.textContent = field.name === "BASE_MODEL"
+        ? `${value}, with adapters from loras/Lora001..005/${BASE_MODELS[value] ? BASE_MODELS[value].folder : "?"}`
+        : (chosen ? chosen.description : "");
     }
   }
   for (const details of document.querySelectorAll("#form details")) {
@@ -461,6 +495,8 @@ function overrides() {
     if (error) errors.push(`${field.label}: ${error}`);
     else if (differs(field, value)) out[field.name] = value;
   }
+  const slots = slotsFor(readField(FIELDS.find((f) => f.name === "BASE_MODEL"))[0]);
+  if (slots && JSON.stringify(slots) !== JSON.stringify(form.defaults.LORA_SLOTS)) out.LORA_SLOTS = slots;
   return [out, errors];
 }
 
