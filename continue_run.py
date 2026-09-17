@@ -86,14 +86,15 @@ from storage import store
 # Named rather than sliced, so a step inserted at the front of STEPS does not
 # silently join the loop.
 GENERATION = ("trees", "runs", "process", "evaluate", "fitness", "elitism",
-              "selection", "mutation")
+              "selection", "mutation", "weight_mutation")
 
 
 def generation_steps(last=False):
     """The steps of one generation, in pipeline order.
 
     `last` trims the tail that builds the *next* generation
-    (start_run.NEXT_GENERATION: elitism, selection, mutation), because the last
+    (start_run.NEXT_GENERATION: elitism, selection, mutation,
+    weight_mutation), because the last
     generation of a run has no next generation to build. The sweep then comes
     to rest on the population that was actually scored, each individual still
     described by the script that earned its transcript -- rather than on a

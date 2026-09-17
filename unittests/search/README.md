@@ -1,6 +1,6 @@
 # unittests/search
 
-Unit tests for `search/` — the GEP search itself. 173 tests, about 15 seconds,
+Unit tests for `search/` — the GEP search itself. 187 tests, about 15 seconds,
 on **plain Python 3**: no GPU, no base model, no judge endpoint, no adapters on
 disk. Nothing here loads a model, so the venv one level up is not needed.
 
@@ -23,6 +23,7 @@ python -m unittest unittests.search.test_selection -v
 | `test_generate_population.py` | the alphabet, the arity/class rule, encode/decode round-tripping, what `decode` refuses, the draw staying inside `MAX_DEPTH`, and `build_population` giving up rather than looping |
 | `test_draw_trees.py` | the stored drawing, and that its rows read back as the chromosome |
 | `test_mutation.py` | class-local swaps preserving tree shape, the root and the elite going untouched, `has_changed` written for everyone, and a mutant's fitness cleared to NULL |
+| `test_weight_mutation.py` | only weight symbols moving, exactly `round(rate × pool)` of them, the elite's weights outside the pool, `has_changed` only ever raised |
 | `test_calculate_fitness.py` | the mean over the *latest* execution, 0.0 rather than NULL for nothing to average, and the generation a snapshot is filed under |
 | `test_elitism.py` | exactly one `is_best` or none, ties on the lowest number, an all-zero population electing nobody |
 | `test_selection.py` | the wheel, zero-width slices never picked, the cull's `n+1` arithmetic, a copy being its parent field for field but never `is_best`, retired numbers |

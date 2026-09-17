@@ -1543,7 +1543,7 @@ def cost_data(data):
 
     order = {name: index for index, name in enumerate(
         ("population", "trees", "runs", "process", "evaluate", "fitness",
-         "elitism", "selection", "mutation"))}
+         "elitism", "selection", "mutation", "weight_mutation"))}
     phases = timings.get("phases") or []
     named = [row for row in phases
              if row["phase"] not in report.WHOLE + report.NESTED]

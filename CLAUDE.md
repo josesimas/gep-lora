@@ -26,7 +26,8 @@ continue_run.py   the generation loop over a sweep already in the database
 
 config/       settings.py -- every knob the pipeline reads
 search/       generate_population, draw_trees, calculate_fitness,
-              elitism, selection, mutation -- the GEP search itself
+              elitism, selection, mutation, weight_mutation -- the GEP
+              search itself
 blends/       generate_runs, process_run, baseline_run -- a chromosome,
               turned into a script and run; lora_server, server_pool -- the
               base model held open, so the scripts stop each loading one
@@ -83,7 +84,7 @@ python start_run.py
 
 Whole pipeline:
 `population -> trees -> runs -> process -> evaluate -> fitness -> elitism -> selection
--> mutation`, stopping at the first
+-> mutation -> weight_mutation`, stopping at the first
 failure. `python start_run.py --list` shows the steps; naming steps runs a subset, always in
 pipeline order regardless of typing order.
 
@@ -102,13 +103,13 @@ python continue_run.py --generations 3
 ```
 
 `start_run.py` runs a sweep through **one** generation, and because that generation is the whole
-run it stops after `fitness`: `start_run.NEXT_GENERATION` (`elitism`, `selection`, `mutation`)
+run it stops after `fitness`: `start_run.NEXT_GENERATION` (`elitism`, `selection`, `mutation`, `weight_mutation`)
 is the tail that builds the *next* generation, and there is none. `--next-generation` runs
 them anyway, which is what `main.py` passes and what you want before continuing a sweep
 by hand. Naming steps explicitly (`python start_run.py selection`) always runs exactly those.
 `continue_run.py` carries an existing sweep
 on, running `trees -> runs -> process -> evaluate -> fitness -> elitism -> selection ->
-mutation` per generation -- **except its last, which stops after `fitness`** for the same
+mutation -> weight_mutation` per generation -- **except its last, which stops after `fitness`** for the same
 reason. How many is `--generations`, then **the sweep's own stored `GENERATIONS`**, then
 `settings.py`'s (`generation_count()`) -- the sweep's first for the reason every step reads
 stored settings, so a sweep continued a week later runs the search it was set up to run and
@@ -787,6 +788,14 @@ judged again. Its `tree`, `script_source` and `rank` are stale too; `trees`/`run
 those. Re-run `process` before `fitness` -- `fitness` reads the latest *execution*, so
 running it first would recompute the old chromosome's score and put it back. A `CAT`->`LIN` swap over mismatched
 ranks is expected and is culled by the usual `BAD` path.
+
+`weight_mutation.py` runs after it and moves only `w1`-`w5` symbols. Its rate is a
+**count over the pool**, not a chance per weight: every non-elite individual's weights go
+into one pool and `round(WEIGHT_MUTATION_RATE * pool)` (half up) are drawn without
+replacement and swapped for a different `w` -- ten weights at 0.1 is exactly one change.
+The elite's weights are not in the pool. A moved individual goes through
+`store.set_chromosome` like a mutant; the step **only raises `has_changed`, never writes
+0**, since clearing it would undo what `mutation` set earlier in the same generation.
 
 `generate_runs.py` turns a decoded tree into a script:
 

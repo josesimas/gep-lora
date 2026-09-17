@@ -1679,6 +1679,44 @@ and put the stale score back.
 | `settings.py` | `MUTATION_RATE` | `0.1` | chance per symbol; `0.0` turns mutation off without removing the step |
 | `settings.py` | `MUTATION_MASTER_SEED` | `None` | where the dice come from; `None` draws one and records it |
 
+### 9a. `search/weight_mutation.py` → the weights alone
+
+```bash
+python start_run.py weight_mutation
+```
+
+The step after `mutation`, and a narrower one: it only ever swaps a weight
+symbol (`w1`–`w5`, the child of each `L*` leaf) for a different one. Operators
+and slots are never touched, so the blend keeps its shape and its adapters and
+only how much of each it takes moves.
+
+**The rate is a share of all the weights, not a chance per weight.** Every
+weight of every non-elite individual goes into one pool, and
+`round(WEIGHT_MUTATION_RATE × pool)` of them (half up) are drawn from it without
+replacement — so ten weights at `0.1` is exactly one change, and sixty is
+exactly six, falling wherever the draw puts them.
+
+```
+rate 0.100 of 19 weight(s) across 8 of 8 individual(s): 2 drawn
+    #    weights chromosome
+    1    1       CAT.L1.L3.w2.w2
+         ->      CAT.L1.L3.w3.w2
+```
+
+**The elite's weights are not in the pool**, so it is never re-weighted, for
+the reason mutation leaves it alone.
+
+An individual that moved gets its new chromosome through
+`store.set_chromosome()` — `has_changed = 1`, fitness back to NULL — exactly as
+a mutant does. **This step never writes `has_changed = 0`**: it runs after
+`mutation` in the same generation, and clearing the flag on an individual
+mutation moved would have `process` skip a chromosome that has never run.
+
+| Where | Setting | Default | Meaning |
+|---|---|---|---|
+| `settings.py` | `WEIGHT_MUTATION_RATE` | `0.1` | share of all non-elite weights moved per round; `0.0` turns it off |
+| `settings.py` | `WEIGHT_MUTATION_MASTER_SEED` | `None` | where the draw comes from; `None` draws one and records it |
+
 ### 10. `continue_run.py` → generation after generation
 
 `start_run.py` runs a sweep from a fresh population through **one** generation.
@@ -1693,6 +1731,7 @@ turn of the crank:
 
 ```
 trees -> runs -> process -> evaluate -> fitness -> elitism -> selection -> mutation
+    -> weight_mutation
 ```
 
 describe the chromosomes, build them, run them, judge them, score them, keep the
@@ -1708,7 +1747,7 @@ and the driver says so again when it gets there:
 ```
 # generation 3 of 3 -- population 10, the last: it stops after fitness
 ...
-# stopped after fitness: elitism, selection, mutation build the next generation
+# stopped after fitness: elitism, selection, mutation, weight_mutation build the next generation
 # and there is none, so the population is the one that was just scored
 ```
 
@@ -2794,6 +2833,7 @@ tools/        dev aids that are not part of the pipeline
 | `search/elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
 | `search/selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent, culls the weakest, draws one newcomer |
 | `search/mutation.py` | point-mutates every chromosome but the elite's, within its grammar; clears the fitness it invalidates |
+| `search/weight_mutation.py` | swaps a fixed share of all the non-elite weight symbols; never the elite's, never clears `has_changed` |
 
 ### Building and running a blend
 
@@ -2878,6 +2918,7 @@ selection.select                      -->  individuals (n copies + 1 drawn
                                            fresh, the n+1 weakest deleted)
 mutation.apply                        -->  individuals.chromosome + has_changed
                                            (and fitness back to NULL)
+weight_mutation.apply                 -->  the same, for weight symbols only
 
 store --show / --export                    reads any of it back out
 generate_html_db_stats                -->  <db>_run<N>_stats.html (the same,

@@ -74,7 +74,8 @@ PHASE_ORDER = ("script", "generate", "build", "combine.svd", "combine.cat",
 CONTROL_KEYS = ("LORA_SERVER_COUNT", "PROCESS_RUN_BATCH_SIZE", "SEED",
                 "WEIGHT_MASTER_SEED", "SELECTION_MASTER_SEED", "COUNT",
                 "GENERATIONS", "TRAINING_COUNT", "ANSWER_BATCH", "MAX_DEPTH",
-                "BRANCH_PROB", "SELECTION_COUNT", "MUTATION_RATE", "TEMPLATE",
+                "BRANCH_PROB", "SELECTION_COUNT", "MUTATION_RATE",
+                "WEIGHT_MUTATION_RATE", "TEMPLATE",
                 "EVALUATOR", "BASE_MODEL", "LORA_SERVER_RECYCLE_AFTER")
 
 # A script whose longest batch-mate finishes before it is this far through has

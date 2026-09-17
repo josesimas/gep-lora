@@ -239,7 +239,7 @@ Prints the tree, the build order, the final rank and `ok` or `BAD`. Writes
 One generation is:
 
 ```
-population -> trees -> runs -> process -> evaluate -> fitness -> elitism -> selection -> mutation
+population -> trees -> runs -> process -> evaluate -> fitness -> elitism -> selection -> mutation -> weight_mutation
 ```
 
 The last generation of a run stops after `fitness`. The three steps behind it

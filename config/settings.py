@@ -34,7 +34,8 @@ BRANCH_PROB = 0.2
 
 # How many generations continue_run.py runs when it is not told otherwise. One
 # generation is trees -> runs -> process -> evaluate -> fitness -> elitism ->
-# selection -> mutation over the population already in the database.
+# selection -> mutation -> weight_mutation over the population already in the
+# database.
 #
 # Mind what this costs: process loads the base model once per individual, and
 # every generation is the whole population again -- and it is the same size
@@ -293,6 +294,19 @@ MUTATION_RATE = 0.1
 # an int makes a sweep reproducible from the start, None draws one at run time
 # and records it.
 MUTATION_MASTER_SEED = 42 #None
+
+# --- weight mutation -------------------------------------------------------
+
+# The share of the population's weights (the w1-w5 symbols, one per blended
+# adapter) moved each round -- a count over all of them, not a chance per
+# weight. Every non-elite individual's weights go into one pool and
+# round(rate * pool) of them are drawn and swapped for a different w, so ten
+# weights at 0.1 is exactly one change. The elite's weights are never in the
+# pool; 0.0 turns the step off without removing it.
+WEIGHT_MUTATION_RATE = 0.1
+
+# Where that draw comes from, on the same terms as the seeds above.
+WEIGHT_MUTATION_MASTER_SEED = 42 #None
 
 # --- running the generated scripts -----------------------------------------
 

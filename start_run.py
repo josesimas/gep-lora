@@ -2,7 +2,7 @@
 start_run.py - Run the whole pipeline end to end against a sqlite database.
 
     population -> trees -> runs -> process -> evaluate -> fitness -> elitism
-    -> selection -> mutation
+    -> selection -> mutation -> weight_mutation
 
 Nothing is left scattered across a folder afterwards. The population, every
 setting the sweep ran under, every seed, every generated script, every
@@ -89,6 +89,7 @@ from search import elitism
 from search import generate_population
 from search import mutation
 from search import selection
+from search import weight_mutation
 from storage import add_dataset
 from storage import db_datasets
 from storage import store
@@ -191,6 +192,8 @@ def new_sweep(conn, label):
         conf["SELECTION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
     if conf.get("MUTATION_MASTER_SEED") is None:
         conf["MUTATION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
+    if conf.get("WEIGHT_MUTATION_MASTER_SEED") is None:
+        conf["WEIGHT_MUTATION_MASTER_SEED"] = random.randrange(_SEED_LIMIT)
 
     run_id = store.create_run(conn, template=conf.get("TEMPLATE") or "template_code.py",
                               label=label)
@@ -1066,6 +1069,46 @@ def step_mutation(context):
         print("re-derive and re-earn: python start_run.py trees runs, then process")
 
 
+def step_weight_mutation(context):
+    """Mutate the weights of everything but the elite -> chromosome, has_changed."""
+    conn, run_id = context.conn, context.run_id
+    rate = context.conf.get("WEIGHT_MUTATION_RATE", config.WEIGHT_MUTATION_RATE)
+    if not 0.0 <= rate <= 1.0:
+        raise SystemExit("WEIGHT_MUTATION_RATE is %r; it is the share of all the "
+                         "population's weights moved per round and has to be "
+                         "between 0.0 and 1.0" % rate)
+
+    master = _master_seed(context, "WEIGHT_MUTATION_MASTER_SEED")
+    before = store.individuals(conn, run_id)
+    if not before:
+        raise SystemExit("run %d holds no individuals. Run the population step first."
+                         % run_id)
+
+    # Dated by the high-water number, as mutation's generator is. The prefix
+    # keeps the two streams apart when both master seeds hold the same value.
+    rng = random.Random("weights:%s:%d" % (master, store.high_number(conn, run_id)))
+    changes, rows = weight_mutation.apply(conn, run_id, rate, rng)
+
+    elite = [row["number"] for row in rows if row["is_best"]]
+    pool = weight_mutation.pool_size(rows)
+    drawn = weight_mutation.draw_count(rate, pool)
+    context.count(len(rows) - len(elite), "individuals", skipped=len(elite))
+    print("rate %.3f of %d weight(s) across %d of %d individual(s): %d drawn%s"
+          % (rate, pool, len(rows) - len(elite), len(rows), drawn,
+             " (#%s is the elite and is left alone)"
+             % ", #".join(str(number) for number in elite) if elite else ""))
+    if changes:
+        print("    %-4s %-7s %s" % ("#", "weights", "chromosome"))
+        for change in changes:
+            print("    %-4d %-7d %s" % (change.number, change.weights, change.before))
+            print("    %-4s %-7s %s" % ("", "->", change.after))
+    print("re-weighted %d individual(s); has_changed is set on each and never "
+          "cleared here" % len(changes))
+    if changes:
+        print("their fitness is cleared; re-derive and re-earn: "
+              "python start_run.py trees runs, then process")
+
+
 Step = namedtuple("Step", "name run description")
 
 STEPS = [
@@ -1098,6 +1141,10 @@ STEPS = [
     # Leaves the elite alone, so the best result found so far survives intact.
     Step("mutation", step_mutation,
          "point-mutate every other chromosome -> chromosome, has_changed"),
+    # After mutation, because it only ever raises has_changed: running first
+    # would let mutation write 0 over an individual this step re-weighted.
+    Step("weight_mutation", step_weight_mutation,
+         "swap a share of all the non-elite weights -> chromosome, has_changed"),
 ]
 
 
@@ -1114,7 +1161,7 @@ STEPS = [
 # with. That is the state store.py --export, the HTML report and
 # test_run_with_dataset.py all want, and the state a sweep used to have to be
 # walked back into by re-running `trees runs process evaluate`.
-NEXT_GENERATION = ("elitism", "selection", "mutation")
+NEXT_GENERATION = ("elitism", "selection", "mutation", "weight_mutation")
 
 
 def without_next_generation(steps):
@@ -1285,7 +1332,7 @@ def main(argv=None):
 
     if args.list:
         for step in STEPS:
-            print("%-12s %s" % (step.name, step.description))
+            print("%-15s %s" % (step.name, step.description))
         return 0
 
     if args.evaluators:
