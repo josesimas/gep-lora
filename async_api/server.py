@@ -19,6 +19,7 @@ Jobs
     GET    /jobs/{id}                      the job and everything its run produced
     GET    /jobs/{id}/status               status, queue position, progress
     GET    /jobs/{id}/log[?lines=200]      the tail of main.py's console output
+    GET    /jobs/{id}/database             the job's sweep database (job<id>_<label>.sqlite3)
     GET    /jobs/{id}/individuals/{n}      one individual and its transcript
     POST   /jobs/{id}/cancel               cancel a queued or running job
     DELETE /jobs/{id}/run                  delete what the run produced; keep the job
@@ -51,6 +52,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -65,6 +67,15 @@ from async_api import submit
 # A page that exercises every endpoint, served at / and /demo. Same origin as
 # the API, so it needs no CORS; it holds no secrets of its own.
 DEMO_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo.html")
+
+
+class FileReply:
+    """A download: a file on disk, sent as an attachment and then removed."""
+
+    def __init__(self, path, filename, content_type="application/octet-stream"):
+        self.path = path
+        self.filename = filename
+        self.content_type = content_type
 
 
 class ApiError(Exception):
@@ -147,6 +158,24 @@ class App:
         job = self.own_job(user, job_id)
         return 200, {"job": job_json(self, job),
                      "progress": results.progress(self.registry.database(job), job["run_id"])}
+
+    def job_database(self, user, job_id):
+        """The job's sweep database, as a snapshot, for download."""
+        job = self.own_job(user, job_id)
+        handle, path = tempfile.mkstemp(prefix="gep-job%d-" % job_id, suffix=".sqlite3")
+        os.close(handle)
+        os.remove(path)                  # store.connect() makes it, with the schema
+        try:
+            results.snapshot(self.registry.database(job), path)
+        except results.NoResults:
+            raise ApiError(404, "job %d has no database; its run was deleted" % job_id)
+        except BaseException:
+            if os.path.exists(path):
+                os.remove(path)
+            raise
+        label = re.sub(r"[^A-Za-z0-9._-]+", "_", job["label"] or "").strip("_")
+        name = "job%d%s.sqlite3" % (job_id, "_" + label if label else "")
+        return 200, FileReply(path, name, "application/vnd.sqlite3")
 
     def job_log(self, user, job_id, query):
         job = self.own_job(user, job_id)
@@ -299,6 +328,7 @@ ROUTES = [
     ("GET", r"/jobs/(\d+)", "job_detail", ()),
     ("GET", r"/jobs/(\d+)/status", "job_status", ()),
     ("GET", r"/jobs/(\d+)/log", "job_log", ("query",)),
+    ("GET", r"/jobs/(\d+)/database", "job_database", ()),
     ("GET", r"/jobs/(\d+)/individuals/(\d+)", "job_individual", ()),
     ("POST", r"/jobs/(\d+)/cancel", "cancel_job", ()),
     ("DELETE", r"/jobs/(\d+)/run", "delete_run", ()),
@@ -374,6 +404,8 @@ class Handler(BaseHTTPRequestHandler):
                 if "query" in extras:
                     args.append(parse_qs(url.query))
                 status, payload = getattr(self.app, name)(*args)
+                if isinstance(payload, FileReply):
+                    return self._file(payload)
                 return self._send(status, payload)
             if matched_path:
                 raise ApiError(405, "%s is not allowed on %s" % (self.command, path))
@@ -386,6 +418,18 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": "%s: %s" % (type(error).__name__, error)})
 
     do_GET = do_POST = do_DELETE = do_PUT = do_PATCH = _dispatch
+
+    def _file(self, reply):
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", reply.content_type)
+            self.send_header("Content-Length", str(os.path.getsize(reply.path)))
+            self.send_header("Content-Disposition", 'attachment; filename="%s"' % reply.filename)
+            self.end_headers()
+            with open(reply.path, "rb") as handle:
+                shutil.copyfileobj(handle, self.wfile, 1024 * 1024)
+        finally:
+            os.remove(reply.path)
 
     def _page(self, path):
         with open(path, "rb") as handle:

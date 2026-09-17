@@ -8,6 +8,7 @@ job. The rest are the refusals.
 """
 
 import json
+import os
 import sys
 import threading
 import time
@@ -18,6 +19,7 @@ from async_api import inference
 from async_api import registry as reg
 from async_api import server
 from async_api import worker
+from storage import store
 
 from unittests.async_api.support import JobsTestCase
 
@@ -37,6 +39,16 @@ class ServerTestCase(JobsTestCase):
         self.server.server_close()
         self.app.cache.close()
         super().tearDown()
+
+    def download(self, path, key=None):
+        """-> (status, headers, body bytes)."""
+        request = urllib.request.Request(
+            self.base + path, headers={"Authorization": "Bearer " + (key or self.key)})
+        try:
+            with urllib.request.urlopen(request, timeout=60) as reply:
+                return reply.status, reply.headers, reply.read()
+        except urllib.error.HTTPError as error:
+            return error.code, error.headers, error.read()
 
     def call(self, method, path, body=None, key=None, headers=None, raw=False):
         request = urllib.request.Request(
@@ -102,6 +114,23 @@ class WholeJobTests(ServerTestCase):
         self.assertTrue(events.startswith("data: "))
         self.assertTrue(events.rstrip().endswith("data: {}"))
 
+        # The database downloads whole, as a sweep store.py can read back.
+        status, headers, body = self.download("/jobs/%d/database" % job_id)
+        self.assertEqual(status, 200)
+        self.assertIn('filename="job%d_test.sqlite3"' % job_id, headers["Content-Disposition"])
+        self.assertTrue(body.startswith(b"SQLite format 3"))
+        copy = os.path.join(self.folder, "downloaded.sqlite3")
+        with open(copy, "wb") as handle:
+            handle.write(body)
+        conn = store.connect(copy)
+        try:
+            self.assertEqual(len(store.individuals(conn, reply["job"]["run_id"])), 4)
+            self.assertEqual(len(store.fitness_by_generation(conn, reply["job"]["run_id"])), 2)
+        finally:
+            conn.close()
+        self.assertEqual(self.download("/jobs/%d/database" % job_id,
+                                       key=self.registry.add_user("carol"))[0], 404)
+
         self.assertEqual(len(self.call("GET", "/live")[1]["live"]), 1)
         self.assertEqual(self.call("DELETE", "/jobs/%d/live" % job_id)[1], {"unset": 1})
         self.assertEqual(self.call("POST", "/infer", {"token": token, "prompt": "x"})[0], 401)
@@ -109,6 +138,7 @@ class WholeJobTests(ServerTestCase):
         status, reply = self.call("DELETE", "/jobs/%d/run" % job_id)
         self.assertEqual(reply["job"]["status"], reg.DELETED)
         self.assertIsNone(self.call("GET", "/jobs/%d" % job_id)[1]["results"])
+        self.assertEqual(self.download("/jobs/%d/database" % job_id)[0], 404)
 
         self.assertEqual(self.call("DELETE", "/jobs/%d" % job_id)[0], 200)
         self.assertEqual(self.call("GET", "/jobs/%d" % job_id)[0], 404)

@@ -174,6 +174,7 @@
       <button id="aUnset">Unset live</button>
       <button id="aDeleteRun" class="danger">Delete run</button>
       <button id="aDeleteJob" class="danger">Delete job</button>
+      <button id="aDownload" title="A snapshot of job.sqlite3: settings, dataset, population, transcripts, scores">Download database</button>
       <button id="aRefresh">Refresh</button>
     </div>
     <div id="detailMsg" class="msg"></div>
@@ -704,6 +705,7 @@ async function drawDetail() {
   $("aUnset").disabled = !detail.live.length;
   $("aDeleteRun").disabled = !FINISHED.includes(job.status) || job.status === "deleted";
   $("aDeleteJob").disabled = !FINISHED.includes(job.status);
+  $("aDownload").disabled = job.status === "deleted" || job.status === "preparing";
 
   const progress = status.progress || {};
   const results = detail.results;
@@ -835,6 +837,36 @@ async function act(label, method, path, after) {
   if (selected !== null) drawDetail();
 }
 
+// A link cannot carry the API key, so the file is fetched and then saved.
+async function downloadDatabase() {
+  const jobId = selected;
+  say("detailMsg", "Preparing the database…");
+  $("aDownload").disabled = true;
+  try {
+    const response = await fetch(`/jobs/${jobId}/database`, { headers: { "Authorization": "Bearer " + key } });
+    if (!response.ok) {
+      let message = response.status + " " + response.statusText;
+      try { message = (await response.json()).error; } catch (_) { /* not JSON */ }
+      throw new Error(message);
+    }
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const name = (disposition.match(/filename="([^"]+)"/) || [, `job${jobId}.sqlite3`])[1];
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = el("a", { href: url, download: name });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    const size = blob.size < 1048576 ? `${(blob.size / 1024).toFixed(0)} KB` : `${(blob.size / 1048576).toFixed(1)} MB`;
+    say("detailMsg", `Downloaded ${name} (${size}). Open it with: python -m storage.store --db ${name} --show 0`, "ok");
+  } catch (error) {
+    say("detailMsg", error.message, "err");
+  } finally {
+    $("aDownload").disabled = false;
+  }
+}
+
 async function goLive(number) {
   say("detailMsg", "Setting live…");
   try {
@@ -952,6 +984,7 @@ $("aDeleteJob").addEventListener("click", () => {
     act("Delete job", "DELETE", `/jobs/${selected}`, () => { selected = null; $("detailSection").hidden = true; });
 });
 $("aRefresh").addEventListener("click", drawDetail);
+$("aDownload").addEventListener("click", downloadDatabase);
 $("ask").addEventListener("click", ask);
 
 $("key").value = recall("key");

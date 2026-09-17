@@ -2522,7 +2522,7 @@ that drives every endpoint -- paste the key, submit a job from a settings form
 built from `GET /settings` (the server's own values, with only what you change
 sent; *Quick demo* is a one-generation mocked sweep, done in seconds; training and
 testing questions come from a shared file, a file you upload, or pasted lines),
-watch it run, read its population,
+watch it run, download its database, read its population,
 fitness chart, transcripts and log, set an individual live, stream answers in either
 format, unset and delete. It is `async_api/demo.html`, one file with no dependencies.
 
@@ -2569,6 +2569,7 @@ are refused with a 400 before anything is queued.
 | `GET /jobs/{id}` | the job and its results: population, best, fitness history, testing, costs |
 | `GET /jobs/{id}/status` | status, queue position, generations scored so far |
 | `GET /jobs/{id}/log` | the tail of `job.log` |
+| `GET /jobs/{id}/database` | the job's `job.sqlite3`, as a consistent snapshot (sqlite's backup), even while it runs |
 | `GET /jobs/{id}/individuals/{n}` | one individual and its transcript |
 | `POST /jobs/{id}/cancel` | a queued job at once; a running one within a poll |
 | `DELETE /jobs/{id}/run` | delete what the run produced, keep the job listed as `deleted` |

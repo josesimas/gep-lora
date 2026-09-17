@@ -63,6 +63,26 @@ def progress(db_path, run_id):
         conn.close()
 
 
+def snapshot(db_path, destination):
+    """Copy a job's database to `destination`, consistently. -> its size in bytes.
+
+    Through sqlite's backup rather than a file copy, so a job the worker is
+    still writing to comes out as the database it was at one moment, not a file
+    caught half way through a transaction. The destination is opened through
+    store.connect() -- the backup replaces everything in it, schema included.
+    """
+    source = _open(db_path)
+    try:
+        target = store.connect(destination)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
+    return os.path.getsize(destination)
+
+
 def run_status(db_path, run_id):
     """The sweep's own status column (open | done | failed), or None."""
     try:
