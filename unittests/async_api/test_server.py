@@ -7,6 +7,8 @@ the endpoints are only worth anything if they agree with each other about a
 job. The rest are the refusals.
 """
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -16,6 +18,7 @@ import urllib.error
 import urllib.request
 
 from async_api import inference
+import start_run
 from async_api import registry as reg
 from async_api import server
 from async_api import worker
@@ -216,5 +219,126 @@ class CancelTests(ServerTestCase):
         status, reply = self.call("POST", "/jobs/%d/cancel" % job_id)
         self.assertEqual(status, 202, reply)
         runner.join(timeout=60)
-        self.assertEqual(finished, [reg.CANCELLED])
-        self.assertEqual(self.registry.job(job_id)["status"], reg.CANCELLED)
+        # Stopped, not cancelled: it had started, and can carry on from there.
+        self.assertEqual(finished, [reg.STOPPED])
+        job = self.call("GET", "/jobs/%d/status" % job_id)[1]["job"]
+        self.assertEqual(job["status"], reg.STOPPED)
+        self.assertTrue(job["resumable"])
+
+
+class ResumeTests(ServerTestCase):
+    """Stopping a search, carrying it on, and grading what it holds afterwards."""
+
+    def stopped_job(self):
+        """A job whose search stopped in its second generation, just after process.
+
+        Driven a step at a time in this process rather than killed at a moment
+        a test cannot choose: what matters to a resume is what the database
+        holds, and this is what a stop there leaves in it.
+        """
+        body = self.submission(GENERATIONS=2, EVALUATOR="heuristic")
+        job_id = self.call("POST", "/jobs", body)[1]["job"]["id"]
+        job = self.registry.claim_next()
+        where = ["--db", self.registry.database(job), "--run", str(job["run_id"]), "--from-db"]
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(start_run.main(["--next-generation"] + where), 0)
+            self.assertEqual(start_run.main(["trees", "runs", "process"] + where), 0)
+        self.registry.finish(job_id, reg.STOPPED, error="stopped")
+        return job_id, job
+
+    def processed(self, job):
+        """How many individuals each process step ran, pass by pass."""
+        conn = store.connect(self.registry.database(job))
+        try:
+            return [row["items"] for row in store.step_timings(conn, job["run_id"])
+                    if row["step"] == "process"]
+        finally:
+            conn.close()
+
+    def test_a_stopped_job_carries_on_from_where_it_stopped(self):
+        job_id, job = self.stopped_job()
+        status, reply = self.call("POST", "/jobs/%d/resume" % job_id)
+        self.assertEqual(status, 200, reply)
+        self.assertEqual((reply["job"]["status"], reply["job"]["task"]), (reg.QUEUED, "resume"))
+        self.assertEqual(self.call("POST", "/jobs/%d/resume" % job_id)[0], 409)
+
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+        status = self.call("GET", "/jobs/%d/status" % job_id)[1]
+        self.assertEqual(status["job"]["status"], reg.DONE,
+                         self.call("GET", "/jobs/%d/log" % job_id)[1])
+        self.assertEqual(status["progress"]["generations_scored"], 3)
+        # Generation 2 had been through process before the stop, so the pass
+        # that finished it ran nobody again; the one after it ran the rest.
+        runs = self.processed(job)
+        self.assertEqual(len(runs), 4)
+        self.assertEqual(runs[2], 0)
+        self.assertTrue(self.call("GET", "/jobs/%d" % job_id)[1]["results"]["testing"]["summary"])
+        # Finished: nothing left to resume.
+        self.assertEqual(self.call("POST", "/jobs/%d/resume" % job_id)[0], 409)
+
+    def test_a_job_is_evaluated_again_without_moving_its_search(self):
+        job_id, job = self.stopped_job()
+        status, form = self.call("GET", "/jobs/%d/evaluate" % job_id)
+        self.assertEqual(status, 200, form)
+        self.assertEqual((form["evaluator"], form["asks_judge"]), ("heuristic", False))
+        self.assertGreater(form["answers"], 0)
+        self.assertTrue(form["can_evaluate"])
+        self.assertEqual(self.call("POST", "/jobs/%d/evaluate" % job_id,
+                                   {"judge_backend": "nowhere"})[0], 400)
+        self.assertEqual(self.call("POST", "/jobs/%d/evaluate" % job_id,
+                                   {"evaluator": "llm_judge"})[0], 400)
+
+        status, reply = self.call("POST", "/jobs/%d/evaluate" % job_id, {"force": True})
+        self.assertEqual(status, 200, reply)
+        self.assertEqual(self.call("POST", "/jobs/%d/evaluate" % job_id, {})[0], 409)
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+
+        # Graded, and still where it stopped: generation 2 has been processed,
+        # so its fitness was taken -- and nothing was bred from it.
+        status = self.call("GET", "/jobs/%d/status" % job_id)[1]
+        self.assertEqual(status["job"]["status"], reg.STOPPED,
+                         self.call("GET", "/jobs/%d/log" % job_id)[1])
+        self.assertTrue(status["job"]["resumable"])
+        self.assertEqual(status["progress"]["generations_scored"], 2)
+        self.assertEqual(status["progress"]["unscored"], 0)
+        conn = store.connect(self.registry.database(job))
+        try:
+            judges = {row["judge_model"] for row in store.exchanges_to_score(
+                conn, job["run_id"], True)}
+        finally:
+            conn.close()
+        self.assertEqual(len(judges), 1)
+        self.assertNotIn("mock", judges.pop())
+
+        # And the resume after it picks up at the tail of generation 2.
+        self.call("POST", "/jobs/%d/resume" % job_id)
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+        status = self.call("GET", "/jobs/%d/status" % job_id)[1]
+        self.assertEqual(status["job"]["status"], reg.DONE)
+        self.assertEqual(status["progress"]["generations_scored"], 3)
+
+    def test_a_job_cancelled_before_it_started_resumes_from_the_top(self):
+        job_id = self.call("POST", "/jobs", self.submission())[1]["job"]["id"]
+        self.assertEqual(self.call("POST", "/jobs/%d/cancel" % job_id)[1]["job"]["status"],
+                         reg.CANCELLED)
+        # No script has run, so there is nothing to grade.
+        status, reply = self.call("POST", "/jobs/%d/evaluate" % job_id, {})
+        self.assertEqual(status, 400)
+        self.assertIn("Resume", reply["error"])
+        self.assertEqual(self.call("POST", "/jobs/%d/resume" % job_id)[0], 200)
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+        status = self.call("GET", "/jobs/%d/status" % job_id)[1]
+        self.assertEqual(status["job"]["status"], reg.DONE,
+                         self.call("GET", "/jobs/%d/log" % job_id)[1])
+        self.assertEqual(status["progress"]["generations_scored"], 2)
+
+    def test_a_queued_evaluation_cancelled_leaves_the_job_done(self):
+        job_id = self.call("POST", "/jobs", self.submission())[1]["job"]["id"]
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+        self.assertEqual(self.call("POST", "/jobs/%d/evaluate" % job_id, {})[0], 200)
+        # Not live while it is queued again, and back to done once taken out.
+        self.assertEqual(self.call("POST", "/jobs/%d/live" % job_id, {})[0], 409)
+        status, reply = self.call("POST", "/jobs/%d/cancel" % job_id)
+        self.assertEqual(status, 200, reply)
+        self.assertEqual(reply["job"]["status"], reg.DONE)
+        self.assertEqual(self.call("POST", "/jobs/%d/live" % job_id, {})[0], 201)

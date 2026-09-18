@@ -23,10 +23,14 @@ class NoResults(LookupError):
     """The job's database is not on disk."""
 
 
-def _open(db_path):
+def connect(db_path):
+    """A connection to a job's database that is already there. Raises NoResults."""
     if not db_path or not os.path.exists(db_path):
         raise NoResults(db_path)
     return store.connect(db_path)
+
+
+_open = connect
 
 
 def _dict(row):
@@ -41,7 +45,13 @@ def _weights(text):
 
 
 def progress(db_path, run_id):
-    """How far the search has got. -> {generations, expected, steps, last_step}."""
+    """How far the search has got. -> {generations, expected, steps, last_step,
+    answers, unscored}.
+
+    `answers` is every answer of each individual's latest execution and
+    `unscored` the ones still without a quality: what a search stopped
+    between process and fitness leaves behind, and what an evaluation grades.
+    """
     try:
         conn = _open(db_path)
     except NoResults:
@@ -53,6 +63,8 @@ def progress(db_path, run_id):
         last = steps[-1] if steps else None
         tested = store.test_summary(conn, run_id)
         return {"generations_scored": generations,
+                "answers": len(store.exchanges_to_score(conn, run_id, True)),
+                "unscored": len(store.exchanges_to_score(conn, run_id, False)),
                 "generations_expected": 1 + int(conf.get("GENERATIONS") or 0),
                 "steps_run": len(steps),
                 "last_step": None if last is None else {

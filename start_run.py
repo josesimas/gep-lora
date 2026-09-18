@@ -409,12 +409,25 @@ def step_process(context):
     # question, so it is exactly what decides. An individual that has never run
     # is not "unchanged" -- there is nothing to have changed from -- so a fresh
     # population, and every copy selection appends, still runs in full.
+    #
+    # has_changed is set by mutation and stays set until the next round, so it
+    # still says "changed" about an individual this generation has already run.
+    # A generation interrupted half way through process -- a stopped job, a
+    # killed driver -- would then run those again on resuming. So an
+    # individual whose latest execution finished cleanly *and* built exactly
+    # the blend it holds now (the chromosome its script printed, the weight
+    # seed it drew under) is as unchanged as has_changed = 0 says. Only a clean
+    # one: a crash or a timeout in an interrupted pass may be the interruption.
     done = store.executed(conn, run_id)
+    current = {row["id"] for row in store.latest_runs(conn, run_id)
+               if row["verdict"] == "ok" and row["ran_seed"] == row["weight_seed"]
+               and process_run.expression(row["head"]) == row["chromosome"]}
     if options.include_unchanged:
         selected, unchanged = runnable, []
     else:
         selected = [row for row in runnable
-                    if row["has_changed"] or row["id"] not in done]
+                    if (row["has_changed"] and row["id"] not in current)
+                    or row["id"] not in done]
         keep = {row["id"] for row in selected}
         unchanged = [row for row in runnable if row["id"] not in keep]
 

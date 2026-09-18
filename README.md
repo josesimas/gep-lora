@@ -789,6 +789,19 @@ to have changed from. A fresh population therefore runs in full, and so does
 every copy `selection` appends, since a copy has no executions of its own
 however its flags read.
 
+**Nor is one this generation has already run.** `has_changed` stays set from
+mutation until the next round, so on its own it would still call a mutant
+"changed" after process had run it -- and a generation interrupted half way
+through process would run those again on [resuming](#stopping-and-carrying-on----resume-and---evaluate).
+So an individual whose latest execution finished cleanly *and* built exactly the
+blend it holds now is skipped as well: the chromosome its script printed on its
+first line (`Individual 7: CAT.L1.L2.w1.w3`, read back by
+`process_run.expression()`) is the one it holds, and the weight seed it drew
+under is its own. Only a clean one -- a crash or a timeout in an interrupted
+pass may *be* the interruption, so those run again. In an uninterrupted run
+this changes nothing: a mutant's latest execution is always of the chromosome it
+had before mutation.
+
 That is what keeps a long run affordable. Over four generations from a
 population of 3:
 
@@ -1955,6 +1968,65 @@ The pass runs only if the search itself finished — a half-finished sweep's bes
 individual is not what the search found. If the search finishes and the pass
 does not, that is said in as many words and the exit code is the pass's.
 
+#### Stopping and carrying on — `--resume` and `--evaluate`
+
+```bash
+python main.py --db <sweep.sqlite3> --run 1 --resume
+python main.py --db <sweep.sqlite3> --run 1 --evaluate [--force] [--set JUDGE_BASE_URL='"http://..."']
+```
+
+**Any sweep can be carried on from wherever it stopped** -- a Ctrl+C, a crash, a
+cancelled API job, a machine switched off. `--resume` reads how far it got out
+of the database (`where_it_stopped()`), finishes the generation it stopped in,
+runs the generations it has left through `continue_run.py`, and then the testing
+pass. Two records say how far, and both are written as the search goes, so a
+kill at any moment leaves them true:
+
+- `fitness_history` -- how many generations were **scored**;
+- `step_timings` -- which steps **finished** since the last snapshot, which is
+  the only way to tell a population about to be bred from one that already has
+  been.
+
+The second matters because the tail (`elitism`, `selection`, `mutation`,
+`weight_mutation`) is the half that is not safe to run twice: selection is
+another round every time, and mutation mutates again. So a sweep resting on a
+snapshot with part of the tail done runs only the rest of the tail. Everything
+before `fitness` *is* safe to repeat, so a sweep stopped inside a generation
+starts that generation again from `trees`: `trees` and `runs` re-derive,
+`process` skips whatever already ran as it is (see the process step above),
+`evaluate` skips what is scored, and `fitness` records the generation once. A
+failed step is not a finished one; a sweep with no population yet is simply run,
+the way a prepared one is; one whose search is complete goes straight to the
+testing pass, which is resumed too (`test_run_with_dataset.py --resume`:
+individuals already tested cleanly are not tested again).
+
+The questions come from the sweep's stored rows when it holds them, as an
+adopted sweep's do, so a resumed sweep asks what it asked before whatever the
+files say now. `--set` is written into the sweep before anything is planned, so
+`--set GENERATIONS=5 --resume` extends a search.
+
+**`--evaluate` grades the answers a sweep already holds** -- the ungraded ones,
+or all of them with `--force` -- without moving the search along. It is for a
+judge that was down, has moved (`--set JUDGE_BASE_URL=...`, `JUDGE_MODEL`,
+`JUDGE_BACKEND`, written into the sweep so it still says what graded it), or is
+worth asking again. The rubric is the sweep's own `EVALUATOR`: a fitness is only
+comparable with the others when one rubric earned it, so another rubric belongs
+to a [verification](#verification--is-the-blend-better-than-the-loras-in-it),
+which leaves the sweep alone.
+
+Whether fitness follows is decided by where the sweep stopped, because a
+fitness taken at the wrong moment is a generation in the history that never
+happened:
+
+| Where it stopped | `--evaluate` runs |
+|---|---|
+| search complete, or resting on a snapshot before selection | `evaluate`, `fitness` (restating that generation), and `elitism` if it had already run |
+| inside a generation that has been through `process` | `evaluate`, `fitness` -- exactly what came next |
+| anywhere else (bred since the snapshot, or not all run) | `evaluate` alone; the resume takes fitness from there |
+
+Then the testing pass's stored answers, `--score-only`, if it has any. A resume
+after an evaluation carries on from the steps the evaluation recorded.
+
 #### Running a database that is already a sweep
 
 ```bash
@@ -2033,8 +2105,8 @@ scripts, the transcripts and the questions are all in the database.
 
 Two things are refused rather than guessed past. **A sweep that already holds
 individuals**: `population` appends, so joining a started search would draw a
-second population beside the first — the message points at `continue_run.py
---from-db`, which is what carries one of those on. Only `--run` can reach that
+second population beside the first — the message points at `main.py
+--resume`, which carries one of those on from wherever it got to. Only `--run` can reach that
 refusal, since a sweep with a population is never adopted on its own. And
 **`--run` together with `--label`**, which names a sweep as it is created; that
 one already exists, so label it when you prepare the database. A `--db` that
@@ -2405,7 +2477,14 @@ load:
 python -m testing.test_run_with_dataset testing.json --no-score      # answers only
 python -m testing.test_run_with_dataset testing.json --score-only    # grade them later
 python -m testing.test_run_with_dataset testing.json --score-only --force --evaluator similarity
+python -m testing.test_run_with_dataset testing.json --resume        # carry an interrupted pass on
 ```
+
+`--resume` is for a pass that was stopped part way: `test_results` is appended
+to, so running it again whole would store a second row for every individual it
+had already reached. With it, an individual already tested cleanly on that
+dataset, as the chromosome its script builds now, is left alone; the rest run,
+and the scoring grades every row still ungraded. `main.py --resume` passes it.
 
 Scoring is resumable the way the evaluate step is — an answer that already has a
 quality is left alone unless `--force` — so an interrupted judge, a judge that
@@ -2692,7 +2771,10 @@ are refused with a 400 before anything is queued.
 | `GET /jobs/{id}/log` | the tail of `job.log` |
 | `GET /jobs/{id}/database` | the job's `job.sqlite3`, as a consistent snapshot (sqlite's backup), even while it runs |
 | `GET /jobs/{id}/individuals/{n}` | one individual and its transcript |
-| `POST /jobs/{id}/cancel` | a queued job at once; a running one within a poll |
+| `POST /jobs/{id}/cancel` | a queued job at once; a running one is **stopped** within a poll, and can be resumed |
+| `POST /jobs/{id}/resume` | queue a `stopped`, `cancelled` or `failed` job again, to carry on from where it got to |
+| `GET /jobs/{id}/evaluate` | what grading its answers again would do: the evaluator, the judge, how many answers and how many ungraded |
+| `POST /jobs/{id}/evaluate` | queue it to grade the answers it holds: `{"force"?, "judge_backend"?, "judge_model"?, "judge_base_url"?}` |
 | `DELETE /jobs/{id}/run` | delete what the run produced, keep the job listed as `deleted` |
 | `DELETE /jobs/{id}` | delete the job and its folder |
 | `GET /jobs/{id}/verify` | what a verification may ask for (the blends, their slots, the splits, the evaluators) and the job's verifications so far |
@@ -2703,6 +2785,41 @@ are refused with a 400 before anything is queued.
 | `GET /jobs/{id}/live`, `GET /live` | live deployments |
 | `DELETE /jobs/{id}/live`, `DELETE /live/{id}` | unset for inference |
 | `POST /infer` | `{"token", "prompt", "max_new_tokens"?}` -> the answer, streamed |
+
+### Stopping, resuming, and grading later
+
+**Every job can be stopped and carried on.** Cancelling a running job *stops*
+it: the worker kills `main.py` and marks the job `stopped` rather than
+`cancelled`, because what it did is in its database and
+[`main.py --resume`](#stopping-and-carrying-on----resume-and---evaluate) carries
+it on from exactly there. `POST /jobs/{id}/resume` puts a `stopped`, `cancelled`
+or `failed` job back in the queue with `task: "resume"`; the worker then runs
+`main.py --db <job.sqlite3> --run <id> --resume`, appending to the same
+`job.log`. A job cancelled before it ever started is resumed from the top; a
+job left running by a worker that died is marked `failed` when the next worker
+starts, and is resumable like any other.
+
+**Its answers can be graded later.** `POST /jobs/{id}/evaluate` puts a job that
+has stopped with answers in it (`done`, or resumable) back in the queue with
+`task: "evaluate"`, and the worker runs `main.py --evaluate` over it --
+`--force` to grade every answer again, and `--set` for a judge that has moved.
+The rubric stays the sweep's own `EVALUATOR`. Grading does not move a search,
+so the job ends where its search is: `done` if every generation was scored,
+`stopped` (and resumable) if not, with any failure of the grading in `error`.
+`async_api/evaluate.py` owns the API's half, the way `verify.py` does for
+verifications.
+
+A requeued job keeps its id, and with it its place in the queue. Cancelling a
+resume or an evaluation before the worker gets to it puts the job back as it
+was (a `done` job stays `done` and can still go live); cancelling one that is
+running stops it -- a resume ends `stopped` again, an evaluation where its
+search is.
+
+On the page, the job's actions carry **Stop** (a running job) or **Cancel** (a
+queued one), **Resume**, and **Evaluate…**, which opens a small form: the
+evaluator it will grade with, how many answers are still ungraded, where the
+judge is, and whether to grade everything again. The tiles show answers graded
+so far, which is the number that says an evaluation is worth asking for.
 
 ### Verification — is the blend better than the LoRAs in it?
 

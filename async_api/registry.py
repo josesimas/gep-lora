@@ -6,7 +6,10 @@ One small sqlite file, `<JOBS_DIR>/jobs.sqlite3`, beside the job folders:
     users        a name and the hash of its API key
     jobs         one submitted sweep: its owner, its status, and the folder
                  holding its database. `id` is arrival order, which is the
-                 order the worker takes them in.
+                 order the worker takes them in. `task` is what the worker is
+                 to do with it next -- run the search, resume it, or evaluate
+                 its answers -- since a job goes back into the queue for the
+                 last two (see requeue()).
     deployments  a job's individual put live: the hash of the token that
                  reaches it, where it went, and the blend spec it serves
     verifications  a blend of a finished job queued to be run beside the LoRAs
@@ -37,10 +40,23 @@ from async_api import settings
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PREPARING = "preparing"
-QUEUED, RUNNING, DONE, FAILED, CANCELLED, DELETED = (
-    "queued", "running", "done", "failed", "cancelled", "deleted")
+QUEUED, RUNNING, DONE, FAILED, CANCELLED, STOPPED, DELETED = (
+    "queued", "running", "done", "failed", "cancelled", "stopped", "deleted")
 # A job in one of these will never change again on its own.
-FINISHED = (DONE, FAILED, CANCELLED, DELETED)
+FINISHED = (DONE, FAILED, CANCELLED, STOPPED, DELETED)
+# A search that did not get to its end, for whatever reason -- cancelled before
+# it started, stopped while it ran, or failed -- and can be carried on from
+# where it got to: the sweep database says how far that was.
+RESUMABLE = (STOPPED, CANCELLED, FAILED)
+# What the worker does with a job it claims. `search` runs the prepared sweep
+# from the top; `resume` carries a started one on; `evaluate` grades the
+# answers it already holds. See worker.command().
+SEARCH, RESUME, EVALUATE = "search", "resume", "evaluate"
+TASKS = (SEARCH, RESUME, EVALUATE)
+# Which statuses each requeued task may be asked of: resuming a finished
+# search has nothing left to do, and evaluating asks only for answers, which a
+# finished search has and a stopped one may.
+REQUEUE_FROM = {RESUME: RESUMABLE, EVALUATE: (DONE,) + RESUMABLE}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -64,7 +80,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     cancel_requested INTEGER NOT NULL DEFAULT 0,
     pid              INTEGER,                 -- main.py's, while running
     exit_code        INTEGER,
-    error            TEXT
+    error            TEXT,
+    task             TEXT NOT NULL DEFAULT 'search',  -- search | resume | evaluate
+    task_options     TEXT NOT NULL DEFAULT '{}',      -- JSON, the task's own
+    requeued_from    TEXT                     -- the status a requeue took it from
 );
 
 CREATE TABLE IF NOT EXISTS deployments (
@@ -127,6 +146,20 @@ class Registry:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    # Columns added after a registry may already have been written. CREATE
+    # TABLE IF NOT EXISTS leaves an existing table as it is, so each is added
+    # here, once, with the default a job from before it existed means.
+    ADDED = (("jobs", "task", "TEXT NOT NULL DEFAULT 'search'"),
+             ("jobs", "task_options", "TEXT NOT NULL DEFAULT '{}'"),
+             ("jobs", "requeued_from", "TEXT"))
+
+    def _migrate(self, conn):
+        for table, column, declaration in self.ADDED:
+            held = {row["name"] for row in conn.execute("PRAGMA table_info(%s)" % table)}
+            if column not in held:
+                conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, declaration))
 
     def _connect(self):
         conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
@@ -264,23 +297,36 @@ class Registry:
     def finish(self, job_id, status, exit_code=None, error=None):
         with self._connect() as conn:
             conn.execute("UPDATE jobs SET status = ?, finished_at = ?, exit_code = ?,"
-                         " error = ?, pid = NULL WHERE id = ?",
+                         " error = ?, pid = NULL, requeued_from = NULL WHERE id = ?",
                          (status, now(), exit_code, error, job_id))
 
     def request_cancel(self, job_id):
         """-> the job's status after asking.
 
-        A queued job is cancelled on the spot; a running one is flagged, and the
-        worker that holds it kills main.py and marks it. Anything else has
-        nothing to cancel and is returned as it stands.
+        A queued job is cancelled on the spot -- or, when it was queued again
+        to be resumed or evaluated, put back in the status it was queued from.
+        A running one is flagged, and the worker that holds it kills main.py
+        and marks it (stopped, for a search: see worker.run_job). Anything else
+        has nothing to cancel and is returned as it stands.
         """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            row = conn.execute("SELECT status, task, requeued_from FROM jobs WHERE id = ?",
+                               (job_id,)).fetchone()
             if row is None:
                 conn.execute("COMMIT")
                 return None
-            if row["status"] in (QUEUED, PREPARING):
+            if row["status"] == QUEUED and row["requeued_from"]:
+                # A resume or an evaluation not started yet: taking it back out
+                # of the queue leaves the job as it was before it was asked.
+                status = row["requeued_from"]
+                conn.execute("UPDATE jobs SET status = ?, finished_at = ?,"
+                             " requeued_from = NULL, error = ? WHERE id = ?",
+                             (status, now(),
+                              "the %s was cancelled before it started"
+                              % ("evaluation" if row["task"] == EVALUATE else row["task"]),
+                              job_id))
+            elif row["status"] in (QUEUED, PREPARING):
                 conn.execute("UPDATE jobs SET status = 'cancelled', finished_at = ?,"
                              " cancel_requested = 1 WHERE id = ?", (now(), job_id))
                 status = CANCELLED
@@ -291,6 +337,35 @@ class Registry:
                 status = row["status"]
             conn.execute("COMMIT")
         return status
+
+    def requeue(self, job_id, task, task_options=None):
+        """Put a job that has stopped back in the queue for `task`. -> the row,
+        or None when its status does not allow that task.
+
+        Atomic, like a claim, so a resume asked twice queues it once. The job
+        keeps its id, and with it its place: the queue is in arrival order, and
+        it arrived before anything submitted since. What it was taken from is
+        kept in `requeued_from`, so a cancel before the worker gets to it puts
+        it back.
+        """
+        allowed = REQUEUE_FROM[task]
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+                if row is None or row["status"] not in allowed:
+                    conn.execute("COMMIT")
+                    return None
+                conn.execute(
+                    "UPDATE jobs SET status = 'queued', task = ?, task_options = ?,"
+                    " requeued_from = ?, cancel_requested = 0, pid = NULL,"
+                    " exit_code = NULL, error = NULL, finished_at = NULL WHERE id = ?",
+                    (task, json.dumps(task_options or {}), row["status"], job_id))
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.job(job_id)
 
     def cancel_requested(self, job_id):
         row = self.job(job_id)

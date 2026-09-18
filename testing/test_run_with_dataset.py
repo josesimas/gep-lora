@@ -36,6 +36,8 @@ The two halves are separable because only the first costs a base-model load:
 pass stored, `--force` re-grades, and an interrupted scoring run resumes where
 it left off. That is what makes it safe to grade with a judge that may not be
 up yet, or to change your mind about which evaluator a testing set deserves.
+`--resume` does the same for the running half: an individual already tested
+cleanly on the dataset is not run (and stored) a second time.
 
 The scoring half reads the sweep's settings with one substitution -- the eval
 set is the testing dataset (`testing_conf()`), the same swap `repoint()` makes
@@ -646,6 +648,10 @@ def main(argv=None):
                              "dataset; runs nothing")
     parser.add_argument("--force", action="store_true",
                         help="re-score answers that already have a quality")
+    parser.add_argument("--resume", action="store_true",
+                        help="carry on an interrupted pass: skip the individuals "
+                             "already tested cleanly on this dataset as they are "
+                             "now, run the rest, and grade whatever is ungraded")
     args = parser.parse_args(argv)
 
     if args.no_score and args.score_only:
@@ -747,6 +753,29 @@ def main(argv=None):
             "store.py --show %d)." % (run_id, minimum, run_id))
     if args.limit:
         rows = rows[:args.limit]
+
+    # --resume: a pass that was stopped part way already stored a row for each
+    # individual it got through, and test_results is appended to, so running
+    # those again would leave each one tested twice. One tested cleanly, on this
+    # dataset, as the chromosome its script builds now, is left alone; what is
+    # left runs, and the scoring below grades every row still ungraded --
+    # including the ones the interrupted pass stored and never got to grade.
+    if args.resume:
+        tested = {(row["number"], row["chromosome"])
+                  for row in store.test_results(conn, run_id, dataset)
+                  if row["verdict"] == "ok"}
+        left = [row for row in rows
+                if (row["number"], script_chromosome(row["script_source"])
+                    or row["chromosome"]) not in tested]
+        if len(left) < len(rows):
+            print("resuming: %d of %d individual(s) already tested on this dataset"
+                  % (len(rows) - len(left), len(rows)))
+        rows = left
+        if not rows:
+            if not args.no_score:
+                score_pass(conn, run_id, dataset, conf, args, run_dir)
+                report(conn, run_id, dataset)
+            return 0
 
     # A run that finishes normally now stops after `fitness`, so its population
     # is the one that was scored and this list is usually empty. It stops being

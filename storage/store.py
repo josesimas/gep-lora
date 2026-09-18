@@ -791,6 +791,25 @@ def executed(conn, run_id):
         (run_id,))}
 
 
+def latest_runs(conn, run_id):
+    """Each individual's latest execution, as the process step needs to judge it.
+
+    One row per individual that has run: its id, the chromosome and weight
+    seed it holds *now*, and its latest execution's verdict, weight seed and
+    the head of its stdout -- where a script names the chromosome it built.
+    Only the head, because that line comes first and a transcript is long.
+    """
+    return conn.execute(
+        "SELECT i.id AS id, i.chromosome AS chromosome, i.weight_seed AS weight_seed,"
+        "       e.verdict AS verdict, e.weight_seed AS ran_seed,"
+        "       substr(e.stdout, 1, 4000) AS head"
+        "  FROM individuals i"
+        "  JOIN executions e ON e.id = (SELECT id FROM executions"
+        "                                WHERE individual_id = i.id"
+        "                                ORDER BY id DESC LIMIT 1)"
+        " WHERE i.run_id = ?", (run_id,)).fetchall()
+
+
 def latest_execution(conn, individual_id):
     return conn.execute(
         "SELECT * FROM executions WHERE individual_id = ?"

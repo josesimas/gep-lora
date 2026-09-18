@@ -55,6 +55,11 @@
           border: 1px solid currentColor; }
   .s-done { color: var(--ok); } .s-failed, .s-cancelled { color: var(--bad); }
   .s-running { color: var(--accent); } .s-queued, .s-preparing, .s-deleted { color: var(--muted); }
+  .s-stopped { color: var(--warn); }
+  .task { font-size: 11px; color: var(--muted); margin-left: 4px; }
+  .panel { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .panel[hidden], .panel [hidden] { display: none; }
+  .panel h4 { font-size: 12px; margin: 0 0 6px; font-weight: 600; }
   .muted { color: var(--muted); }
   .msg { margin-top: 8px; font-size: 13px; min-height: 1em; }
   .msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
@@ -182,6 +187,8 @@
     <h2>3. Job <span id="detailTitle"></span></h2>
     <div class="actions">
       <button id="aCancel">Cancel</button>
+      <button id="aResume" title="Carry the search on from where it stopped: the rest of that generation, the generations left, then the testing pass">Resume</button>
+      <button id="aEvaluate" title="Grade the answers this job already holds, with the judge wherever it is now">Evaluate…</button>
       <button id="aLive" class="primary">Set live (best)</button>
       <button id="aUnset">Unset live</button>
       <button id="aDeleteRun" class="danger">Delete run</button>
@@ -190,6 +197,26 @@
       <button id="aRefresh">Refresh</button>
     </div>
     <div id="detailMsg" class="msg"></div>
+    <div class="panel" id="evalPanel" hidden>
+      <h4>Evaluate this job's answers</h4>
+      <p class="help" id="eSummary"></p>
+      <div class="row" id="eJudge">
+        <div><label for="eBackend">Judge runs on</label><select id="eBackend"></select></div>
+        <div id="eModelBox"><label for="eModel">Judge model</label>
+          <input id="eModel" placeholder="blank = the sweep's own"></div>
+        <div id="eUrlBox" style="flex: 2 1 220px"><label for="eUrl">Judge endpoint</label><input id="eUrl"></div>
+      </div>
+      <label class="check"><input type="checkbox" id="eForce"> Grade every answer again, not only the ungraded ones</label>
+      <p class="help">Graded by the sweep's own evaluator, so the scores stay comparable with its fitness;
+        a changed judge is written into the sweep's settings. Fitness is restated when the population is
+        still the one those answers came from — otherwise a resume takes it from there. Another rubric is a
+        question for a verification.</p>
+      <div class="actions">
+        <button class="primary" id="eRun">Queue evaluation</button>
+        <button id="eClose">Close</button>
+      </div>
+      <div id="evalMsg" class="msg"></div>
+    </div>
     <div class="tiles" id="tiles"></div>
     <div id="detailBody"></div>
   </section>
@@ -261,13 +288,14 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const FINISHED = ["done", "failed", "cancelled", "deleted"];
+const FINISHED = ["done", "failed", "cancelled", "stopped", "deleted"];
 let key = "";
 let selected = null;          // job id on screen
 let lastStatus = null;        // its status when detail was last drawn
 let verifyForm = null;        // GET /jobs/{id}/verify for the job on screen
 let verifyShown = null;       // the verification whose report is drawn
 let verifyAdapter = null;     // which adapter the per-question chart compares
+let evalForm = null;          // GET /jobs/{id}/evaluate, while its panel is open
 
 // --- small helpers ----------------------------------------------------------
 
@@ -287,6 +315,9 @@ function el(tag, attrs = {}, ...children) {
 
 const fmt = (value, digits = 3) => (value === null || value === undefined) ? "–" : Number(value).toFixed(digits);
 const pill = (status) => el("span", { class: "pill s-" + status }, status);
+// A job queued again, or running, for something other than its search says which.
+const taskOf = (job) => job.task && job.task !== "search" && ["queued", "running"].includes(job.status)
+  ? el("span", { class: "task" }, job.task) : null;
 
 function say(target, text, kind) {
   const node = $(target);
@@ -803,7 +834,7 @@ async function refreshJobs() {
     return el("tr", { class: "click" + (job.id === selected ? " selected" : ""), onclick: () => select(job.id) },
       el("td", {}, job.id),
       el("td", {}, job.label || el("span", { class: "muted" }, "–")),
-      el("td", {}, pill(job.status), job.queue_position ? el("span", { class: "muted" }, " #" + job.queue_position) : null),
+      el("td", {}, pill(job.status), taskOf(job), job.queue_position ? el("span", { class: "muted" }, " #" + job.queue_position) : null),
       el("td", { class: "mono" }, best ? `${fmt(best.fitness)} ${best.chromosome}` : "–"),
       el("td", { class: "muted" }, (job.created_at || "").replace("T", " ")));
   }));
@@ -820,6 +851,7 @@ function select(jobId) {
   $("verifySection").hidden = true;
   verifyForm = null;
   verifyShown = null;
+  closeEvaluate();
   say("detailMsg", "");
   say("verifyMsg", "");
   $("vReport").replaceChildren();
@@ -839,9 +871,18 @@ async function drawDetail() {
   }
   const job = detail.job;
   lastStatus = job.status;
-  $("detailTitle").replaceChildren(`${job.id} · ${job.label || "unlabelled"} `, pill(job.status));
+  $("detailTitle").replaceChildren(el("span", {}, `${job.id} · ${job.label || "unlabelled"} `, pill(job.status), taskOf(job)));
 
+  // A running job is stopped rather than cancelled: what it did stays in its
+  // database, and Resume carries it on from there.
   $("aCancel").disabled = !["queued", "running"].includes(job.status);
+  $("aCancel").textContent = job.status === "running" ? "Stop" : "Cancel";
+  $("aCancel").title = job.status === "running"
+    ? (job.task === "evaluate" ? "Stop grading; what was graded stays graded" : "Stop the search; Resume carries it on from where it got to")
+    : "Take it out of the queue";
+  $("aResume").disabled = !job.resumable;
+  $("aEvaluate").disabled = !job.can_evaluate;
+  if (!job.can_evaluate) closeEvaluate();
   $("aLive").disabled = job.status !== "done";
   $("aUnset").disabled = !detail.live.length;
   $("aDeleteRun").disabled = !FINISHED.includes(job.status) || job.status === "deleted";
@@ -854,6 +895,7 @@ async function drawDetail() {
     ["status", job.status],
     ["generations", `${progress.generations_scored ?? 0} / ${progress.generations_expected ?? "?"}`],
     ["last step", progress.last_step ? `${progress.last_step.step} ${progress.last_step.generation || ""}` : "–"],
+    ["answers graded", progress.answers ? `${progress.answers - progress.unscored} / ${progress.answers}` : "–"],
     ["best fitness", results && results.best ? fmt(results.best.fitness) : "–"],
     ["live tokens", detail.live.length],
   ];
@@ -1303,6 +1345,65 @@ async function act(label, method, path, after) {
   if (selected !== null) drawDetail();
 }
 
+// --- evaluate ------------------------------------------------------------------
+
+function closeEvaluate() {
+  evalForm = null;
+  $("evalPanel").hidden = true;
+  say("evalMsg", "");
+}
+
+async function openEvaluate() {
+  $("evalPanel").hidden = false;
+  say("evalMsg", "Loading…");
+  try {
+    evalForm = await api("GET", `/jobs/${selected}/evaluate`);
+  } catch (error) {
+    say("evalMsg", error.message, "err");
+    return;
+  }
+  say("evalMsg", "");
+  const f = evalForm;
+  const testing = f.tested ? ` The testing pass holds ${f.tested} tested individual(s), ${f.tested_unscored} with answers still ungraded.` : "";
+  $("eSummary").textContent = `Grades with ${f.evaluator}${f.asks_judge ? ", which asks a judge" : ", which asks no judge"}. `
+    + `${f.answers} answer(s) in the latest executions, ${f.unscored} without a score.${testing}`;
+  $("eBackend").replaceChildren(...f.backends.map((name) => el("option", { value: name }, name)));
+  $("eBackend").value = f.defaults.judge_backend || f.backends[0];
+  $("eModel").value = f.defaults.judge_model || "";
+  $("eUrl").value = f.defaults.judge_base_url || "";
+  $("eForce").checked = !f.unscored && !f.tested_unscored;
+  $("eJudge").hidden = f.asks_judge === false;
+  refreshEvaluate();
+}
+
+function refreshEvaluate() {
+  // The endpoint is where an "endpoint" judge is; a local one has none.
+  $("eUrlBox").hidden = $("eBackend").value !== "endpoint";
+  const nothing = evalForm && !evalForm.answers && !evalForm.tested;
+  $("eRun").disabled = !evalForm || nothing;
+  if (nothing) say("evalMsg", "No answers yet — the search stopped before any script ran. Resume it instead.", "err");
+}
+
+async function startEvaluation() {
+  const body = { force: $("eForce").checked };
+  if (!$("eJudge").hidden) {
+    body.judge_backend = $("eBackend").value;
+    if ($("eModel").value.trim()) body.judge_model = $("eModel").value.trim();
+    if ($("eBackend").value === "endpoint" && $("eUrl").value.trim()) body.judge_base_url = $("eUrl").value.trim();
+  }
+  say("evalMsg", "Queueing…");
+  try {
+    const reply = await api("POST", `/jobs/${selected}/evaluate`, body);
+    say("detailMsg", `Evaluation queued — ${reply.note}`, "ok");
+    closeEvaluate();
+  } catch (error) {
+    say("evalMsg", error.message, "err");
+    return;
+  }
+  await refreshJobs();
+  drawDetail();
+}
+
 // A link cannot carry the API key, so the file is fetched and then saved.
 async function downloadDatabase() {
   const jobId = selected;
@@ -1439,7 +1540,14 @@ for (const split of ["training", "testing"]) {
   $(split + "Upload").addEventListener("change", () => uploaded(split));
 }
 showDatasetModes();
-$("aCancel").addEventListener("click", () => act("Cancel", "POST", `/jobs/${selected}/cancel`));
+$("aCancel").addEventListener("click", () => act($("aCancel").textContent, "POST", `/jobs/${selected}/cancel`,
+  (reply) => say("detailMsg", reply.note, "ok")));
+$("aResume").addEventListener("click", () => act("Resume", "POST", `/jobs/${selected}/resume`,
+  (reply) => say("detailMsg", reply.note, "ok")));
+$("aEvaluate").addEventListener("click", () => ($("evalPanel").hidden ? openEvaluate() : closeEvaluate()));
+$("eBackend").addEventListener("change", refreshEvaluate);
+$("eRun").addEventListener("click", startEvaluation);
+$("eClose").addEventListener("click", closeEvaluate);
 $("aLive").addEventListener("click", () => goLive(null));
 $("aUnset").addEventListener("click", () => act("Unset live", "DELETE", `/jobs/${selected}/live`));
 $("aDeleteRun").addEventListener("click", () => {

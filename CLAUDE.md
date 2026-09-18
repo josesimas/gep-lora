@@ -47,8 +47,8 @@ adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
 tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
 async_api/    server, worker, submit, registry, results, golive, inference,
-              users, verify -- the search as a web service. See "The async API"
-              below.
+              users, verify, evaluate -- the search as a web service. See "The
+              async API" below.
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -204,7 +204,7 @@ sweep is still whole.
 
 An adopted sweep must hold **no individuals yet**: `population` appends, so adopting a
 started search would draw a second population beside the first, and the refusal points at
-`continue_run.py --from-db` instead. Only `--run` can reach that refusal, since `prepared()`
+`main.py --resume` instead. Only `--run` can reach that refusal, since `prepared()`
 never picks such a sweep. The testing pass is gated on the sweep *holding a testing split*
 rather than on `TESTING_SET` naming a file, which is the same question asked of the rows.
 
@@ -241,6 +241,37 @@ of what it was built on. And a split the sweep does *not* hold has its setting *
 rather than left alone -- the point of the mode is that local files are not consulted, so a
 `TESTING_SET` naming a file no testing rows ever came from names nothing. A sweep with no
 training rows at all is refused outright, before a population is drawn.
+
+```bash
+python main.py --db <sweep> --run 1 --resume
+python main.py --db <sweep> --run 1 --evaluate [--force] [--set JUDGE_BASE_URL='"..."']
+```
+
+**Any sweep can be carried on from wherever it stopped.** `where_it_stopped()` in
+[main.py](main.py) is the one reader of how far a search got, from two records written as
+it goes: `fitness_history` (generations **scored**) and the `ok` rows of `step_timings`
+(steps **finished** since the last snapshot). The split matters because the tail
+(`start_run.NEXT_GENERATION`) is not safe to run twice -- selection is another round and
+mutation mutates again -- while everything before `fitness` is: `trees`/`runs` re-derive,
+`process` skips what already ran as it is, `evaluate` skips what is scored, `fitness`
+restates a generation it already recorded. So a sweep resting on a snapshot runs only the
+part of the tail it had not, and one stopped inside a generation starts it again from
+`trees`. `--resume` then runs the generations left through `continue_run.py` and the
+testing pass with `test_run_with_dataset.py --resume` (an individual already tested
+cleanly is not stored twice -- `test_results` is appended to). A sweep with no individuals
+is just run (`cli_run`); a complete one goes straight to the testing pass. The questions
+come from the stored rows when the sweep holds them (`--from-db`), and `--set` is written
+before planning, so `--set GENERATIONS=N` extends a search.
+
+`--evaluate` grades the stored answers (ungraded, or all with `--force`) under the sweep's
+own `EVALUATOR` -- another rubric is a verification's business, never the sweep's -- and
+follows it with `fitness` **only where that is honest**: the population is still the one
+those answers came from (complete, or resting on a snapshot before selection; `elitism`
+too if it had run), or the generation it stopped in has been through `process`. Anywhere
+else a fitness would record a generation that did not happen, so it is left to the resume.
+Then the testing pass's answers, `--score-only`. Both modes need `--run`. Keep the planner
+the single definition of "where did it stop": the async API's stop/resume/evaluate are
+these flags, run by its worker.
 
 ```bash
 python -m storage.store --show 0
@@ -965,7 +996,7 @@ a cull.
 ## The async API
 
 `async_api/` (see README "The async API") is a service *around* the pipeline, not a
-change to it. Four rules hold it together:
+change to it. These rules hold it together:
 
 - **A job is a prepared sweep database** (`submit.py`), and the worker runs it with
   `main.py --db <job.sqlite3> --run <id>` in a subprocess. Settings go through
@@ -994,6 +1025,19 @@ change to it. Four rules hold it together:
   Results go in `verify<id>/` inside the job's folder, so deleting the run takes
   them with it -- a reading of a sweep is worth nothing without the sweep.
 
+- **Stop, resume and evaluate are `main.py --resume` / `--evaluate`**, run by the same
+  worker on the same job. A job carries a `task` (`search`, `resume`, `evaluate`) and
+  `task_options`; `registry.requeue()` puts a stopped one back in the queue (keeping its
+  id, so its place) and records `requeued_from`, which a cancel before the worker gets
+  to it restores. Cancelling a *running* search makes it `stopped` (resumable), not
+  `cancelled`; `RESUMABLE` is stopped/cancelled/failed, and an evaluation may also be
+  asked of a `done` job. An evaluation never moves a search, so `worker.settle()` ends
+  the job where its search is -- `done` if every generation was scored, else `stopped`.
+  `evaluate.py` owns only the API's half (form, checks, flags), like `verify.py`; it may
+  move the judge (`JUDGE_BACKEND`/`JUDGE_MODEL`/`JUDGE_BASE_URL`, via `--set`) but not
+  the `EVALUATOR`. The registry's new columns are added by `Registry._migrate()` --
+  add a column there too, since `CREATE TABLE IF NOT EXISTS` leaves an old table alone.
+
 Its knobs live in `async_api/settings.py`, deliberately outside `config/settings.py`,
 whose `snapshot()` would store them in every sweep.
 
@@ -1016,6 +1060,15 @@ individuals unless `--include-blocked`.
 base-model load to learn nothing. Never having run is not the same as being unchanged, so a
 fresh population and every copy `selection` appends still run in full. `--include-unchanged`
 overrides it; a step where nothing needs running is reported, not a failure.
+
+**Nor does it re-run one this generation already ran.** `has_changed` stays 1 from
+mutation until the next round, so it alone would re-run every mutant a stopped generation
+had already processed when that generation is resumed. An individual whose latest
+execution is `ok`, drew under its own weight seed, and built the chromosome it holds now
+(`process_run.expression()` reads the `Individual N: <chromosome>` line every template
+prints first; `store.latest_runs()` hands over the head of stdout) is skipped as unchanged.
+Only a clean one: a crash or timeout in an interrupted pass may be the interruption. In an
+uninterrupted run this changes nothing -- a mutant's latest execution predates its mutation.
 
 **Never assume a shared rank.** Every rank is read from that slot's own
 `adapter_config.json` (`slot_ranks()` at generation time, `_rank()` at runtime), taking

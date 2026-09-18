@@ -21,7 +21,13 @@ Jobs
     GET    /jobs/{id}/log[?lines=200]      the tail of main.py's console output
     GET    /jobs/{id}/database             the job's sweep database (job<id>_<label>.sqlite3)
     GET    /jobs/{id}/individuals/{n}      one individual and its transcript
-    POST   /jobs/{id}/cancel               cancel a queued or running job
+    POST   /jobs/{id}/cancel               cancel a queued job, or stop a running one
+    POST   /jobs/{id}/resume               queue a stopped, cancelled or failed job
+                                           again, to carry on from where it got to
+    GET    /jobs/{id}/evaluate             what an evaluation of its answers would do
+    POST   /jobs/{id}/evaluate             {"force"?, "judge_backend"?, "judge_model"?,
+                                           "judge_base_url"?} -> queue it to grade the
+                                           answers it holds (see evaluate.py)
     DELETE /jobs/{id}/run                  delete what the run produced; keep the job
     DELETE /jobs/{id}                      delete the job and its files
 
@@ -66,6 +72,7 @@ import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from async_api import evaluate
 from async_api import golive
 from async_api import inference
 from async_api import registry as reg
@@ -101,6 +108,11 @@ def job_json(app, job, with_summary=False):
                                      "finished_at", "run_id", "exit_code", "error")}
     out["options"] = json.loads(job["options"] or "{}")
     out["cancel_requested"] = bool(job["cancel_requested"])
+    # What the worker does with it when it is queued, and what it can be asked
+    # to do next -- so a client need not know the rules to draw its buttons.
+    out["task"] = job["task"]
+    out["resumable"] = job["status"] in reg.RESUMABLE
+    out["can_evaluate"] = job["status"] in reg.REQUEUE_FROM[reg.EVALUATE]
     if job["status"] == reg.QUEUED:
         out["queue_position"] = app.registry.queue_position(job["id"])
     if with_summary and job["status"] != reg.DELETED:
@@ -221,14 +233,75 @@ class App:
         return 200, {"individual": found}
 
     def cancel_job(self, user, job_id):
+        """Cancel a queued job, or stop a running one.
+
+        A running search is *stopped* rather than ended: the worker kills
+        main.py, and what it had done stays in the sweep database for a resume
+        to carry on from. A resume or an evaluation cancelled before the worker
+        got to it puts the job back as it was.
+        """
         job = self.own_job(user, job_id)
+        before = job["status"]
         status = self.registry.request_cancel(job["id"])
-        if status not in (reg.CANCELLED, reg.RUNNING):
+        if before not in (reg.QUEUED, reg.PREPARING, reg.RUNNING):
             raise ApiError(409, "job %d is %s; there is nothing to cancel" % (job_id, status))
+        if status == reg.RUNNING:
+            note = ("the worker will stop it within a few seconds" +
+                    ("" if job["task"] == reg.EVALUATE
+                     else "; resume it afterwards to carry on from there"))
+        elif job["requeued_from"]:
+            note = "taken out of the queue before it started; the job is %s again" % status
+        else:
+            note = "cancelled before it started"
         return 202 if status == reg.RUNNING else 200, {
-            "job": job_json(self, self.registry.job(job_id)),
-            "note": ("the worker will stop it within a few seconds"
-                     if status == reg.RUNNING else "cancelled before it started")}
+            "job": job_json(self, self.registry.job(job_id)), "note": note}
+
+    def _has_database(self, job):
+        if not os.path.exists(self.registry.database(job)):
+            raise ApiError(409, "job %d has no database; its run was deleted" % job["id"])
+
+    def resume_job(self, user, job_id):
+        """Queue a search that did not finish, to carry on from where it got to."""
+        job = self.own_job(user, job_id)
+        if job["status"] not in reg.RESUMABLE:
+            raise ApiError(409, "job %d is %s; only a stopped, cancelled or failed job "
+                                "can be resumed" % (job_id, job["status"]))
+        self._has_database(job)
+        queued = self.registry.requeue(job_id, reg.RESUME)
+        if queued is None:
+            raise ApiError(409, "job %d changed status while being resumed" % job_id)
+        return 200, {"job": job_json(self, queued),
+                     "note": "queued; the worker carries it on from where it stopped"}
+
+    def _grading(self, job):
+        """What an evaluation of this job's answers is offered."""
+        try:
+            return evaluate.choices(self.registry.database(job), job["run_id"])
+        except results.NoResults:
+            raise ApiError(409, "job %d has no database; its run was deleted" % job["id"])
+
+    def evaluate_form(self, user, job_id):
+        job = self.own_job(user, job_id)
+        out = self._grading(job)
+        out["can_evaluate"] = job["status"] in reg.REQUEUE_FROM[reg.EVALUATE]
+        return 200, out
+
+    def start_evaluation(self, user, job_id, body):
+        """Queue the job to grade the answers it already holds."""
+        job = self.own_job(user, job_id)
+        if job["status"] not in reg.REQUEUE_FROM[reg.EVALUATE]:
+            raise ApiError(409, "job %d is %s; wait for it to stop before evaluating "
+                                "its answers" % (job_id, job["status"]))
+        try:
+            options = evaluate.options_for(body, self._grading(job))
+        except evaluate.EvaluateError as error:
+            raise ApiError(400, str(error))
+        queued = self.registry.requeue(job_id, reg.EVALUATE, options)
+        if queued is None:
+            raise ApiError(409, "job %d changed status while being queued" % job_id)
+        return 200, {"job": job_json(self, queued),
+                     "note": "queued; the worker grades its answers after any job "
+                             "ahead of it"}
 
     def _finished(self, job, what):
         if job["status"] not in reg.FINISHED:
@@ -413,6 +486,9 @@ ROUTES = [
     ("GET", r"/jobs/(\d+)/database", "job_database", ()),
     ("GET", r"/jobs/(\d+)/individuals/(\d+)", "job_individual", ()),
     ("POST", r"/jobs/(\d+)/cancel", "cancel_job", ()),
+    ("POST", r"/jobs/(\d+)/resume", "resume_job", ()),
+    ("GET", r"/jobs/(\d+)/evaluate", "evaluate_form", ()),
+    ("POST", r"/jobs/(\d+)/evaluate", "start_evaluation", ("body",)),
     ("DELETE", r"/jobs/(\d+)/run", "delete_run", ()),
     ("DELETE", r"/jobs/(\d+)", "delete_job", ()),
     ("GET", r"/jobs/(\d+)/verify", "verify_form", ()),

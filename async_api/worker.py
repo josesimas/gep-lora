@@ -13,6 +13,16 @@ main.py adopts the prepared sweep, reads its questions out of its rows, and
 keeps everything it writes in `job_run<N>/` beside the database -- so a job
 never touches run_db/ or another job's folder.
 
+A job can come back through the queue after that, with a different `task`:
+
+    resume    python main.py --db ... --run ... --resume
+              carry a stopped, cancelled or failed search on from where it got to
+    evaluate  python main.py --db ... --run ... --evaluate [--force] [--set ...]
+              grade the answers it already holds, and restate its fitness
+
+Which is why a cancel of a running search *stops* it rather than ending it: the
+sweep database says how far it got, and `main.py --resume` reads that back.
+
 main.py is run as a **subprocess** here, unlike main.py's own drivers, which
 call each other as libraries. Two things need it: a cancel has to be able to
 stop a search (and the lora servers under it) without stopping the worker, and
@@ -28,10 +38,10 @@ search that has already finished, and a job is one that has not started. One
 card, one queue, whichever kind of work is in it.
 
 One worker per JOBS_DIR. A worker that starts finds any job still marked
-running with nothing behind it (the last worker died) and marks it failed:
-main.py refuses to adopt a sweep that already holds individuals, so it cannot
-simply be queued again. A verification left running is marked failed too, and
-that one can simply be asked for again.
+running with nothing behind it (the last worker died) and marks it failed --
+not queued again on its own, since whether to spend the card on it is the
+user's call, but resumable like any other failed job. A verification left
+running is marked failed too, and that one can simply be asked for again.
 """
 
 import argparse
@@ -42,10 +52,11 @@ import subprocess
 import sys
 import time
 
+from async_api import evaluate
 from async_api import results
 from async_api import settings
 from async_api import verify
-from async_api.registry import CANCELLED, DONE, FAILED, Registry
+from async_api.registry import DONE, EVALUATE, FAILED, RESUME, STOPPED, Registry
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN = os.path.join(_ROOT, "main.py")
@@ -56,10 +67,14 @@ def say(message):
 
 
 def command(registry, job, python=None, main=MAIN):
-    """The main.py command line for one job."""
+    """The main.py command line for one job, for the task it was queued for."""
     options = json.loads(job["options"] or "{}")
     argv = [python or sys.executable, "-u", main,
             "--db", registry.database(job), "--run", str(job["run_id"])]
+    if job["task"] == RESUME:
+        argv.append("--resume")
+    elif job["task"] == EVALUATE:
+        argv += evaluate.arguments(json.loads(job["task_options"] or "{}"))
     if options.get("no_test"):
         argv.append("--no-test")
     if options.get("limit"):
@@ -145,10 +160,15 @@ def supervise(argv, log_path, what, on_start, cancelled=None, poll=None):
     return code, stopped
 
 
+RESUME_HINT = "; resume it to carry on from there"
+
+
 def run_job(registry, job, argv=None, poll=None):
     """Run one claimed job to its end. -> the status it finished in."""
     argv = argv or command(registry, job)
     what = "job %d" % job["id"]
+    if job["task"] in (RESUME, EVALUATE):
+        what += " (%s)" % job["task"]
     say("%s: %s" % (what, " ".join(argv[2:])))
     try:
         code, cancelled = supervise(
@@ -156,17 +176,31 @@ def run_job(registry, job, argv=None, poll=None):
             lambda pid: registry.set_pid(job["id"], pid),
             lambda: registry.cancel_requested(job["id"]), poll)
     except Stopped as stopped:
-        registry.finish(job["id"], FAILED, exit_code=stopped.args[0],
-                        error="the worker stopped while this job was running")
+        if job["task"] == EVALUATE:
+            settle(registry, job, stopped.args[0],
+                   "the worker stopped while this evaluation was running")
+        else:
+            registry.finish(job["id"], FAILED, exit_code=stopped.args[0],
+                            error="the worker stopped while this job was running"
+                                  + RESUME_HINT)
         raise
     if code is None:
+        if job["task"] == EVALUATE:
+            return settle(registry, job, None, "could not start main.py: %s" % cancelled)
         registry.finish(job["id"], FAILED,
                         error="could not start main.py: %s" % cancelled)
         return FAILED
 
+    if job["task"] == EVALUATE:
+        return settle(registry, job, code,
+                      "the evaluation was stopped" if cancelled
+                      else None if code == 0
+                      else "the evaluation exited with %s; see the job log" % code)
     if cancelled:
-        registry.finish(job["id"], CANCELLED, exit_code=code, error="cancelled")
-        return CANCELLED
+        # Stopped rather than ended: what it did is in the sweep database, and
+        # main.py --resume carries it on from exactly there.
+        registry.finish(job["id"], STOPPED, exit_code=code, error="stopped" + RESUME_HINT)
+        return STOPPED
     if code == 0:
         registry.finish(job["id"], DONE, exit_code=0)
         return DONE
@@ -179,8 +213,29 @@ def run_job(registry, job, argv=None, poll=None):
                               "(exit %s, see the job log)" % code)
         return DONE
     registry.finish(job["id"], FAILED, exit_code=code,
-                    error="main.py exited with %s; see the job log" % code)
+                    error="main.py exited with %s; see the job log" % code + RESUME_HINT)
     return FAILED
+
+
+def settle(registry, job, code, error):
+    """Where an evaluation leaves its job. -> the status.
+
+    Grading answers does not move a search along, so the job ends where its
+    search is: done when every generation was scored, stopped -- resumable --
+    when it was not. An evaluation that failed says so in `error` without
+    taking that away; the answers it did not reach are still there to grade.
+    """
+    # Every generation scored is what makes the search finished here, and not
+    # the sweep's own status too, as search_finished() asks: a failed grading
+    # marks the sweep failed, and that is not the search coming undone.
+    done = results.progress(registry.database(job), job["run_id"])
+    if done and done["generations_scored"] >= done["generations_expected"]:
+        registry.finish(job["id"], DONE, exit_code=code, error=error)
+        return DONE
+    registry.finish(job["id"], STOPPED, exit_code=code,
+                    error=(error + "; " if error else "graded; ")
+                    + "the search itself is unfinished" + RESUME_HINT)
+    return STOPPED
 
 
 def verify_command(registry, row, python=None):
@@ -252,9 +307,16 @@ def recover(registry):
     """Mark the jobs a dead worker left running as failed. -> how many."""
     stale = registry.orphaned()
     for job in stale:
-        registry.finish(job["id"], FAILED,
-                        error="the worker stopped while this job was running")
-        say("job %d was left running by a previous worker; marked failed" % job["id"])
+        if job["task"] == EVALUATE:
+            status = settle(registry, job, None,
+                            "the worker stopped while this evaluation was running")
+        else:
+            status = FAILED
+            registry.finish(job["id"], FAILED,
+                            error="the worker stopped while this job was running"
+                                  + RESUME_HINT)
+        say("job %d was left running by a previous worker; marked %s"
+            % (job["id"], status))
     return len(stale)
 
 

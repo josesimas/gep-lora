@@ -108,12 +108,33 @@ already moved on to.
 
     python main.py --no-test                 # search only, as before
     python main.py --test-min-quality 0.7    # test fewer of them
+
+Stopping, and carrying on
+-----------------------------------------------------------------------------
+
+    python main.py --db <sweep> --run 1 --resume
+    python main.py --db <sweep> --run 1 --evaluate [--force] [--set JUDGE_MODEL=...]
+
+Any sweep can be carried on from wherever it stopped. --resume reads how far it
+got out of its own database (where_it_stopped): the fitness snapshots say how
+many generations were scored, and step_timings which steps finished since the
+last one -- which is what tells a population about to be bred from one already
+bred, since the tail that breeds it is the part not safe to run twice. Then it
+finishes that generation, runs the ones left, and the testing pass, which is
+resumed too. A sweep with no population yet is simply run.
+
+--evaluate grades the answers a sweep holds -- the ungraded ones, or all of them
+with --force -- under the sweep's own EVALUATOR, and restates fitness only where
+that is honest: where the population is still the one those answers came from.
+--set moves the judge, written into the sweep. The async API's stop, resume and
+evaluate are these two, run by its worker.
 """
 
 import argparse
 import os
 import sys
 import time
+from collections import namedtuple
 
 from config import settings as config
 import continue_run
@@ -255,8 +276,7 @@ def adopt(options, run=None):
                 "run %d in %s already holds %d individual(s). main.py starts "
                 "a search rather than joining one, and its first half would draw "
                 "a second population beside that one.\n"
-                "    Carry it on instead: python continue_run.py --db %s --run %d "
-                "--from-db"
+                "    Carry it on instead: python main.py --db %s --run %d --resume"
                 % (run_id, conn.path, len(held), options.db, run_id))
         conf = store.get_settings(conn, run_id)
         if not conf:
@@ -296,9 +316,236 @@ def describe(options, run_id, conf, splits, asked):
     print()
 
 
+Plan = namedtuple("Plan", "populated scored expected rest generations complete "
+                           "at_rest tail_done since")
+
+
+def where_it_stopped(conn, run_id, generations):
+    """Where a sweep's search got to, and what is left of it. -> a Plan.
+
+    A whole search is 1 + GENERATIONS generations: trees .. fitness each, with
+    NEXT_GENERATION (elitism, selection, mutation, weight_mutation) after every
+    one but the last. Two things say how far a sweep got, and both are written
+    as it goes, so a driver killed at any moment leaves them true:
+
+      * fitness_history, one generation per snapshot -- how many were *scored*;
+      * step_timings, one row per step that finished -- what was done since
+        the last snapshot, which is the only way to tell a population about to
+        be bred from one that already has been.
+
+    The second matters because the tail is the half that is not safe to run
+    twice: selection is another round every time it runs, and mutation mutates
+    again. Everything before fitness is -- trees and runs re-derive, process
+    skips what already ran as it is (see step_process), evaluate skips what is
+    scored, and fitness restates a generation it has already recorded.
+
+    `rest` is the steps that finish the generation it stopped in, in pipeline
+    order; `generations` the whole ones left after it, for continue_run.py.
+    `at_rest` says the sweep sits on a fitness snapshot with at most part of
+    the tail run since -- `tail_done` being that part -- and `since` is every
+    step that finished after the snapshot (all of them, before the first).
+    """
+    expected = 1 + generations
+    if not store.individuals(conn, run_id):
+        return Plan(False, 0, expected, [], 0, False, False, (), ())
+    scored = len(store.fitness_by_generation(conn, run_id))
+    finished = [row["step"] for row in store.step_timings(conn, run_id)
+                if row["status"] == "ok"]
+    last = max((index for index, step in enumerate(finished) if step == "fitness"),
+               default=-1)
+    since = tuple(finished[last + 1:])
+    tail = start_run.NEXT_GENERATION
+    # The tail steps run since the snapshot, as the prefix of the tail they
+    # reach -- mutation having run means selection and elitism did.
+    upto = max((tail.index(step) for step in since if step in tail), default=-1)
+    tail_done = tuple(tail[:upto + 1])
+
+    if scored >= expected:
+        # Nothing left to search. A tail after it is an older sweep's, from
+        # when a finished search still ended in mutation.
+        return Plan(True, scored, expected, [], 0, True, True, tail_done, since)
+    if scored == 0 or any(step not in tail for step in since):
+        # Part way through a generation whose fitness has not been taken: the
+        # tail before it (if any) finished, since the generation's own steps
+        # only ever start after it. From the top of that generation, then.
+        current = scored + 1
+        rest = list(continue_run.GENERATION)
+        if current == expected:
+            rest = [step for step in rest if step not in tail]
+        return Plan(True, scored, expected, rest, expected - current, False,
+                    False, (), since)
+    # Resting on a snapshot, part of the way into building the next generation.
+    return Plan(True, scored, expected, list(tail[upto + 1:]), expected - scored,
+                False, True, tail_done, since)
+
+
+def holds_training(db_path, run_id):
+    """Does the sweep hold its own training split? Then it is read from there."""
+    conn = store.connect(db_path)
+    try:
+        return any(entry["split"] == "training"
+                   for entry in store.dataset_summary(conn, run_id))
+    finally:
+        conn.close()
+
+
+def open_sweep(options):
+    """The sweep --resume or --evaluate names. -> (run_id, conf), --set applied.
+
+    Refused for the reasons adopt() refuses: a path that is not a database, a
+    run that is not there. --set is written into the sweep here, before
+    anything is planned, because GENERATIONS is one of the things it can say.
+    """
+    where = (options.db if os.path.isabs(options.db)
+             else os.path.join(_HERE, options.db))
+    if not os.path.exists(where):
+        raise SystemExit("no database at %s" % os.path.abspath(where))
+    conn = store.connect(options.db)
+    try:
+        run_id = store.latest_run(conn) if options.run == 0 else options.run
+        if run_id is None or store.get_run(conn, run_id) is None:
+            raise SystemExit("no run %s in %s. Try: python -m storage.store --list"
+                             % (options.run, conn.path))
+        conf = store.get_settings(conn, run_id)
+        if not conf:
+            raise SystemExit("run %d in %s has no stored settings, so there is "
+                             "nothing to run it under." % (run_id, conn.path))
+        continue_run.override(conn, run_id, conf, options.settings)
+        return run_id, conf
+    finally:
+        conn.close()
+
+
+def plan_of(options, run_id, conf):
+    conn = store.connect(options.db)
+    try:
+        return where_it_stopped(conn, run_id,
+                                continue_run.generation_count(options, conf))
+    finally:
+        conn.close()
+
+
+def resume(options):
+    """Carry a stopped sweep on to the end of its search. -> an exit code.
+
+    Whatever stopped it -- a cancel, a crash, a machine switched off -- the
+    database says how far it got (where_it_stopped), and this finishes the
+    generation it stopped in, runs the ones it has left, and then the testing
+    pass, skipping whatever that pass already did. A sweep that never got as
+    far as a population is simply run, the way a prepared one is; one whose
+    search is complete goes straight to the testing pass.
+    """
+    run_id, conf = open_sweep(options)
+    plan = plan_of(options, run_id, conf)
+    if not plan.populated:
+        print("run %d holds no individuals yet, so resuming it is running it\n"
+              % run_id)
+        options.resume = False
+        options.settings = []           # already written into the sweep
+        return cli_run(options)
+
+    from_db = holds_training(options.db, run_id)
+    print("=" * 70)
+    print("resuming run %d in %s: %d of %d generation(s) scored"
+          % (run_id, options.db, plan.scored, plan.expected))
+    if plan.complete:
+        print("the search is complete; only the testing pass can be left")
+    else:
+        if plan.rest:
+            print("to finish generation %d: %s"
+                  % (plan.scored + (0 if plan.at_rest else 1), " -> ".join(plan.rest)))
+        if plan.generations:
+            print("then %d more generation(s) through continue_run.py" % plan.generations)
+    print("=" * 70)
+    print()
+
+    started = time.time()
+    code = 0
+    if plan.rest:
+        code = call(start_run.main,
+                    plan.rest + ["--run", str(run_id)] + forwarded(options, from_db))
+    if not code and plan.generations:
+        code = call(continue_run.cli,
+                    ["--run", str(run_id), "--generations", str(plan.generations)]
+                    + forwarded(options, from_db))
+    if not plan.complete:
+        print()
+        print("=" * 70)
+        print("resumed run %d %s in %.1fs"
+              % (run_id, "finished" if not code else "STOPPED AGAIN",
+                 time.time() - started))
+        print("=" * 70)
+    if not code:
+        code = test(options, run_id, from_db, resume=True)
+    return code
+
+
+def evaluate(options):
+    """Grade the answers a sweep already holds. -> an exit code.
+
+    The evaluate step over the stored transcripts -- the ones still ungraded,
+    or every one with --force -- under the sweep's own EVALUATOR, since a
+    fitness is only comparable with the others when the same rubric earned it.
+    Where the judge is (JUDGE_BACKEND, JUDGE_MODEL, JUDGE_BASE_URL) is a --set
+    away, written into the sweep like any other change to it.
+
+    Then fitness, when the scores can still reach it honestly: when the
+    population is the one those answers were given by (a finished search, or a
+    stopped one resting on its last snapshot before selection has bred from
+    it), fitness is restated -- and elitism with it, if it had already run; and
+    when the generation it stopped in has been through process, fitness is
+    taken for it, exactly as the next step would have. Anywhere else a fitness
+    now would score individuals that have not run yet, so it is left to the
+    resume. Then the testing pass's answers, if it stored any.
+    """
+    run_id, conf = open_sweep(options)
+    plan = plan_of(options, run_id, conf)
+    if not plan.populated:
+        raise SystemExit("run %d holds no individuals, so there are no answers "
+                         "to evaluate." % run_id)
+    from_db = holds_training(options.db, run_id)
+
+    steps = ["evaluate"]
+    bred = {"selection", "mutation", "weight_mutation"} & set(plan.tail_done)
+    if plan.at_rest and not bred:
+        steps.append("fitness")
+        if "elitism" in plan.tail_done:
+            steps.append("elitism")
+    elif not plan.at_rest and "process" in plan.since:
+        steps.append("fitness")
+    print("evaluating run %d in %s: %s%s\n"
+          % (run_id, options.db, " -> ".join(steps),
+             " (--force: every answer again)" if options.force else ""))
+    code = call(start_run.main,
+                steps + ["--run", str(run_id)] + forwarded(options, from_db))
+
+    conn = store.connect(options.db)
+    try:
+        tested = bool(store.test_results(conn, run_id))
+    finally:
+        conn.close()
+    dataset = ["--from-db"] if from_db else [testing_set(options.db, run_id)]
+    if tested and not options.no_test and all(dataset):
+        argv = dataset + ["--db", options.db, "--run", str(run_id), "--score-only"]
+        if options.force:
+            argv.append("--force")
+        print()
+        print("# and the testing pass's answers")
+        print()
+        code = call(test_run_with_dataset.main, argv) or code
+    return code
+
+
 def cli(argv=None):
     options = parse(argv)
+    if options.resume:
+        return resume(options)
+    if options.evaluate:
+        return evaluate(options)
+    return cli_run(options)
 
+
+def cli_run(options):
     # --run names a sweep to run; without it, a database that is already a
     # prepared sweep is one too. Anything else starts a new sweep, as before.
     asked = options.run is not None
@@ -421,7 +668,7 @@ def testing_split(db_path, run_id):
     return held[0]["records"] if held else None
 
 
-def test(options, run_id, adopted=False):
+def test(options, run_id, adopted=False, resume=False):
     """Put the finished search in front of its testing split. -> an exit code.
 
     Called as a library, in this interpreter, for the reason the other two are:
@@ -479,6 +726,11 @@ def test(options, run_id, adopted=False):
         argv.append("--keep-scripts")
     if options.force:
         argv.append("--force")
+    if resume:
+        # Whatever an interrupted pass already tested stays tested: test_results
+        # is appended to, and a second row per individual would say it was
+        # tested twice.
+        argv.append("--resume")
 
     code = call(test_run_with_dataset.main, argv)
     if code:
@@ -535,7 +787,22 @@ def parse(argv):
                              "the sweep's own TESTING_MIN_QUALITY, falling back to "
                              "settings.py's, currently %.2f)"
                              % config.TESTING_MIN_QUALITY)
+    parser.add_argument("--resume", action="store_true",
+                        help="carry the sweep --run names on from wherever it "
+                             "stopped: finish that generation, run the ones it has "
+                             "left, then the testing pass")
+    parser.add_argument("--evaluate", action="store_true",
+                        help="grade the answers the sweep --run names already "
+                             "holds (the ungraded ones, or all with --force), and "
+                             "restate its fitness when that is still honest; "
+                             "--set JUDGE_BASE_URL=... moves the judge")
     options = parser.parse_args(argv)
+    if options.resume and options.evaluate:
+        parser.error("--resume and --evaluate are two different things to do to "
+                     "a sweep; pick one.")
+    if (options.resume or options.evaluate) and options.run is None:
+        parser.error("--%s needs a sweep that exists: pass --run (0 = the latest)."
+                     % ("resume" if options.resume else "evaluate"))
     if options.generations is not None and options.generations < 1:
         parser.error("--generations is %d; start_run.py's generation would be the whole "
                      "run. Use start_run.py on its own for that." % options.generations)

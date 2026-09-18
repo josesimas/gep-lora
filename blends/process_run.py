@@ -70,6 +70,25 @@ def drawn_weights(stdout):
             for name, value in re.findall(r"(w\d+)=([-+0-9.eE]+)", line.group(0))}
 
 
+# The line every generated script opens with: "Individual 7: CAT.L1.L2.w1.w3"
+# -- the LABEL and EXPRESSION markers, which start_run.step_runs fills with the
+# individual's number and its chromosome. All three templates print it first.
+_BUILT = re.compile(r"^Individual \d+: (\S+)$", re.MULTILINE)
+
+
+def expression(stdout):
+    """The chromosome a run says it built, or None if it never said.
+
+    Read off the script's own opening line rather than taken from the
+    individual, for the reason drawn_weights() reads the weights: the
+    individual goes on being rewritten, and this is what that execution was
+    actually of. The process step uses it to tell a result of the blend an
+    individual holds now from one of the blend it held before mutation.
+    """
+    found = _BUILT.search(stdout or "")
+    return found.group(1) if found else None
+
+
 # What a script says about its own cost, on the channel everything else comes
 # out on: one line per occurrence, "TIMING: <phase> <seconds> [label]".
 #
