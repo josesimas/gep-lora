@@ -3001,6 +3001,82 @@ took 53s to its first token (24.5s of it the model load), the next 0.3s.
 `/infer` streams chunked `text/plain`, or server-sent events
 (`data: {"text": ...}`, then `event: done`) with `Accept: text/event-stream`.
 
+### The LoRA guide — an agent that trains LoRAs for you
+
+**http://127.0.0.1:8780/agent** is a second page on the same server, for
+someone who has never trained a model. The screen is split in two. On the
+left, a guide -- a chat model -- asks for one thing at a time: a friendly
+summary of the process and *Yes, let's start*; a dataset (pasted, uploaded, or
+one of the shared ones under `datasets/`), which it reads and summarises; how
+long they are happy to wait (three options with the time each takes *on this
+dataset*, or typed: "about an hour", "5 epochs"); then the plan read back and
+*Start training*. Questions can be typed at any point. On the right, what is
+happening: where the process is, the dataset's numbers (answer lengths, topic
+words, samples), the plan, and during training each LoRA's progress and ETA,
+the loss curves, the worker's log and every API call the page makes -- redrawn
+every second and a half. It is `async_api/agent-ui.html`, one file with no
+dependencies, and it uses the same key as the console (and remembers the
+conversation in the browser, so a reload mid-training carries on watching).
+
+The Python behind it is `async_api_agent/`, mounted into the server as the
+`/agent/*` endpoints:
+
+| Module | What it owns |
+|---|---|
+| `settings.py` | which provider and model the guide talks through, the providers' URLs and key variables, the ranks it trains (`LORA_RANKS`), the wait options, the estimate's fallback pace |
+| `prompts.py` | **every system prompt**, one per step behind a shared persona, and the wording each step falls back to when no model answers |
+| `providers.py` | one chat call, stdlib only: OpenAI-compatible (`/chat/completions`) or Anthropic (`/messages`) |
+| `analysis.py` | a dataset in any shape -- JSON Lines, a JSON array, prompt/answer pairs, CSV -- normalised to `{"messages": [...]}` lines and measured |
+| `planner.py` | the time estimate, a typed wait read as epochs, and the `POST /loras` bodies |
+| `agent.py` | each step: the facts, then the model's words for them, or the fallback's |
+| `routes.py` | the `/agent/*` endpoints |
+
+**The agent proposes and the API does.** Nothing in `async_api_agent/`
+trains, queues or stores anything. `/agent/plan` hands the page one
+`POST /loras` body per rank in `LORA_RANKS` (8 and 16 by default -- more than
+one because a search blends adapters of different ranks), named for the
+dataset and made free in the user's catalogue, with the dataset's first
+question as the smoke-test prompt so a finished LoRA's sample answer is on its
+own subject. The page sends them to the ordinary `POST /loras`, and watches
+them through `GET /loras/{id}` and its log -- the same endpoints and checks as
+the console's LoRA form, so a LoRA the guide trained is an ordinary catalogue
+row. *Practice run* (`MOCK`) sends `mock: true`: `create_lora.py --mock`, no
+GPU, seconds.
+
+**Facts are computed; only the words are the model's.** Record counts,
+lengths, duplicates, the estimate and the plan come from `analysis.py` and
+`planner.py` and are handed to the model as JSON with a step's prompt. The
+estimate's pace is fitted to the LoRAs already trained on the same base model
+here (steps against seconds, so loading the model is not read as a slow step),
+and is a stated guess until there are some. So **the page works with no model
+at all**: a provider that has no key, cannot be reached, or is set to
+`scripted` gets the step's fallback wording from `prompts.py`, with a note
+under the message saying why. A typed wait is read by the model if it can and
+by `planner.read_wait()` if not; a typed message that is not a wait goes to
+the guide as a question.
+
+**Providers.** `lmstudio` (the default) is the judges' endpoint,
+`JUDGE_BASE_URL`, with the first model it lists unless one is named; `ollama`,
+`openai`, `anthropic`, `gemini`, `mistral` and `openrouter` are the others,
+and `scripted` asks nobody. The page's *model* chip switches provider and
+model for its own conversation and lists what the provider serves
+(`GET /agent/models`); `GEP_AGENT_PROVIDER` / `GEP_AGENT_MODEL` set the
+default for everyone. **Keys are environment variables of the server** --
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`,
+`OPENROUTER_API_KEY`, `$JUDGE_API_KEY` for LM Studio -- never settings, never
+sent to the browser. Only a local provider may be pointed at another URL from
+the page, and then without its key, so no page can send a key anywhere. A
+Claude model is asked without `temperature` (Opus 5 and Sonnet 5 refuse it),
+at `ANTHROPIC_EFFORT` (low), and only its text blocks are read; a reasoning
+model's `<think>` block is stripped from an OpenAI-compatible reply.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /agent` | the page (no key needed to load it) |
+| `GET /agent/config` | providers (and whether the server has each key), the default, the ranks, the wait options, the shared datasets described, and the page's own wording |
+| `GET /agent/models?provider=[&base_url=]` | the chat models a provider lists |
+| `POST /agent/intro`, `/analyse`, `/wait`, `/interpret`, `/plan`, `/started`, `/chat`, `/debrief` | one step of the conversation each; `agent: {provider, model, base_url}` picks who phrases it |
+
 ---
 
 ## Running a generated script
@@ -3273,6 +3349,7 @@ reporting/    a sweep, written out as something to look at
 adapters/     making and checking the five LoRAs a sweep blends
 tools/        dev aids that are not part of the pipeline
 async_api/    the search as a web service: jobs, a worker, live inference
+async_api_agent/  the LoRA guide behind /agent: prompts, providers, a dataset's facts
 ```
 
 ### The drivers
@@ -3332,6 +3409,9 @@ async_api/    the search as a web service: jobs, a worker, live inference
 | `testing/test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
 | `testing/evaluate_chromosome_against_loras.py` | runs a sweep's best individual beside each of its LoRAs applied alone, grades all of them with one judge, and says which the blend beats |
 | `async_api/verify.py` | the API's half of that comparison: what a verification may ask for, the command the worker runs, and the report it leaves behind |
+| `async_api/agent-ui.html` | the LoRA guide page at `/agent`: a chat model walks a user from a dataset to trained LoRAs, with the progress drawn beside it |
+| `async_api_agent/prompts.py` | every system prompt the guide sends, and the wording it falls back to without a model |
+| `async_api_agent/settings.py` | which provider and model the guide talks through, and what it plans |
 
 ### The adapters, and the dev aids
 

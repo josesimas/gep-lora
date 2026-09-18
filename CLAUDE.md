@@ -50,7 +50,9 @@ tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
 async_api/    server, worker, submit, registry, results, golive, inference,
               users, verify, evaluate, train -- the search as a web service. See
-              "The async API" below.
+              "The async API" below. agent-ui.html is the LoRA guide page (/agent).
+async_api_agent/  settings, prompts, providers, analysis, planner, agent, routes --
+              the chat model behind /agent that walks a user to trained LoRAs
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -1074,6 +1076,23 @@ change to it. These rules hold it together:
   found by `scan` belong to nobody until `catalog own <user>`. `--mock` trains nothing and writes
   a weightless adapter; `submit.settings_for` refuses a weightless slot unless the
   template is the mocked one.
+
+- **The LoRA guide proposes; the API does.** `async_api_agent/` (mounted by
+  `server.py` as `/agent/*`, page `async_api/agent-ui.html`) never trains, queues or
+  stores: `/agent/plan` returns `POST /loras` bodies and the *page* sends them, then
+  watches `/loras/{id}`. Keep it that way -- a second path into training would be a
+  second set of checks. Its routes are functions in `routes.ROUTES`, which the server
+  calls with its `App`; an `AgentError` is its 4xx/5xx.
+- **The guide's facts are computed, its words are the model's, and it works with
+  none.** Counts, the estimate and the plan come from `analysis.py`/`planner.py`; the
+  model only phrases them. Every step has a fallback in `prompts.py`, used when the
+  provider has no key, cannot be reached or is `scripted`. **Every system prompt and
+  every line the guide says lives in `prompts.py`** -- the page's own lines too, sent
+  in `/agent/config`'s `words`. Provider keys are server environment variables
+  (`key_env`), never settings and never sent to the page; only a `local` provider may
+  be repointed from the page, and then without its key. Its knobs are
+  `async_api_agent/settings.py` (`GEP_AGENT_<NAME>` overrides), for the same reason
+  the API's are not in `config/settings.py`.
 
 Its knobs live in `async_api/settings.py`, deliberately outside `config/settings.py`,
 whose `snapshot()` would store them in every sweep.

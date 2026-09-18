@@ -76,9 +76,17 @@ Other
     GET    /settings                       settings.py's values and the choices, for a form
     GET    /datasets                       shared dataset files a submission may name
     GET    /  or  /demo                    a test page that drives all of the above
+
+The LoRA agent (async_api_agent/routes.py)
+    GET    /agent                          the agent page: a guide that trains LoRAs
+    GET    /agent/config, /agent/models    its providers, plan and demo datasets
+    POST   /agent/{intro,analyse,wait,interpret,plan,started,chat,debrief}
+                                           one step of the conversation each; the
+                                           page trains through POST /loras above
 """
 
 import argparse
+import functools
 import json
 import os
 import re
@@ -97,6 +105,7 @@ from async_api import settings
 from async_api import submit
 from async_api import train
 from async_api import verify
+from async_api_agent import routes as agent_routes
 from adapters import catalog as lora_catalog
 from config import settings as config
 
@@ -104,6 +113,10 @@ from config import settings as config
 # A page that exercises every endpoint, served at / and /demo. Same origin as
 # the API, so it needs no CORS; it holds no secrets of its own.
 DEMO_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo.html")
+
+# The agent page, served at /agent: the same API driven by a guide that walks a
+# user through training LoRAs (async_api_agent/). Same origin, same key.
+AGENT_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-ui.html")
 
 
 class FileReply:
@@ -718,7 +731,7 @@ ROUTES = [
     ("DELETE", r"/loras/(\d+)", "delete_lora", ()),
     ("GET", r"/live", "list_live", ()),
     ("DELETE", r"/live/(\d+)", "unset_one", ()),
-]
+] + agent_routes.ROUTES          # a function, not an App method name: see _dispatch
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -761,6 +774,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path in ("/", "/demo") and self.command == "GET":
                 return self._page(DEMO_PAGE)
+            if path in ("/agent", "/agent-ui", "/agent-ui.html") and self.command == "GET":
+                return self._page(AGENT_PAGE)
             if path == "/health" and self.command == "GET":
                 return self._send(200, {"ok": True, "models": self.app.cache.status()})
             if path == "/infer" and self.command == "POST":
@@ -781,7 +796,9 @@ class Handler(BaseHTTPRequestHandler):
                     args.append(self._body())
                 if "query" in extras:
                     args.append(parse_qs(url.query))
-                status, payload = getattr(self.app, name)(*args)
+                handler = (getattr(self.app, name) if isinstance(name, str)
+                           else functools.partial(name, self.app))
+                status, payload = handler(*args)
                 if isinstance(payload, FileReply):
                     return self._file(payload)
                 return self._send(status, payload)
@@ -790,6 +807,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(404, "no such endpoint: %s %s" % (self.command, path))
         except ApiError as error:
             self._send(error.status, error.payload)
+        except agent_routes.AgentError as error:
+            self._send(error.status, {"error": str(error)})
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as error:                    # noqa: BLE001 - one request fails
