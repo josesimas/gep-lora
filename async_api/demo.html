@@ -88,6 +88,12 @@
   .help:empty { display: none; }
   label.check { display: flex; gap: 6px; align-items: center; color: var(--ink); font-size: 13px; margin-top: 12px; }
   label.check input { width: auto; margin: 0; }
+  .members { display: grid; gap: 2px 16px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+  .member { display: flex; gap: 8px; align-items: center; }
+  .member label.check { flex: 1; margin-top: 4px; min-width: 0; }
+  .member input[type="number"] { width: 72px; flex: none; padding: 3px 6px; }
+  .member input[type="number"]:disabled { opacity: .4; }
+  .field.invalid .members input[type="number"] { border-color: var(--line); }
 </style>
 </head>
 <body>
@@ -449,6 +455,17 @@ const FIELDS = [
   { group: "Scoring", name: "EVALUATOR", label: "Evaluator", type: "choice", wide: true, describe: true },
   { group: "Scoring", name: "TRAINING_COUNT", label: "Questions per individual", type: "int", min: 1,
     nullable: "blank = all of them" },
+  { group: "Scoring", name: "COMPOSITE_EVALUATORS", label: "Evaluators to combine, with their weights", type: "members",
+    wide: true, showIf: (v) => v.EVALUATOR === "composite",
+    help: "Each grades exactly as it would on its own; a weight says how much it counts." },
+  { group: "Scoring", name: "COMPOSITE_AGGREGATE", label: "Combine by", type: "choice", wide: true, describe: true,
+    showIf: (v) => v.EVALUATOR === "composite" },
+  { group: "Scoring", name: "COMPOSITE_FLOOR", label: "Veto below", type: "float", min: 0, max: 1, step: 0.05,
+    nullable: "blank = no veto", showIf: (v) => v.EVALUATOR === "composite",
+    help: "Any member under this scores the answer 0." },
+  { group: "Scoring", name: "COMPOSITE_ON_FAILURE", label: "A member that fails", type: "choice",
+    labels: { fail: "fails the answer", skip: "is skipped" },
+    showIf: (v) => v.EVALUATOR === "composite" },
   { group: "Scoring", name: "JUDGE_BACKEND", label: "Judge runs on", type: "choice",
     labels: { endpoint: "an OpenAI-compatible endpoint", unsloth: "this machine (unsloth)" },
     showIf: (v) => needsJudge(v) },
@@ -479,7 +496,15 @@ const PRESETS = {
 let form = null;            // GET /settings
 
 function needsJudge(values) {
-  const chosen = (form.choices.EVALUATOR || []).find((e) => e.value === values.EVALUATOR);
+  const find = (name) => (form.choices.EVALUATOR || []).find((e) => e.value === name);
+  // A composite asks a judge only if one of its members does.
+  if (values.EVALUATOR === "composite" && Array.isArray(values.COMPOSITE_EVALUATORS)) {
+    return values.COMPOSITE_EVALUATORS.some((member) => {
+      const chosen = find(Array.isArray(member) ? member[0] : member);
+      return !chosen || chosen.needs_judge;
+    });
+  }
+  const chosen = find(values.EVALUATOR);
   return !chosen || chosen.needs_judge;
 }
 
@@ -507,6 +532,32 @@ function fieldControl(field) {
   if (field.type === "choice") {
     input = el("select", { id }, choicesOf(field).map((c) =>
       el("option", { value: c.value }, (field.labels && field.labels[c.value]) || c.label)));
+  } else if (field.type === "members") {
+    // One row per evaluator a composite may combine: a tick and a weight.
+    input = el("div", { id, class: "members" }, (form.choices.EVALUATOR || [])
+      .filter((c) => c.value !== "composite")
+      .map((c) => {
+        const tick = el("input", { type: "checkbox", "data-member": c.value });
+        const weight = el("input", { type: "number", min: 0, step: 0.1, value: 1,
+                                     "data-weight": c.value, title: "weight", disabled: "" });
+        tick.addEventListener("change", () => {
+          weight.disabled = !tick.checked;
+          // Members are asked in the order they were ticked, so remember it.
+          const order = (input.dataset.order || "").split(",").filter((n) => n && n !== c.value);
+          if (tick.checked) order.push(c.value);
+          input.dataset.order = order.join(",");
+        });
+        for (const one of [tick, weight]) {
+          one.addEventListener("input", refreshForm);
+          one.addEventListener("change", refreshForm);
+        }
+        return el("div", { class: "member", title: c.description || "" },
+          el("label", { class: "check" }, tick, c.label), weight);
+      }));
+    return el("div", { class: "field wide", "data-name": field.name },
+      el("label", {}, field.label), input,
+      el("div", { class: "help" }, field.help || ""),
+      el("div", { class: "help error" }));
   } else if (field.type === "bool") {
     input = el("input", { id, type: "checkbox" });
   } else {
@@ -542,6 +593,23 @@ function choicesOf(field) {
 function setField(field, value) {
   const input = $("f_" + field.name);
   if (!input) return;
+  if (field.type === "members") {
+    const weights = {};
+    for (const member of Array.isArray(value) ? value : []) {
+      if (typeof member === "string") weights[member] = 1;
+      else if (Array.isArray(member)) weights[member[0]] = member[1];
+      else if (member && member.name) weights[member.name] = member.weight ?? 1;
+    }
+    for (const tick of input.querySelectorAll("[data-member]")) {
+      const name = tick.dataset.member;
+      const weight = input.querySelector(`[data-weight="${name}"]`);
+      tick.checked = name in weights;
+      weight.value = name in weights ? weights[name] : 1;
+      weight.disabled = !tick.checked;
+    }
+    input.dataset.order = Object.keys(weights).join(",");
+    return;
+  }
   if (field.type === "bool") input.checked = !!value;
   else input.value = value === null || value === undefined ? "" : value;
 }
@@ -550,6 +618,19 @@ function setField(field, value) {
 function readField(field) {
   const input = $("f_" + field.name);
   if (field.type === "bool") return [input.checked, null];
+  if (field.type === "members") {
+    // -> ["name", ["name", weight], ...]: a weight of 1 is just the name.
+    const out = [];
+    const order = (input.dataset.order || "").split(",");
+    const ticked = [...input.querySelectorAll("[data-member]:checked")].map((t) => t.dataset.member)
+      .sort((a, b) => (order.indexOf(a) + 1 || 1e9) - (order.indexOf(b) + 1 || 1e9));
+    for (const name of ticked) {
+      const weight = Number(input.querySelector(`[data-weight="${name}"]`).value);
+      if (!Number.isFinite(weight) || weight <= 0) return [null, `The weight of ${name} must be above 0.`];
+      out.push(weight === 1 ? name : [name, weight]);
+    }
+    return out.length ? [out, null] : [null, "Pick at least one evaluator."];
+  }
   const raw = input.value.trim();
   if (field.type === "choice") return [raw, null];
   if (raw === "") return field.nullable ? [null, null] : [null, "Required."];

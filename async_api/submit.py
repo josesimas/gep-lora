@@ -101,6 +101,7 @@ def form():
     value the server would have used.
     """
     import evaluators                   # the registry: importing it registers them
+    from evaluators import composite
 
     conf = config.snapshot()
     templates = [name for name in generate_runs.templates_available()
@@ -114,6 +115,12 @@ def form():
                            "needs_judge": evaluators.get(name).needs_judge}
                           for name, description in evaluators.available()],
             "JUDGE_BACKEND": [{"value": name, "label": name} for name in evaluators.BACKENDS],
+            "COMPOSITE_AGGREGATE": [{"value": name, "label": name,
+                                     "description": composite.AGGREGATE_DESCRIPTIONS[name]}
+                                    for name in composite.AGGREGATES],
+            "COMPOSITE_ON_FAILURE": [{"value": name, "label": name,
+                                      "description": composite.ON_FAILURE_DESCRIPTIONS[name]}
+                                     for name in composite.ON_FAILURE],
         },
         "locked": list(settings.LOCKED_SETTINGS),
     }

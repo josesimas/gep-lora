@@ -191,6 +191,9 @@ class RefusalTests(ServerTestCase):
         self.assertIn("template_code_mocked.py", templates)
         self.assertFalse([name for name in templates if "baseline" in name])
         self.assertTrue(all("needs_judge" in one for one in form["choices"]["EVALUATOR"]))
+        aggregates = [one["value"] for one in form["choices"]["COMPOSITE_AGGREGATE"]]
+        self.assertIn("geometric", aggregates)
+        self.assertIn("COMPOSITE_EVALUATORS", form["defaults"])
 
     def test_health_needs_no_key(self):
         self.assertEqual(self.call("GET", "/health", key="none")[0], 200)

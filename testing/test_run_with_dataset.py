@@ -459,7 +459,7 @@ def _score_pass(conn, run_id, dataset, conf, options, run_dir, say=print):
     # spends the rest of them confirming it. A row here is one individual, so
     # "the first 10%" is of the answers this pass has left to grade for it.
     limit_fraction = (graded.get("JUDGE_ABANDON_FRACTION")
-                      if evaluator.needs_judge else None)
+                      if evaluator.asks_judge(graded) else None)
     if limit_fraction:
         say("giving up on an individual once its first %g%% of graded answers "
             "have all scored 0" % (100 * limit_fraction))

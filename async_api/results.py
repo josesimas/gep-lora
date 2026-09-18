@@ -14,7 +14,8 @@ import os
 from storage import store
 
 # The settings worth putting in a job's summary; the detail carries all of them.
-SUMMARY_SETTINGS = ("TEMPLATE", "BASE_MODEL", "CHAT_TEMPLATE", "EVALUATOR", "COUNT",
+SUMMARY_SETTINGS = ("TEMPLATE", "BASE_MODEL", "CHAT_TEMPLATE", "EVALUATOR",
+                    "COMPOSITE_EVALUATORS", "COMPOSITE_AGGREGATE", "COUNT",
                     "GENERATIONS", "TRAINING_COUNT", "SELECTION_COUNT", "MUTATION_RATE")
 
 

@@ -29,6 +29,9 @@ a stored sweep can say how:
     similarity.py            token overlap with the dataset's answer, no model
     heuristic.py             local checkable properties, no model
     panel.py                 several judge models, aggregated
+    composite.py             several evaluators, their scores combined --
+                             mean, median, min, max, geometric, harmonic,
+                             trimmed mean, with an optional veto floor
     common.py                the registry, the judge transport, the reference
                              answers, the tokeniser -- everything two of the
                              six would otherwise both own
@@ -97,6 +100,9 @@ from evaluators import llm_judge_baseline        # noqa: F401,E402
 from evaluators import similarity               # noqa: F401,E402
 from evaluators import heuristic                # noqa: F401,E402
 from evaluators import panel                    # noqa: F401,E402
+# Last, since it combines the others -- though it only looks them up when a
+# sweep prepares it, by which time every import above has registered.
+from evaluators import composite                # noqa: F401,E402
 
 __all__ = ["API_KEY", "BACKENDS", "DEFAULT", "ENDPOINT", "Evaluator",
            "Prepared", "UNSLOTH", "abandon_after", "available", "backend_of",

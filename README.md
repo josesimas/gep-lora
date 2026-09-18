@@ -839,6 +839,7 @@ python start_run.py --evaluators     # what is registered, and which one is curr
 | `similarity` | token or character overlap with the dataset's answer | a dataset with assistant turns |
 | `heuristic` | local checks: length, repetition, a required and a forbidden pattern | nothing |
 | `panel` | several judge models, aggregated | a judge per member |
+| `composite` | several of the evaluators above, their scores combined (mean, median, min, max, geometric, harmonic, trimmed mean) | whatever its members need |
 
 "A judge" is a model, and `JUDGE_BACKEND` says where it runs: an
 OpenAI-compatible **endpoint**, or one loaded **here with unsloth**, the way the
@@ -1169,6 +1170,44 @@ base models. The step's note prints the count before any of it reaches the card:
 panel: judge-a, judge-b, loaded here with unsloth -- 2 model(s) resident at once, aggregated by mean
 ```
 
+#### `composite` — several evaluators
+
+`panel` is several *models* under one rubric; `composite` is several
+*evaluators*, each grading exactly as it would as `EVALUATOR`, their scores
+folded into one. A judge and a checkable property fail in different ways, and a
+composite selects on both:
+
+```python
+EVALUATOR = "composite"
+COMPOSITE_EVALUATORS = ["llm_judge_reference", ["heuristic", 0.5]]   # name, [name, weight] or {"name", "weight"}
+COMPOSITE_AGGREGATE = "geometric"
+COMPOSITE_FLOOR = 0.2
+COMPOSITE_ON_FAILURE = "fail"
+```
+
+| `COMPOSITE_AGGREGATE` | What it does |
+|---|---|
+| `mean` | weighted mean — the default |
+| `median` | weighted median; ignores one member out on its own |
+| `min` / `max` | the worst / best member; weights ignored |
+| `geometric` | weighted geometric mean; a low member costs far more than in the mean, and a 0 from anyone is 0 |
+| `harmonic` | weighted harmonic mean — the F1 of the family, harsher on imbalance still |
+| `trimmed_mean` | drop the highest and lowest, mean of the rest (needs 3+ members) |
+
+On a 0..1 scale `min ≤ harmonic ≤ geometric ≤ mean ≤ max` always, so moving along
+that list is choosing how much one bad member should cost. `COMPOSITE_FLOOR` is a
+**veto** applied first: any member below it makes the answer `0.0` — how
+`heuristic` becomes a gate rather than one vote. A member that fails fails the
+whole exchange under `"fail"` (a mean over whichever members answered is a
+different number); `"skip"` combines the rest, as `panel` does.
+
+Members read the sweep's own settings (`JUDGE_*`, `HEURISTIC_*`, ...), are
+prepared in order with the step's context — so `llm_judge_baseline` still fills
+its cache — and each one's score and reason is kept in the combined reason. A
+member may appear once, and `composite` not at all. The abandon rule and the
+lora server teardown follow the members: a composite asks a judge only if one of
+its members does (`Evaluator.asks_judge(conf)`).
+
 #### Giving up early on a hopeless individual
 
 A judge call is the expensive part of a sweep, and most of the calls an
@@ -1198,7 +1237,8 @@ rows — see [`test_run_with_dataset.py`](#14-test_run_with_datasetpy--test_resu
 
 Three things it deliberately does not do. It never applies to `similarity` or
 `heuristic`: a local *scorer* costs nothing to finish, so stopping it short would
-only lose detail, and the rule is on for the four evaluators that ask a model —
+only lose detail, and the rule is on for the evaluators that ask a model (a
+`composite` counts when any member does) —
 whichever backend they ask it through, since a call it does not make is a
 request not sent or a `generate()` not run. An **empty** answer scores `0.0`
 without a call, and is not an

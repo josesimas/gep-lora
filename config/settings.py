@@ -386,6 +386,9 @@ PROCESS_RUN_PROGRESS_SECONDS = 5
 #                          good.
 #   "panel"                several judge models, aggregated. Less noise per
 #                          score, N times the cost.
+#   "composite"            several of the evaluators above, their scores
+#                          combined -- mean, median, min, max, geometric,
+#                          harmonic, trimmed mean (COMPOSITE_*).
 #
 # Like every setting here, this is frozen into a sweep when it starts: changing
 # it does nothing to a sweep already running, which is what keeps every fitness
@@ -617,6 +620,38 @@ PANEL_AGGREGATE = "mean"
 # on merit alone. Needs a dataset with assistant turns, exactly like
 # "llm_judge_reference".
 PANEL_USE_REFERENCE = False
+
+
+# --- the "composite" evaluator ----------------------------------------------
+
+# The evaluators combined, in the order they are prepared and asked: a name
+# (weight 1), ["name", weight] or {"name": "...", "weight": ...}. Each member
+# reads the same settings it would as EVALUATOR -- JUDGE_*, HEURISTIC_* and the
+# rest -- so it grades exactly as it would alone. A name may appear once, and
+# "composite" not at all. Empty is refused when a composite sweep is scored.
+COMPOSITE_EVALUATORS = ["llm_judge_reference", "llm_judge_baseline"]
+
+# How the members' scores become one:
+#   "mean"          weighted mean
+#   "median"        weighted median -- ignores one member out on its own
+#   "min" / "max"   the worst / best member; weights ignored
+#   "geometric"     weighted geometric mean -- a low member costs much more
+#                   than in the mean, and a 0 from anyone is 0
+#   "harmonic"      weighted harmonic mean -- harsher on imbalance still
+#   "trimmed_mean"  drop the highest and lowest, mean of the rest (3+ members)
+# On a 0..1 scale min <= harmonic <= geometric <= mean <= max always, so moving
+# along that list is choosing how much one bad member should cost.
+COMPOSITE_AGGREGATE = "mean"
+
+# A veto: any member scoring below this makes the answer 0.0, whatever the rest
+# said -- how a checkable rule (heuristic, say) becomes a gate rather than one
+# vote. None for no veto.
+COMPOSITE_FLOOR = None
+
+# A member whose score() fails: "fail" fails the whole exchange, since a mean
+# over whichever members answered is a different number from the mean over all
+# of them; "skip" combines the members that did answer, as panel does.
+COMPOSITE_ON_FAILURE = "fail"
 
 
 

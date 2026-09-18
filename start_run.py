@@ -197,7 +197,9 @@ def freeze(conf):
     # process step has finished and there is a transcript nobody can score.
     # Same for an unknown JUDGE_BACKEND, which is the other half of that
     # question: which evaluator grades, and where its judge runs.
-    evaluators.get(conf.get("EVALUATOR"))
+    evaluator = evaluators.get(conf.get("EVALUATOR"))
+    if evaluator.check:
+        evaluator.check(conf)
     evaluators.backend_of(conf)
     for name in ("SEED", "WEIGHT_MASTER_SEED", "SELECTION_MASTER_SEED",
                  "MUTATION_MASTER_SEED", "WEIGHT_MUTATION_MASTER_SEED"):
@@ -345,7 +347,7 @@ def wants_the_card(conf):
     try:
         if evaluators.backend_of(conf) != evaluators.UNSLOTH:
             return False
-        return bool(evaluators.get(conf.get("EVALUATOR")).needs_judge)
+        return evaluators.get(conf.get("EVALUATOR")).asks_judge(conf)
     except SystemExit:
         return True
 
@@ -720,7 +722,7 @@ def _evaluate(context):
     # each group below is one individual's answers in the order they were asked
     # -- which is what "the first 10%" means.
     limit_fraction = (context.conf.get("JUDGE_ABANDON_FRACTION")
-                      if evaluator.needs_judge else None)
+                      if evaluator.asks_judge(context.conf) else None)
     if limit_fraction:
         print("giving up on an individual once its first %g%% of graded answers "
               "have all scored 0" % (100 * limit_fraction))

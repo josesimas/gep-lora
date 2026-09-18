@@ -555,9 +555,14 @@ how many rows have moved on from it and says so. Re-run `trees runs process eval
 to test the current population in that case.
 
 The `evaluate` step scores answers the way `EVALUATOR` in `settings.py` says. Two of the
-seven registered evaluators are local (`similarity`, `heuristic`); the other five
+eight registered evaluators are local (`similarity`, `heuristic`); five
 (`llm_judge`, `llm_judge_reference`, `llm_judge_answers`, `llm_judge_baseline`,
-`panel`) ask a judge model. It is resumable either way — already-scored exchanges
+`panel`) ask a judge model; and `composite` combines any of the others
+(`COMPOSITE_EVALUATORS`, each member optionally weighted) by `COMPOSITE_AGGREGATE` --
+`mean`, `median`, `min`, `max`, `geometric`, `harmonic`, `trimmed_mean` -- with
+`COMPOSITE_FLOOR` as a veto and `COMPOSITE_ON_FAILURE` (`fail`/`skip`) deciding what
+one failed member costs. Whether a composite asks a judge is whether a member does,
+so steps decide on `Evaluator.asks_judge(conf)`, not the static `needs_judge`. It is resumable either way — already-scored exchanges
 are skipped unless `--force` — and `python start_run.py --evaluators` lists what is
 registered.
 
@@ -596,8 +601,8 @@ must be graded, and be unanimously 0.0, before `step_evaluate` stops asking abou
 it and scores the rest 0.0 unasked, with a reason saying so. Written rather than
 left NULL, because fitness is the mean over an individual's exchanges -- that is
 what makes the whole individual's fitness zero, and what stops a re-run asking
-again. Only the four evaluators that ask a model abandon anything
-(`needs_judge`, whichever backend they ask through); a blank answer and a failed
+again. Only the evaluators that ask a model abandon anything
+(`asks_judge(conf)`, whichever backend they ask through); a blank answer and a failed
 grading call are neither evaluations nor zeros, so neither counts toward it. `evaluators.abandon_after()` is the
 arithmetic (rounded up, never fewer than one), and the rule condemns an
 individual that would have recovered later -- which on a ten-question eval set
@@ -1081,7 +1086,7 @@ appeared to manage VRAM would be claiming to test something it cannot.
   sweep like every other setting and a step reads the sweep's, never `settings.py`'s.
   The `evaluators/` package is a registry, **one module per evaluator** (`llm_judge.py`,
   `llm_judge_reference.py`, `llm_judge_answers.py`, `llm_judge_baseline.py`,
-  `similarity.py`, `heuristic.py`, `panel.py`) plus `common.py` for what more than one of
+  `similarity.py`, `heuristic.py`, `panel.py`, `composite.py`) plus `common.py` for what more than one of
   them needs. An evaluator is a
   name, a description, `prepare(conf,
   pending, context=None)` (once per step: discover the model, load the eval set's own

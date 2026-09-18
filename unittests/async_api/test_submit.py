@@ -60,6 +60,26 @@ class SubmitTests(JobsTestCase):
     def test_an_unknown_evaluator_is_refused(self):
         self.refused(self.submission(EVALUATOR="nope"), "EVALUATOR")
 
+    def test_a_composite_with_no_members_is_refused(self):
+        self.refused(self.submission(EVALUATOR="composite", COMPOSITE_EVALUATORS=[]),
+                     "COMPOSITE_EVALUATORS")
+
+    def test_a_composite_with_a_bad_member_is_refused(self):
+        self.refused(self.submission(EVALUATOR="composite",
+                                     COMPOSITE_EVALUATORS=["heuristic", ["similarity", 0]]),
+                     "similarity")
+
+    def test_a_composite_is_accepted(self):
+        job = submit.submit(self.registry, self.user, self.submission(
+            EVALUATOR="composite", COMPOSITE_AGGREGATE="geometric",
+            COMPOSITE_EVALUATORS=["heuristic", ["similarity", 2]]))
+        conn = store.connect(self.registry.database(job))
+        try:
+            conf = store.get_settings(conn, job["run_id"])
+        finally:
+            conn.close()
+        self.assertEqual(conf["COMPOSITE_EVALUATORS"], ["heuristic", ["similarity", 2]])
+
     def test_missing_adapters_are_refused(self):
         self.refused(self.submission(LORA_SLOTS={"L1": os.path.join(self.folder, "none")}),
                      "slot L1")

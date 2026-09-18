@@ -106,11 +106,11 @@ class Evaluator:
     """
 
     __slots__ = ("name", "description", "prepare", "score", "wants_reference",
-                 "needs_judge", "wants_baseline")
+                 "needs_judge", "wants_baseline", "judges", "check")
 
     def __init__(self, name, description, prepare, score,
                  wants_reference=False, needs_judge=False,
-                 wants_baseline=False):
+                 wants_baseline=False, judges=None, check=None):
         self.name = name
         self.description = description
         self.prepare = prepare
@@ -118,11 +118,31 @@ class Evaluator:
         self.wants_reference = wants_reference
         # Asks a model for every score, whichever backend produces it. What the
         # abandon rule is decided on: a judge call costs a request or a
-        # generate(), and a local scorer costs neither.
+        # generate(), and a local scorer costs neither. For an evaluator whose
+        # answer depends on its settings (composite) this is "can ask one", and
+        # asks_judge(conf) is the answer for one sweep.
         self.needs_judge = needs_judge
         # Needs the base model's own answers, which cost a model load the first
         # time they are wanted and come out of the database ever after.
         self.wants_baseline = wants_baseline
+        # judges(conf) -> bool, for an evaluator that only knows under a sweep's
+        # settings whether it asks a model. None means needs_judge is the answer.
+        self.judges = judges
+        # check(conf), raising SystemExit on settings this evaluator could never
+        # score under -- run when a sweep is created (start_run.freeze), so a
+        # typo is refused before a population is drawn rather than after the
+        # process step. None means there is nothing to check that cheaply.
+        self.check = check
+
+    def asks_judge(self, conf):
+        """Whether scoring under these settings asks a model. -> bool.
+
+        What a step decides the abandon rule and the pool teardown on. The same
+        as needs_judge for every evaluator but one that combines others.
+        """
+        if self.judges is None:
+            return bool(self.needs_judge)
+        return bool(self.judges(conf))
 
 
 # Filled by the register() call at the foot of each evaluator module, as
