@@ -173,9 +173,9 @@ def base_model_name(value=None):
 # the words its prompts are written in.
 LEGACY_CHAT_TEMPLATE = "qwen-2.5"
 
-# render()'s and render_baseline()'s default for `chat_template`: read
-# settings.py. A sentinel rather than None, because None is a real value -- the
-# model's own template.
+# render()'s and render_baseline()'s default for `chat_template`, and every
+# `count` default below: read settings.py. A sentinel rather than None, because
+# None is a real value for both -- the model's own template, and no cap.
 FROM_SETTINGS = object()
 
 
@@ -204,18 +204,19 @@ def _chat_template(value):
     return chat_template_name() if value is FROM_SETTINGS else (value or None)
 
 
-def training_count(value=None):
+def training_count(value=FROM_SETTINGS):
     """The eval-set cap as the templates want it: a positive int, or None.
 
-    Same contract as training_set_path(): None means whatever settings.py
-    currently says, and a caller holding a sweep's stored settings passes that
-    instead, so a resumed sweep keeps being judged on as many prompts as it was
-    created with. Settings.TRAINING_COUNT of None is no cap.
+    Left out, it is whatever settings.py currently says; a caller holding a
+    sweep's stored settings passes that instead, so a resumed sweep keeps being
+    judged on as many prompts as it was created with. None is no cap wherever it
+    comes from -- a sentinel rather than None marks "not given", or a sweep
+    stored with no cap would quietly get settings.py's.
 
     Validated here rather than in the templates because a bad value should stop
     the generation step, not turn up inside every generated script.
     """
-    value = settings.TRAINING_COUNT if value is None else value
+    value = settings.TRAINING_COUNT if value is FROM_SETTINGS else value
     if value is None:
         return None
     try:
@@ -234,7 +235,7 @@ def training_count(value=None):
     return count
 
 
-def eval_prompt_count(training_set=None, count=None):
+def eval_prompt_count(training_set=None, count=FROM_SETTINGS):
     """(path, used, total) for the eval set, or a clear failure.
 
     Counts non-blank lines rather than re-parsing: the template owns reading a
@@ -270,7 +271,7 @@ def eval_prompt_count(training_set=None, count=None):
     return path, (total if cap is None else min(cap, total)), total
 
 
-def eval_records(training_set=None, count=None):
+def eval_records(training_set=None, count=FROM_SETTINGS):
     """The eval set as records the evaluate step can score against.
 
     -> [{"position": 1, "question": "...", "reference": "..." or None}, ...]
@@ -614,8 +615,8 @@ def fill(template_lines, blocks, values):
 
 def render(expression, steps, final, script_name, provenance, label,
            template_lines=None, template_path=TEMPLATE, weight_seed=None,
-           training_set=None, slots=None, count=None, base_model=None,
-           chat_template=FROM_SETTINGS):
+           training_set=None, slots=None, count=FROM_SETTINGS, base_model=None,
+           chat_template=FROM_SETTINGS, root=None):
     """The complete text of one runnable script, built from the template.
 
     Callers pass the planning results from plan(); the template supplies
@@ -633,17 +634,24 @@ def render(expression, steps, final, script_name, provenance, label,
 
     `training_set` is what the script's TRAINING_SET becomes, resolved to an
     absolute path; None takes it from settings.py. `slots` is the same for
-    LORA_SLOTS, `count` for TRAINING_COUNT, and `base_model` for BASE_MODEL.
+    LORA_SLOTS and `base_model` for BASE_MODEL. `count` is TRAINING_COUNT and
     `chat_template` is CHAT_TEMPLATE already resolved -- a name, or None for the
-    model's own -- because None is a value here; leave it out to read settings.py.
+    model's own -- and None is a value for both (no cap; the model's own
+    template), so leave them out to read settings.py.
     start_run.py passes the sweep's stored values for all four, so a resumed sweep
     keeps reading the prompts, reading as many of them, blending the adapters
     and loading the model it was created with even if settings.py has since
     moved on.
+
+    `root` is the tree `steps` were planned from, for a caller whose tree is not
+    a chromosome: a single adapter on its own is a leaf with no CAT above it,
+    which the grammar refuses to decode but plan() builds and every template
+    runs. Left out, it is decoded from `expression`, as for any individual.
     """
     template_lines = (load_template(template_path) if template_lines is None
                       else template_lines)
-    root, _ = decode(expression)
+    if root is None:
+        root, _ = decode(expression)
     leaves = [step for step in steps if step.kind == "leaf"]
     # Resolved once: the block below wants it, and it validates, so a bad
     # TRAINING_COUNT fails here rather than in every script rendered after it.
@@ -692,7 +700,7 @@ def render(expression, steps, final, script_name, provenance, label,
 
 def render_baseline(script_name, provenance, template_lines=None,
                     template_path=BASELINE_TEMPLATE, training_set=None,
-                    count=None, base_model=None, chat_template=FROM_SETTINGS):
+                    count=FROM_SETTINGS, base_model=None, chat_template=FROM_SETTINGS):
     """The complete text of the one baseline script -- the base model alone.
 
     The control the llm_judge_baseline evaluator grades against: the same base

@@ -9,6 +9,11 @@ One small sqlite file, `<JOBS_DIR>/jobs.sqlite3`, beside the job folders:
                  order the worker takes them in.
     deployments  a job's individual put live: the hash of the token that
                  reaches it, where it went, and the blend spec it serves
+    verifications  a blend of a finished job queued to be run beside the LoRAs
+                 it is made of (see verify.py). Work to be done, like a job,
+                 and taken by the same worker -- after the jobs, since a
+                 verification is a question about a search that has finished
+                 and a job is one still waiting to start.
 
 What a job *is* lives in its own database (see submit.py) -- the same file
 store.py writes for any sweep. This file only knows about jobs as work to be
@@ -75,7 +80,25 @@ CREATE TABLE IF NOT EXISTS deployments (
     revoked_at  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS verifications (
+    id               INTEGER PRIMARY KEY,     -- arrival order, as for jobs
+    job_id           INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status           TEXT NOT NULL DEFAULT 'queued',
+    created_at       TEXT NOT NULL,
+    started_at       TEXT,
+    finished_at      TEXT,
+    number           INTEGER NOT NULL,        -- the individual being verified
+    chromosome       TEXT NOT NULL,           -- as it was when queued
+    options          TEXT NOT NULL DEFAULT '{}',  -- JSON, see verify.py
+    pid              INTEGER,
+    exit_code        INTEGER,
+    error            TEXT
+);
+
 CREATE INDEX IF NOT EXISTS jobs_by_status ON jobs(status, id);
+CREATE INDEX IF NOT EXISTS verifications_by_status ON verifications(status, id);
+CREATE INDEX IF NOT EXISTS verifications_by_job ON verifications(job_id, id);
 CREATE INDEX IF NOT EXISTS jobs_by_user ON jobs(user_id, id);
 """
 
@@ -118,6 +141,16 @@ class Registry:
     def database(self, job):
         """The absolute path of a job's sweep database."""
         return os.path.join(self.folder(job), "job.sqlite3")
+
+    def verification_folder(self, job, verification_id):
+        """Where one verification's answers, scores and report go.
+
+        Inside the job's own folder, so deleting the run takes its
+        verifications with it -- they are readings of that sweep and mean
+        nothing without it -- and named for the verification, so two of them
+        (another judge, another blend) cannot tread on each other's answers.
+        """
+        return os.path.join(self.folder(job), "verify%d" % verification_id)
 
     # --- users -------------------------------------------------------------
 
@@ -276,6 +309,81 @@ class Registry:
     def delete_job(self, job_id):
         with self._connect() as conn:
             conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
+    # --- verifications -----------------------------------------------------
+
+    def add_verification(self, job, number, chromosome, options):
+        """Queue one verification of a job's blend. -> the row.
+
+        Queued outright, unlike a job: there is nothing to write first. The
+        sweep it reads is the job's own database, already on disk.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO verifications (job_id, user_id, status, created_at,"
+                " number, chromosome, options) VALUES (?, ?, 'queued', ?, ?, ?, ?)",
+                (job["id"], job["user_id"], now(), number, chromosome,
+                 json.dumps(options or {})))
+            row_id = cursor.lastrowid
+        return self.verification(row_id)
+
+    def verification(self, verification_id, user_id=None):
+        sql, args = "SELECT * FROM verifications WHERE id = ?", [verification_id]
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            args.append(user_id)
+        with self._connect() as conn:
+            return conn.execute(sql, args).fetchone()
+
+    def verifications(self, job_id=None, user_id=None):
+        sql, args = "SELECT * FROM verifications WHERE 1 = 1", []
+        if job_id is not None:
+            sql += " AND job_id = ?"
+            args.append(job_id)
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            args.append(user_id)
+        with self._connect() as conn:
+            return conn.execute(sql + " ORDER BY id DESC", args).fetchall()
+
+    def claim_next_verification(self):
+        """Take the oldest queued verification. -> the row, or None.
+
+        The same atomic claim jobs get, and for the same reason: the server and
+        the worker are separate processes on one file.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute("SELECT id FROM verifications WHERE status = 'queued'"
+                                   " ORDER BY id LIMIT 1").fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    return None
+                conn.execute("UPDATE verifications SET status = 'running', started_at = ?"
+                             " WHERE id = ?", (now(), row["id"]))
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.verification(row["id"])
+
+    def set_verification_pid(self, verification_id, pid):
+        with self._connect() as conn:
+            conn.execute("UPDATE verifications SET pid = ? WHERE id = ?",
+                         (pid, verification_id))
+
+    def finish_verification(self, verification_id, status, exit_code=None, error=None):
+        with self._connect() as conn:
+            conn.execute("UPDATE verifications SET status = ?, finished_at = ?,"
+                         " exit_code = ?, error = ?, pid = NULL WHERE id = ?",
+                         (status, now(), exit_code, error, verification_id))
+
+    def orphaned_verifications(self):
+        """Verifications left running by a worker that died."""
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM verifications WHERE status = 'running'"
+                                " ORDER BY id").fetchall()
 
     # --- deployments -------------------------------------------------------
 

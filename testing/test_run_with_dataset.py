@@ -131,6 +131,37 @@ def script_chromosome(source):
     return found.group(1) if found else None
 
 
+def testing_count(value):
+    """TESTING_COUNT as the pass wants it: a positive int, or None for all.
+
+    Validated the way generate_runs.training_count() validates its split's cap,
+    and here rather than in the scripts, so a bad value stops the pass (or a
+    submission) instead of turning up inside every re-pointed script.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float))             or value != int(value) or value < 1:
+        raise SystemExit("TESTING_COUNT must be a whole number of at least 1, or "
+                         "None for every question, got %r" % (value,))
+    return int(value)
+
+
+def _count(args, conf):
+    """How many testing questions to ask. -> int, or None for all of them.
+
+    --count, then the sweep's own TESTING_COUNT, then settings.py's -- the order
+    _minimum() reads its knob in. Asked whether the sweep holds the key rather
+    than whether its value is None, because None is a value here: a sweep stored
+    with no cap asks every question, and only one stored before the setting
+    existed falls back to settings.py.
+    """
+    if args.count is not None:
+        return args.count or None
+    if "TESTING_COUNT" in conf:
+        return testing_count(conf["TESTING_COUNT"])
+    return testing_count(config.TESTING_COUNT)
+
+
 def _minimum(args, conf):
     """The training quality an individual has to beat to be worth testing.
 
@@ -579,9 +610,10 @@ def main(argv=None):
                         help="test the individuals scoring above this on the "
                              "training split (default: the sweep's own "
                              "TESTING_MIN_QUALITY, falling back to settings.py's)")
-    parser.add_argument("--count", type=int, default=0, metavar="N",
-                        help="ask only the first N questions of the dataset "
-                             "(0 = all of them, the default)")
+    parser.add_argument("--count", type=int, default=None, metavar="N",
+                        help="ask only the first N questions of the dataset, 0 "
+                             "for all of them (default: the sweep's own "
+                             "TESTING_COUNT, falling back to settings.py's)")
     parser.add_argument("--limit", type=int, default=0, metavar="N",
                         help="test only the best N of the individuals selected")
     parser.add_argument("--into", default=None, metavar="DIR",
@@ -650,6 +682,8 @@ def main(argv=None):
     # recorded neither.
     conf = store.get_settings(conn, run_id)
     minimum = _minimum(args, conf)
+    # Resolved into args, which score_pass() reads it from as well.
+    args.count = _count(args, conf)
 
     print("sweep %d in %s" % (run_id, conn.path))
     if args.from_db:

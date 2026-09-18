@@ -119,6 +119,13 @@ TESTING_SET = "datasets/medical_validation_lora_dataset.json"
 # that ever answered anything.
 TESTING_MIN_QUALITY = 0.5
 
+# How many records of TESTING_SET the testing pass asks: the first N, in file
+# order, or None for every one of them. TRAINING_COUNT's rule for the other
+# split, and kept apart from it -- the testing set is asked once per individual
+# worth testing rather than once a generation, so it can usually afford to be
+# asked whole. --count overrides it for one pass.
+TESTING_COUNT = None
+
 
 
 # --- the adapters being blended --------------------------------------------

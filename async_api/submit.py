@@ -44,6 +44,7 @@ from config import settings as config
 import start_run
 from storage import add_dataset
 from storage import store
+from testing import test_run_with_dataset
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -79,6 +80,7 @@ def settings_for(overrides):
     _checked(start_run.freeze, conf)
     _checked(generate_runs.base_model_name, conf.get("BASE_MODEL"))
     _checked(generate_runs.training_count, conf.get("TRAINING_COUNT"))
+    _checked(test_run_with_dataset.testing_count, conf.get("TESTING_COUNT"))
     # The adapters have to be on this machine: the worker blends them here.
     _checked(generate_runs.slot_ranks, conf.get("LORA_SLOTS"))
     template = generate_runs.template_path(conf.get("TEMPLATE"))

@@ -83,6 +83,11 @@
   .help.error { color: var(--bad); }
   .help.ok { color: var(--ok); }
   .dataset { margin-top: 4px; }
+  .vgrid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .vcard { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+  .vcard h4 { font-size: 12px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+  .verdict { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--code); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
   .dataset [hidden] { display: none; }
   input[type="file"] { padding: 4px; font-size: 12px; }
   .help:empty { display: none; }
@@ -115,7 +120,7 @@
     </div>
     <div class="actions">
       <span class="muted">Start from:</span>
-      <button id="presetDemo" type="button" title="Mocked template, 4 individuals, 2 generations, 3 questions: done in seconds">Quick demo</button>
+      <button id="presetDemo" type="button" title="Mocked template, 4 individuals, 2 generations, every question: done in seconds">Quick demo</button>
       <button id="presetDefaults" type="button">Server defaults</button>
     </div>
     <div id="form"><p class="muted">Enter an API key to load the settings.</p></div>
@@ -138,6 +143,7 @@
 {"messages": [{"role": "user", "content": "How much water should I drink a day?"}, {"role": "assistant", "content": "About two litres for most adults, more in hot weather or when exercising."}]}
 {"messages": [{"role": "user", "content": "Is it safe to take ibuprofen on an empty stomach?"}, {"role": "assistant", "content": "It can irritate the stomach; take it with food when you can."}]}</textarea>
         <div class="help" id="trainingStatus"></div>
+        <div id="trainingFields"></div>
       </div>
       <div class="dataset" data-split="testing">
         <div class="row">
@@ -188,9 +194,48 @@
     <div id="detailBody"></div>
   </section>
 
+  <!-- verification -->
+  <section class="span2" id="verifySection" hidden>
+    <h2>4. Verification <span class="muted" style="font-weight: 400">is the blend better than the LoRAs it is made of?</span></h2>
+    <p class="muted" id="vIntro">Pick a blend. Each LoRA it names is run on its own, at full
+      strength, on the same questions, and everything is graded by one judge.</p>
+    <div class="row">
+      <div style="flex: 3 1 280px"><label for="vBlend">Blend</label><select id="vBlend"></select></div>
+      <div><label for="vSlots">Compare against</label>
+        <select id="vSlots">
+          <option value="blend">the LoRAs in this blend</option>
+          <option value="all">every LoRA slot</option>
+        </select></div>
+      <div><label for="vSplit">Questions from</label><select id="vSplit"></select></div>
+      <div><label for="vCount">How many</label>
+        <input id="vCount" type="number" min="1" placeholder="blank = all of them"></div>
+    </div>
+    <div class="row">
+      <div><label for="vEvaluator">Evaluator</label><select id="vEvaluator"></select></div>
+      <div id="vBackendBox"><label for="vBackend">Judge runs on</label><select id="vBackend"></select></div>
+      <div id="vModelBox"><label for="vModel">Judge model</label>
+        <input id="vModel" placeholder="blank = the sweep's own"></div>
+      <div id="vUrlBox"><label for="vUrl">Judge endpoint</label><input id="vUrl"></div>
+    </div>
+    <div class="help" id="vAgainst"></div>
+    <div class="actions">
+      <button class="primary" id="vRun">Run verification</button>
+      <span class="muted">One base-model load per contestant, so this is queued like a job.</span>
+    </div>
+    <div id="verifyMsg" class="msg"></div>
+    <h3>Verifications</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Blend</th><th>Against</th><th>Judge</th><th>Status</th><th>Best LoRA</th><th>Blend</th></tr></thead>
+        <tbody id="vList"></tbody>
+      </table>
+    </div>
+    <div id="vReport"></div>
+  </section>
+
   <!-- inference -->
   <section class="span2">
-    <h2>4. Inference</h2>
+    <h2>5. Inference</h2>
     <div class="row">
       <div style="flex: 3 1 300px"><label for="token">Live token</label>
         <input id="token" class="mono" placeholder="returned by Set live"></div>
@@ -220,6 +265,9 @@ const FINISHED = ["done", "failed", "cancelled", "deleted"];
 let key = "";
 let selected = null;          // job id on screen
 let lastStatus = null;        // its status when detail was last drawn
+let verifyForm = null;        // GET /jobs/{id}/verify for the job on screen
+let verifyShown = null;       // the verification whose report is drawn
+let verifyAdapter = null;     // which adapter the per-question chart compares
 
 // --- small helpers ----------------------------------------------------------
 
@@ -453,8 +501,6 @@ const FIELDS = [
     showIf: (v) => v.TEMPLATE === "template_code.py" },
 
   { group: "Scoring", name: "EVALUATOR", label: "Evaluator", type: "choice", wide: true, describe: true },
-  { group: "Scoring", name: "TRAINING_COUNT", label: "Questions per individual", type: "int", min: 1,
-    nullable: "blank = all of them" },
   { group: "Scoring", name: "COMPOSITE_EVALUATORS", label: "Evaluators to combine, with their weights", type: "members",
     wide: true, showIf: (v) => v.EVALUATOR === "composite",
     help: "Each grades exactly as it would on its own; a weight says how much it counts." },
@@ -475,6 +521,11 @@ const FIELDS = [
     nullable: "blank = whatever the endpoint serves",
     showIf: (v) => needsJudge(v) },
 
+  { group: "Training", name: "TRAINING_COUNT", label: "Training questions per individual", type: "int", min: 1,
+    nullable: "blank = all of them", help: "The first N of the file, asked every generation." },
+
+  { group: "Testing", name: "TESTING_COUNT", label: "Testing questions per individual", type: "int", min: 1,
+    nullable: "blank = all of them", showIf: testingPass },
   { group: "Testing", name: "TESTING_MIN_QUALITY", label: "Test individuals scoring above", type: "float",
     min: 0, max: 1, step: 0.05, showIf: testingPass },
 
@@ -488,8 +539,8 @@ const FIELDS = [
 const GROUPS = [["Search", true], ["Model", true], ["Scoring", true], ["Seeds", false]];
 
 const PRESETS = {
-  demo: { TEMPLATE: "template_code_mocked.py", GENERATIONS: 1, COUNT: 4, TRAINING_COUNT: 3,
-          TESTING_MIN_QUALITY: 0 },
+  demo: { TEMPLATE: "template_code_mocked.py", GENERATIONS: 1, COUNT: 4, TRAINING_COUNT: null,
+          TESTING_COUNT: null, TESTING_MIN_QUALITY: 0 },
   defaults: {},
 };
 
@@ -522,6 +573,7 @@ async function loadForm() {
     el("details", Object.assign({ "data-group": group }, open ? { open: "" } : {}),
       el("summary", {}, group, el("span", { class: "changed-count" })),
       el("div", { class: "grid" }, byGroup(group).map(fieldControl)))));
+  $("trainingFields").replaceChildren(el("div", { class: "grid" }, byGroup("Training").map(fieldControl)));
   $("testingFields").replaceChildren(el("div", { class: "grid" }, byGroup("Testing").map(fieldControl)));
   applyPreset(recall("preset") || "demo");
 }
@@ -765,7 +817,12 @@ function select(jobId) {
   selected = jobId;
   lastStatus = null;
   $("detailSection").hidden = false;
+  $("verifySection").hidden = true;
+  verifyForm = null;
+  verifyShown = null;
   say("detailMsg", "");
+  say("verifyMsg", "");
+  $("vReport").replaceChildren();
   drawDetail();
   refreshJobs();
 }
@@ -830,6 +887,7 @@ async function drawDetail() {
   body.push(el("h3", {}, "Log (last 40 lines)"), el("pre", { id: "log" }, "…"));
   $("detailBody").replaceChildren(...body);
   refreshLog();
+  loadVerifyForm();
 }
 
 async function refreshLog() {
@@ -904,6 +962,330 @@ function chart(history) {
       el("span", {}, el("i", { style: "background: var(--best)" }), "best"),
       el("span", {}, el("i", { style: "background: var(--mean)" }), "mean"),
       el("span", {}, el("i", { style: "background: var(--worst)" }), "worst")));
+}
+
+// --- verification -------------------------------------------------------------
+
+// A verification is queued work, like a job: it loads a base model once per
+// contestant. So this half is a form plus polling, and the charts below draw
+// the report the worker leaves behind.
+
+async function loadVerifyForm() {
+  if (selected === null) return;
+  const section = $("verifySection");
+  try {
+    verifyForm = await api("GET", `/jobs/${selected}/verify`);
+  } catch (_) {
+    verifyForm = null;
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  const blends = verifyForm.individuals.filter((one) => one.state !== "BAD");
+  const keep = $("vBlend").value;
+  $("vBlend").replaceChildren(...blends.map((one) => el("option", { value: one.number },
+    `#${one.number}  ${one.chromosome}  (fitness ${fmt(one.fitness)}${one.is_best ? ", elite" : ""})`)));
+  if (blends.some((one) => String(one.number) === keep)) $("vBlend").value = keep;
+  else {
+    const best = blends.find((one) => one.is_best) || blends[0];
+    if (best) $("vBlend").value = best.number;
+  }
+  if (!$("vSplit").options.length) {
+    $("vSplit").replaceChildren(...verifyForm.splits.map((name) => el("option", { value: name }, name)));
+    $("vSplit").value = verifyForm.defaults.split || verifyForm.splits[0] || "";
+    $("vEvaluator").replaceChildren(...verifyForm.evaluators.map((one) =>
+      el("option", { value: one.value, title: one.description || "" }, one.value)));
+    $("vEvaluator").value = verifyForm.defaults.evaluator || "";
+    $("vBackend").replaceChildren(...verifyForm.backends.map((name) => el("option", { value: name }, name)));
+    $("vBackend").value = verifyForm.defaults.judge_backend || verifyForm.backends[0];
+    $("vModel").value = verifyForm.defaults.judge_model || "";
+    $("vUrl").value = verifyForm.defaults.judge_base_url || "";
+    if (verifyForm.defaults.count) $("vCount").value = verifyForm.defaults.count;
+  }
+  $("vRun").disabled = !verifyForm.can_verify || !blends.length;
+  refreshVerifyForm();
+  drawVerifications();
+}
+
+// Which judge boxes matter is which evaluator was picked, the same rule the
+// submission form applies to its own.
+function refreshVerifyForm() {
+  if (!verifyForm) return;
+  const chosen = verifyForm.evaluators.find((one) => one.value === $("vEvaluator").value);
+  const judged = !chosen || chosen.needs_judge;
+  for (const id of ["vBackendBox", "vModelBox", "vUrlBox"]) $(id).hidden = !judged;
+  $("vUrlBox").hidden = !judged || $("vBackend").value !== "endpoint";
+  const blend = (verifyForm.individuals || []).find(
+    (one) => String(one.number) === $("vBlend").value);
+  const slots = $("vSlots").value === "all" ? verifyForm.slots : (blend ? blend.slots : []);
+  $("vAgainst").textContent = slots.length
+    ? `Contestants: the blend, and ${slots.join(", ")} on their own — ${slots.length + 1} runs.`
+    : "This chromosome names no adapter.";
+}
+
+async function startVerification() {
+  const body = {
+    individual: Number($("vBlend").value),
+    slots: $("vSlots").value,
+    split: $("vSplit").value || null,
+    count: $("vCount").value ? Number($("vCount").value) : null,
+    evaluator: $("vEvaluator").value || null,
+    judge_backend: $("vBackend").value || null,
+    judge_model: $("vModel").value.trim() || null,
+    judge_base_url: $("vUrl").value.trim() || null,
+  };
+  say("verifyMsg", "Queueing…");
+  $("vRun").disabled = true;
+  try {
+    const reply = await api("POST", `/jobs/${selected}/verify`, body);
+    say("verifyMsg", `Verification ${reply.verification.id} queued — ${reply.note}`, "ok");
+    verifyShown = reply.verification.id;
+    await loadVerifyForm();
+  } catch (error) {
+    say("verifyMsg", error.message, "err");
+  } finally {
+    $("vRun").disabled = false;
+  }
+}
+
+function bestLora(report) {
+  const rows = (report.summary || []).filter((row) => row.key !== "blend" && row.mean !== null);
+  if (!rows.length) return null;
+  return rows.reduce((top, row) => (row.mean > top.mean ? row : top));
+}
+
+function drawVerifications() {
+  const rows = (verifyForm && verifyForm.verifications) || [];
+  $("vList").replaceChildren(...(rows.length ? rows.map((row) => {
+    const options = row.options || {};
+    return el("tr", { class: "click" + (row.id === verifyShown ? " selected" : ""),
+                      onclick: () => showVerification(row.id) },
+      el("td", {}, row.id),
+      el("td", { class: "mono" }, `#${row.number} ${row.chromosome}`),
+      el("td", {}, (options.slots || []).join(", ")),
+      el("td", {}, options.evaluator || "–", options.judge_model ? el("div", { class: "muted" }, options.judge_model) : null),
+      el("td", {}, pill(row.status), row.error ? el("div", { class: "muted" }, row.error) : null),
+      el("td", { id: "vbest" + row.id }, ""),
+      el("td", { id: "vblend" + row.id }, ""));
+  }) : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "None yet."))]));
+  if (verifyShown !== null && rows.some((row) => row.id === verifyShown)) showVerification(verifyShown);
+  else if (rows.length && verifyShown === null) {
+    const done = rows.find((row) => row.status === "done");
+    if (done) showVerification(done.id);
+  }
+}
+
+async function showVerification(id) {
+  verifyShown = id;
+  for (const row of $("vList").children) row.className = "click";
+  let reply = null;
+  try {
+    reply = await api("GET", `/verifications/${id}`);
+  } catch (error) {
+    $("vReport").replaceChildren(el("p", { class: "msg err" }, error.message));
+    return;
+  }
+  const one = reply.verification;
+  const report = one.report;
+  const body = [el("h3", {}, `Verification ${id} — #${one.number} ${one.chromosome} `, pill(one.status))];
+  if (one.error) body.push(el("p", { class: "msg err" }, one.error));
+  if (!report) {
+    body.push(el("p", { class: "muted" }, one.status === "done"
+      ? "It left no scores." : "No scores yet — it is " + one.status + "."));
+    body.push(el("pre", { id: "vlog" }, "…"));
+    $("vReport").replaceChildren(...body);
+    refreshVerifyLog(id);
+    return;
+  }
+  const meta = report.meta, rows = report.summary;
+  const blend = rows.find((row) => row.key === "blend");
+  const top = bestLora(report);
+  const cell = $("vbest" + id), mine = $("vblend" + id);
+  if (cell && top) cell.textContent = `${top.key} ${fmt(top.mean, 2)}`;
+  if (mine && blend) mine.textContent = fmt(blend.mean, 2);
+
+  body.push(el("p", { class: "muted" },
+    `${meta.questions} question(s) from the ${meta.split || "given"} split, graded by ` +
+    `${meta.evaluator} (${meta.judge}). Training quality was ${fmt(meta.training_quality)}.`));
+  body.push(el("div", { class: "vgrid" },
+    el("div", { class: "vcard" }, el("h4", {}, "Mean quality — the blend against each LoRA alone"),
+      meansChart(report)),
+    el("div", { class: "vcard" }, el("h4", {}, "Question by question: did the blend win?"),
+      winsChart(report)),
+    el("div", { class: "vcard" }, el("h4", {}, "Per question, blend minus one LoRA"),
+      adapterPicker(report), deltaChart(report)),
+    el("div", { class: "vcard" }, el("h4", {}, "The numbers"), summaryTable(report))));
+  body.push(verdict(report));
+  $("vReport").replaceChildren(...body);
+}
+
+async function refreshVerifyLog(id) {
+  if (!$("vlog")) return;
+  try {
+    const { lines } = await api("GET", `/verifications/${id}/log?lines=30`);
+    const log = $("vlog");
+    log.textContent = lines.length ? lines.join("\n") : "(nothing logged yet)";
+    log.scrollTop = log.scrollHeight;
+  } catch (_) { /* went away */ }
+}
+
+// --- the charts ---------------------------------------------------------------
+
+// Hand-drawn SVG through the page's own CSS variables, like chart() above: one
+// drawing serves light and dark, and nothing is fetched.
+function drawing(width, height) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("style", "width: 100%; height: auto; display: block");
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    svg.append(node);
+    return node;
+  };
+  return { svg, add };
+}
+
+// An SVG tooltip. Its own function because append() hands back nothing, so the
+// node has to exist before it is attached to a shape.
+function hint(text) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", "title");
+  node.textContent = text;
+  return node;
+}
+
+const labelOf = (report, key) => {
+  const held = (report.meta.contestants || {})[key];
+  return key === "blend" ? `#${report.meta.individual} (blend)` : (held ? held.label : key);
+};
+
+const ordered = (report) => [
+  report.summary.find((row) => row.key === "blend"),
+  ...report.summary.filter((row) => row.key !== "blend")
+        .sort((a, b) => (b.mean || 0) - (a.mean || 0)),
+].filter(Boolean);
+
+function meansChart(report) {
+  const rows = ordered(report);
+  const H = 22 * rows.length + 26, W = 340, L = 96, R = 34;
+  const { svg, add } = drawing(W, H);
+  const span = W - L - R;
+  for (const value of [0, 0.5, 1]) {
+    add("line", { x1: L + value * span, x2: L + value * span, y1: 4, y2: H - 18, stroke: "var(--line)" });
+    add("text", { x: L + value * span - 6, y: H - 6 }, value.toFixed(1));
+  }
+  rows.forEach((row, index) => {
+    const y = 6 + index * 22;
+    const width = Math.max(1, (row.mean || 0) * span);
+    add("text", { x: 0, y: y + 12, fill: "var(--ink)" }, labelOf(report, row.key).slice(0, 16));
+    add("rect", { x: L, y, width, height: 15, rx: 2,
+                  fill: row.key === "blend" ? "var(--accent)" : "var(--mean)" });
+    add("text", { x: L + width + 4, y: y + 12 }, fmt(row.mean, 3));
+  });
+  return svg;
+}
+
+function winsChart(report) {
+  const rows = ordered(report).filter((row) => row.key !== "blend");
+  if (!rows.length) return el("p", { class: "muted" }, "Nothing to compare against.");
+  const H = 22 * rows.length + 26, W = 340, L = 96, R = 30;
+  const { svg, add } = drawing(W, H);
+  const span = W - L - R;
+  const total = Math.max(1, ...rows.map((row) => row.wins + row.ties + row.losses));
+  rows.forEach((row, index) => {
+    const y = 6 + index * 22;
+    let x = L;
+    add("text", { x: 0, y: y + 12, fill: "var(--ink)" }, labelOf(report, row.key).slice(0, 16));
+    for (const [count, color, what] of [[row.wins, "var(--ok)", "blend won"],
+                                        [row.ties, "var(--worst)", "tied"],
+                                        [row.losses, "var(--bad)", "blend lost"]]) {
+      const width = count * span / total;
+      if (width > 0) {
+        add("rect", { x, y, width, height: 15, rx: 2, fill: color }).append(hint(`${count} ${what}`));
+        if (width > 14) add("text", { x: x + width / 2 - 3, y: y + 12, fill: "var(--panel)" }, count);
+      }
+      x += width;
+    }
+    add("text", { x: L + span + 3, y: y + 12 }, "p " + fmt(row.p, 2));
+  });
+  return el("div", {}, svg, el("div", { class: "legend" },
+    el("span", {}, el("i", { style: "background: var(--ok)" }), "blend won"),
+    el("span", {}, el("i", { style: "background: var(--worst)" }), "tied"),
+    el("span", {}, el("i", { style: "background: var(--bad)" }), "blend lost")));
+}
+
+function adapterPicker(report) {
+  const keys = report.summary.filter((row) => row.key !== "blend").map((row) => row.key);
+  if (!keys.includes(verifyAdapter)) verifyAdapter = keys[0] || null;
+  return el("select", { onchange: (event) => { verifyAdapter = event.target.value; showVerification(verifyShown); } },
+    ...keys.map((key) => el("option", { value: key, selected: key === verifyAdapter ? "" : null }, key)));
+}
+
+function deltaChart(report) {
+  const key = verifyAdapter;
+  const mine = (report.answers.blend || []), theirs = (report.answers[key] || []);
+  if (!key || !mine.length) return el("p", { class: "muted" }, "No answers to compare.");
+  const n = Math.max(mine.length, theirs.length);
+  const W = 340, H = 150, P = 20, mid = (H - P) / 2;
+  const { svg, add } = drawing(W, H);
+  const width = Math.max(2, (W - P - 6) / n - 2);
+  add("line", { x1: P, x2: W - 4, y1: mid, y2: mid, stroke: "var(--line)" });
+  add("text", { x: 0, y: mid + 3 }, "0");
+  add("text", { x: 0, y: 12 }, "+1");
+  add("text", { x: 0, y: H - P + 4 }, "-1");
+  for (let index = 0; index < n; index += 1) {
+    const ours = mine[index] ? mine[index].quality : null;
+    const them = theirs[index] ? theirs[index].quality : null;
+    if (ours === null || them === null || ours === undefined || them === undefined) continue;
+    const delta = ours - them;
+    const height = Math.abs(delta) * mid;
+    const x = P + index * (W - P - 6) / n;
+    add("rect", { x, y: delta >= 0 ? mid - height : mid, width, height: Math.max(1, height),
+                  rx: 1, fill: delta === 0 ? "var(--worst)" : (delta > 0 ? "var(--ok)" : "var(--bad)") })
+      .append(hint(`Q${index + 1}: blend ${fmt(ours, 2)} vs ${key} ${fmt(them, 2)}\n`
+                   + (mine[index].question || "").slice(0, 160)));
+  }
+  add("text", { x: P, y: H - 4 }, `question 1..${n} — hover a bar`);
+  return svg;
+}
+
+function summaryTable(report) {
+  return el("div", { class: "scroll" }, el("table", {},
+    el("thead", {}, el("tr", {}, ["contestant", "mean", "graded", "W", "T", "L", "blend −", "p"].map((h) => el("th", {}, h)))),
+    el("tbody", {}, ordered(report).map((row) => el("tr", { class: row.key === "blend" ? "selected" : "" },
+      el("td", {}, labelOf(report, row.key)),
+      el("td", {}, fmt(row.mean, 3)),
+      el("td", {}, `${row.graded}/${report.meta.questions}`),
+      el("td", {}, row.key === "blend" ? "" : row.wins),
+      el("td", {}, row.key === "blend" ? "" : row.ties),
+      el("td", {}, row.key === "blend" ? "" : row.losses),
+      el("td", {}, row.key === "blend" ? "" : (row.delta === null ? "–" : (row.delta >= 0 ? "+" : "") + fmt(row.delta, 3))),
+      el("td", {}, row.key === "blend" ? "" : fmt(row.p, 3)))))));
+}
+
+function verdict(report) {
+  const rows = report.summary.filter((row) => row.key !== "blend");
+  const better = rows.filter((row) => row.wins > row.losses && row.p < 0.05).map((row) => row.key);
+  const worse = rows.filter((row) => row.losses > row.wins && row.p < 0.05).map((row) => row.key);
+  const top = bestLora(report);
+  const blend = report.summary.find((row) => row.key === "blend");
+  const lines = [];
+  if (better.length) lines.push(`The blend beats ${better.join(", ")} (p < 0.05).`);
+  if (worse.length) lines.push(`${worse.join(", ")} beat the blend (p < 0.05).`);
+  if (!better.length && !worse.length) {
+    lines.push("No difference here is significant at p < 0.05: on these questions the "
+      + "blend and the single adapters are within the judge's own noise.");
+  }
+  if (top && blend && blend.mean !== null) {
+    lines.push(`Best single LoRA: ${top.key} at ${fmt(top.mean, 3)}, against the blend's `
+      + `${fmt(blend.mean, 3)}.`);
+  }
+  if (report.meta.evaluator === "generated") {
+    lines.push("These are a mocked sweep's own invented scores — plumbing, not a result.");
+  }
+  return el("p", { class: "verdict" }, lines.join(" "));
 }
 
 // --- job actions --------------------------------------------------------------
@@ -1070,6 +1452,10 @@ $("aDeleteJob").addEventListener("click", () => {
 $("aRefresh").addEventListener("click", drawDetail);
 $("aDownload").addEventListener("click", downloadDatabase);
 $("ask").addEventListener("click", ask);
+$("vRun").addEventListener("click", startVerification);
+for (const id of ["vBlend", "vSlots", "vEvaluator", "vBackend"]) {
+  $(id).addEventListener("change", refreshVerifyForm);
+}
 
 $("key").value = recall("key");
 $("token").value = recall("token");
@@ -1079,6 +1465,10 @@ if ($("key").value) useKey();
 setInterval(() => {
   refreshJobs();
   if (selected !== null && !FINISHED.includes(lastStatus)) refreshLog();
+  // A queued or running verification is the only thing on this page that can
+  // change while the job it belongs to is finished and still.
+  if (verifyForm && verifyForm.verifications.some(
+      (row) => row.status === "queued" || row.status === "running")) loadVerifyForm();
 }, 3000);
 setInterval(refreshHealth, 10000);
 </script>

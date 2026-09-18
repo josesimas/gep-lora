@@ -2330,7 +2330,9 @@ Four things happen, in order:
    `TESTING_MIN_QUALITY` (0.5; `--min-quality` for one pass, `--limit` for the
    best few). The bar is the sweep's own stored `TESTING_MIN_QUALITY` before
    `settings.py`'s, the way every other knob is read — those individuals were
-   selected under it. The quality itself comes from the `individual_quality`
+   selected under it. How many of the testing questions each one is asked is
+   `TESTING_COUNT` (the first N, `None` for all of them, the default; `--count`
+   for one pass), read in the same order. The quality itself comes from the `individual_quality`
    view rather than `individuals.fitness`, so a sweep whose fitness step never
    ran still has an answer.
 3. **Each one's own script is re-pointed**, into `run_testing/`. Not
@@ -2446,6 +2448,45 @@ builds, and says how many rows that applies to. Run `trees runs process
 evaluate` again first if you want the current population tested.
 
 `python -m storage.store --show` lists the passes a sweep has been through.
+
+---
+
+### 14a. `testing/evaluate_chromosome_against_loras.py` → is the blend better than one LoRA?
+
+A sweep only ever scores a blend against the bare base model or against the
+dataset's own answers, so it cannot say whether a single adapter would have
+done as well. This script puts the sweep's best individual next to each adapter
+in its `LORA_SLOTS`, with each adapter attached **alone, at full strength**, on
+the same questions:
+
+```bash
+python -m testing.evaluate_chromosome_against_loras --db api_jobs/user1/job6/job.sqlite3
+python -m testing.evaluate_chromosome_against_loras --db run_db/gep.sqlite3     --evaluator llm_judge_reference --judge-model qwen3-32b --count 20
+```
+
+- **What it runs:** the best individual (`is_best`, else the highest fitness;
+  `--individual N` for another) and one script per slot (`--slots L1,L3` to
+  narrow). All of them are rendered from the sweep's own template and settings,
+  and the blend keeps its weight seed, so it is the blend the search scored:
+  on job6 its answers matched the stored testing pass word for word.
+  `--stored-script` runs the individual's stored script instead, re-pointed.
+- **Which questions:** the sweep's stored testing split if it has one, else
+  training (`--split`, or `--dataset FILE`), capped by that split's own
+  `TESTING_COUNT`/`TRAINING_COUNT` unless `--count` says otherwise.
+- **Which judge:** the sweep's `EVALUATOR` and judge, unless `--evaluator`,
+  `--judge-model`, `--judge-backend` or `--judge-base-url` name others. It
+  never abandons a contestant early, so every mean covers every question.
+- **What it says:** each contestant's mean, and against each adapter how many
+  questions the blend won, tied and lost, the mean difference, and an exact
+  two-sided sign test on the non-ties.
+- **What it writes:** nothing to the sweep. Everything goes in
+  `<db>_run<N>/lora_comparison/` beside the database (`--into` moves it):
+  `answers.json`, keyed on a hash of each script, and a
+  `scores_<evaluator>_<judge>.json` and `.md` per grading. Running it again
+  with another judge reuses the answers and only grades; `--rerun` runs the
+  scripts again, `--no-score` stops after running them.
+- **Mocked sweeps:** answers arrive pre-scored and are used as they are unless
+  an evaluator or judge is named.
 
 ---
 
@@ -2602,7 +2643,8 @@ built from `GET /settings` (the server's own values, with only what you change
 sent; *Quick demo* is a one-generation mocked sweep, done in seconds; training and
 testing questions come from a shared file, a file you upload, or pasted lines),
 watch it run, download its database, read its population,
-fitness chart, transcripts and log, set an individual live, stream answers in either
+fitness chart, transcripts and log, **verify a blend against the LoRAs it is made
+of** (see below), set an individual live, stream answers in either
 format, unset and delete. It is `async_api/demo.html`, one file with no dependencies.
 
 Start the worker with the venv's python, as you would `main.py` -- it runs
@@ -2653,10 +2695,53 @@ are refused with a 400 before anything is queued.
 | `POST /jobs/{id}/cancel` | a queued job at once; a running one within a poll |
 | `DELETE /jobs/{id}/run` | delete what the run produced, keep the job listed as `deleted` |
 | `DELETE /jobs/{id}` | delete the job and its folder |
+| `GET /jobs/{id}/verify` | what a verification may ask for (the blends, their slots, the splits, the evaluators) and the job's verifications so far |
+| `POST /jobs/{id}/verify` | queue one: `{"individual": n?, "slots": "blend"\|"all"\|[...], "split"?, "count"?, "evaluator"?, "judge_model"?, "judge_backend"?, "judge_base_url"?}` |
+| `GET /verifications/{id}` | one verification: its status, and its report once it has one |
+| `GET /verifications/{id}/log` | the tail of that verification's own console output |
 | `POST /jobs/{id}/live` | `{"individual": n?, "target": "local"?}` -> a token (shown once) |
 | `GET /jobs/{id}/live`, `GET /live` | live deployments |
 | `DELETE /jobs/{id}/live`, `DELETE /live/{id}` | unset for inference |
 | `POST /infer` | `{"token", "prompt", "max_new_tokens"?}` -> the answer, streamed |
+
+### Verification — is the blend better than the LoRAs in it?
+
+A search reports fitness, and fitness says nothing about the obvious control: one
+of those adapters used on its own. So the page's **Verification** section runs
+that comparison for any blend of a finished job -- the blend, and each LoRA its
+chromosome names, attached alone at full strength, on the same questions, all
+graded by one judge. It is
+[`testing/evaluate_chromosome_against_loras.py`](#14a-testingevaluate_chromosome_against_loraspy--is-the-blend-better-than-one-lora),
+queued.
+
+**It is work, not a request.** Every contestant costs a base-model load, so a
+verification goes into the registry's own `verifications` table and the *same*
+worker takes it -- after any queued job, since a job is a search that has not
+started and a verification is a question about one that has finished. One card,
+one queue. `async_api/verify.py` owns only the API's half: what the form may
+offer, what a request may ask, the command line, and the report read back.
+
+On the page, pick a blend (the elite is selected first), what to compare it
+against (**the LoRAs in this blend**, or every slot), which split and how many of
+its questions, and the evaluator and judge -- defaulting to the sweep's own, since
+a verification graded by another rubric would not be comparable with the fitness
+the search produced. Anything the sweep cannot offer is a 400 before the task is
+queued: an unknown evaluator or backend, a split it does not hold, a slot it has
+no adapter for, a `BAD` individual.
+
+When it finishes, the page draws the report the script left behind:
+
+- **mean quality per contestant**, the blend picked out from the adapters;
+- **win / tie / loss per adapter**, question by question, with the exact
+  two-sided sign test's *p* beside each bar;
+- **blend minus one adapter, per question**, for whichever adapter is picked,
+  each bar carrying its question and both scores;
+- **the numbers**, and one sentence saying which differences hold up at
+  *p* < 0.05 and which are inside the judge's own noise.
+
+Everything a verification writes lives in `verify<id>/` inside the job's folder,
+so `DELETE /jobs/{id}/run` takes its answers and scores with it: a reading of a
+sweep is worth nothing without the sweep.
 | `GET /health` | no key needed; what is loaded |
 | `GET /settings` | settings.py's values and the choices (templates, evaluators, backends), for a form |
 | `GET /datasets` | the shared dataset files a submission may name |
@@ -3016,6 +3101,8 @@ async_api/    the search as a web service: jobs, a worker, live inference
 | `metrics/report.py` | what a sweep spent its time on, ranked: `python -m metrics.report` |
 | `reporting/generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database -- including its cost section |
 | `testing/test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
+| `testing/evaluate_chromosome_against_loras.py` | runs a sweep's best individual beside each of its LoRAs applied alone, grades all of them with one judge, and says which the blend beats |
+| `async_api/verify.py` | the API's half of that comparison: what a verification may ask for, the command the worker runs, and the report it leaves behind |
 
 ### The adapters, and the dev aids
 

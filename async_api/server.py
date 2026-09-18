@@ -25,6 +25,16 @@ Jobs
     DELETE /jobs/{id}/run                  delete what the run produced; keep the job
     DELETE /jobs/{id}                      delete the job and its files
 
+Verification
+    GET    /jobs/{id}/verify              what a verification may ask for, and
+                                          the job's verifications so far
+    POST   /jobs/{id}/verify              {"individual": n?, "evaluator"?, "judge_model"?,
+                                          "judge_backend"?, "judge_base_url"?, "split"?,
+                                          "count"?, "slots"?} -> 201 {verification}
+    GET    /verifications/{id}            one verification: its status, and its
+                                          report once it has one
+    GET    /verifications/{id}/log        the tail of its console output
+
 Going live
     POST   /jobs/{id}/live                 {"individual": n?, "target": "local"?}
                                            -> 201 {token, deployment}; best by default
@@ -62,6 +72,7 @@ from async_api import registry as reg
 from async_api import results
 from async_api import settings
 from async_api import submit
+from async_api import verify
 
 
 # A page that exercises every endpoint, served at / and /demo. Same origin as
@@ -94,6 +105,16 @@ def job_json(app, job, with_summary=False):
         out["queue_position"] = app.registry.queue_position(job["id"])
     if with_summary and job["status"] != reg.DELETED:
         out["summary"] = results.summary(app.registry.database(job), job["run_id"])
+    return out
+
+
+def verification_json(row, report=None):
+    out = {key: row[key] for key in ("id", "job_id", "status", "created_at",
+                                     "started_at", "finished_at", "number",
+                                     "chromosome", "exit_code", "error")}
+    out["options"] = json.loads(row["options"] or "{}")
+    if report is not None:
+        out["report"] = report
     return out
 
 
@@ -230,6 +251,67 @@ class App:
         self.registry.delete_job(job_id)
         return 200, {"deleted": job_id}
 
+    # --- verification ------------------------------------------------------
+
+    def _offered(self, job):
+        """What this job's sweep allows a verification to ask for."""
+        try:
+            return verify.choices(self.registry.database(job), job["run_id"])
+        except results.NoResults:
+            raise ApiError(404, "job %d has no database to verify against" % job["id"])
+
+    def verify_form(self, user, job_id):
+        job = self.own_job(user, job_id)
+        if not os.path.exists(self.registry.database(job)):
+            raise ApiError(404, "job %d has no database; its run was deleted" % job_id)
+        out = self._offered(job)
+        out["verifications"] = [verification_json(row) for row
+                                in self.registry.verifications(job_id=job_id)]
+        out["can_verify"] = job["status"] == reg.DONE
+        return 200, out
+
+    def start_verification(self, user, job_id, body):
+        """Queue one blend of this job against the LoRAs it is made of."""
+        job = self.own_job(user, job_id)
+        if job["status"] != reg.DONE:
+            raise ApiError(409, "job %d is %s; only a finished job can be verified"
+                           % (job_id, job["status"]))
+        offered = self._offered(job)
+        try:
+            number, options = verify.options_for(body, offered)
+        except verify.VerifyError as error:
+            raise ApiError(400, str(error))
+        chromosome = next(one["chromosome"] for one in offered["individuals"]
+                          if one["number"] == number)
+        row = self.registry.add_verification(job, number, chromosome, options)
+        return 201, {"verification": verification_json(row),
+                     "note": "queued; the worker runs it after any queued job"}
+
+    def own_verification(self, user, verification_id):
+        row = self.registry.verification(verification_id, user["id"])
+        if row is None:
+            raise ApiError(404, "no verification %d" % verification_id)
+        return row
+
+    def verification_detail(self, user, verification_id):
+        row = self.own_verification(user, verification_id)
+        job = self.registry.job(row["job_id"])
+        folder = self.registry.verification_folder(job, row["id"])
+        return 200, {"verification": verification_json(row, verify.report(folder))}
+
+    def verification_log(self, user, verification_id, query):
+        row = self.own_verification(user, verification_id)
+        job = self.registry.job(row["job_id"])
+        try:
+            lines = max(1, int((query.get("lines") or ["200"])[0]))
+        except ValueError:
+            raise ApiError(400, "lines must be a whole number")
+        path = os.path.join(self.registry.verification_folder(job, row["id"]), "verify.log")
+        if not os.path.exists(path):
+            return 200, {"lines": []}
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return 200, {"lines": handle.read().splitlines()[-lines:]}
+
     # --- live --------------------------------------------------------------
 
     def set_live(self, user, job_id, body):
@@ -333,6 +415,10 @@ ROUTES = [
     ("POST", r"/jobs/(\d+)/cancel", "cancel_job", ()),
     ("DELETE", r"/jobs/(\d+)/run", "delete_run", ()),
     ("DELETE", r"/jobs/(\d+)", "delete_job", ()),
+    ("GET", r"/jobs/(\d+)/verify", "verify_form", ()),
+    ("POST", r"/jobs/(\d+)/verify", "start_verification", ("body",)),
+    ("GET", r"/verifications/(\d+)", "verification_detail", ()),
+    ("GET", r"/verifications/(\d+)/log", "verification_log", ("query",)),
     ("POST", r"/jobs/(\d+)/live", "set_live", ("body",)),
     ("GET", r"/jobs/(\d+)/live", "job_live", ()),
     ("DELETE", r"/jobs/(\d+)/live", "unset_job", ()),

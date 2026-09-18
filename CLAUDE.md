@@ -36,7 +36,9 @@ templates/    the five template_*.py -- read and filled, never imported,
 storage/      store, add_dataset, db_datasets -- the database and its datasets
 metrics/      record, report -- what each step cost, measured and read back
 evaluators/   one module per evaluator, plus common.py and local_model.py
-testing/      test_run_with_dataset -- the held-out pass
+testing/      test_run_with_dataset -- the held-out pass;
+              evaluate_chromosome_against_loras -- the best blend against
+              each LoRA alone
 reporting/    generate_html_db_stats -- a sweep as a single HTML page
 adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
               a sweep blends. Not part of a sweep; what a sweep runs against.
@@ -45,7 +47,8 @@ adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
 tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
 async_api/    server, worker, submit, registry, results, golive, inference,
-              users -- the search as a web service. See "The async API" below.
+              users, verify -- the search as a web service. See "The async API"
+              below.
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -504,7 +507,7 @@ is above `TESTING_MIN_QUALITY` (0.5; `--min-quality`, `--limit`), re-points each
 stored script at the new file, runs them into the `test_results` table and grades what
 they say. Everything the search does is earned on the training split, so this is the only
 way to ask whether a blend holds up on questions it was never selected for. `--db`/`--run`
-pick the sweep, `--count` caps the questions, `--keep-scripts` leaves the scripts in
+pick the sweep, `--count` caps the questions (else the sweep's `TESTING_COUNT`, `None` = all), `--keep-scripts` leaves the scripts in
 `run_testing/`.
 
 `--from-db` takes the dataset argument's place: the questions are the sweep's own stored
@@ -544,6 +547,26 @@ next generation on questions the search is not judged on. And a **mocked pass ar
 pre-scored**, as a mocked sweep does, so `settle()` gives those rows the mean their printed
 scores come to rather than leaving them looking ungraded. `test_answers` (a view over the
 JSON transcript) reads any of it back one answer at a time.
+
+```bash
+python -m testing.evaluate_chromosome_against_loras --db <sweep> --judge-model <model>
+```
+
+The control a sweep never has: its best individual (or `--individual N`) beside each
+`LORA_SLOTS` adapter **attached alone, at full strength** -- a leaf with no `combine()`
+above it, so no weight is applied. The lone adapters go through the ordinary `plan()`/
+`render()` with `render(root=<leaf>)`, since a bare leaf is not a chromosome the grammar
+will decode; every template runs one, the lora_server `/build` plan included. **All the
+contestants are rendered from the sweep's own template and settings**, the blend with its
+own weight seed, so the comparison is between adapters rather than template versions
+(`--stored-script` re-points the stored script instead). Questions are the stored testing
+split by default, capped by that split's own count; grading is the sweep's `EVALUATOR`
+unless `--evaluator`/`--judge-model`/`--judge-backend`/`--judge-base-url` override it,
+through `testing_conf()` for the reason the testing pass uses it, and **without** the
+abandon rule, so every mean covers the same questions. It writes nothing to the sweep:
+`<db>_run<N>/lora_comparison/` holds `answers.json` (keyed on a hash of each script, so a
+second judge only grades) and a `scores_<evaluator>_<judge>.json`/`.md` per grading, with
+per-adapter win/tie/loss counts and an exact sign test.
 
 The state a finished sweep is in is what the last generation stopping after `fitness` is
 for: the population is the one that was scored, each individual still described by the
@@ -960,6 +983,16 @@ change to it. Four rules hold it together:
   (`inference.UnslothEngine`). The cache is keyed by base model, not deployment; the
   engine is chosen by the sweep's `script_source` (mocked -> `MockEngine`), not by
   settings.py.
+- **A verification is queued work, not a request** (`verify.py`): it is
+  `testing/evaluate_chromosome_against_loras.py` run by the *same* worker, after
+  the jobs, since it loads a base model once per contestant. `verify.py` owns
+  only what the API adds -- what a form may offer (`choices`), what a request may
+  ask (`options_for`), the command line (`command`) and the report read back
+  (`report`); the comparison itself is not duplicated there. The default
+  contestants are **the LoRAs the chosen chromosome names** (`blend_slots`), since
+  that is the question a verification answers; `slots: "all"` asks for every slot.
+  Results go in `verify<id>/` inside the job's folder, so deleting the run takes
+  them with it -- a reading of a sweep is worth nothing without the sweep.
 
 Its knobs live in `async_api/settings.py`, deliberately outside `config/settings.py`,
 whose `snapshot()` would store them in every sweep.
