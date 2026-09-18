@@ -950,6 +950,9 @@ function select(jobId) {
   say("detailMsg", "");
   say("verifyMsg", "");
   $("vReport").replaceChildren();
+  // The panel sits below the submission form, usually off screen: without this
+  // a click on a job looks like it did nothing.
+  $("detailSection").scrollIntoView({ behavior: "smooth", block: "start" });
   drawDetail();
   refreshJobs();
 }
