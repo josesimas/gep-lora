@@ -56,6 +56,9 @@
   .s-done { color: var(--ok); } .s-failed, .s-cancelled { color: var(--bad); }
   .s-running { color: var(--accent); } .s-queued, .s-preparing, .s-deleted { color: var(--muted); }
   .s-stopped { color: var(--warn); }
+  .picker { display: flex; gap: 4px; margin-top: 4px; }
+  .picker select { flex: 1 1 auto; min-width: 0; }
+  .picker button { flex: none; padding: 4px 8px; }
   .task { font-size: 11px; color: var(--muted); margin-left: 4px; }
   .panel { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
   .panel[hidden], .panel [hidden] { display: none; }
@@ -296,6 +299,7 @@ let verifyForm = null;        // GET /jobs/{id}/verify for the job on screen
 let verifyShown = null;       // the verification whose report is drawn
 let verifyAdapter = null;     // which adapter the per-question chart compares
 let evalForm = null;          // GET /jobs/{id}/evaluate, while its panel is open
+let formPicker = null;        // the submission form's judge-model picker
 
 // --- small helpers ----------------------------------------------------------
 
@@ -548,8 +552,8 @@ const FIELDS = [
     showIf: (v) => needsJudge(v) },
   { group: "Scoring", name: "JUDGE_BASE_URL", label: "Judge endpoint URL", type: "text", wide: true,
     showIf: (v) => needsJudge(v) && v.JUDGE_BACKEND === "endpoint" },
-  { group: "Scoring", name: "JUDGE_MODEL", label: "Judge model", type: "text",
-    nullable: "blank = whatever the endpoint serves",
+  { group: "Scoring", name: "JUDGE_MODEL", label: "Judge model", type: "text", wide: true,
+    nullable: "blank = whatever the endpoint serves", picker: true,
     showIf: (v) => needsJudge(v) },
 
   { group: "Training", name: "TRAINING_COUNT", label: "Training questions per individual", type: "int", min: 1,
@@ -653,10 +657,18 @@ function fieldControl(field) {
   }
   input.addEventListener("input", refreshForm);
   input.addEventListener("change", refreshForm);
+  // The endpoint's own list of models, as a helper beside the box -- which the
+  // URL field above it names (blank: the server's), on an endpoint backend.
+  const picker = field.picker ? formPicker = modelPicker(input, {
+    url: () => ($("f_JUDGE_BASE_URL") ? $("f_JUDGE_BASE_URL").value.trim() : "")
+      || form.defaults.JUDGE_BASE_URL || "",
+    active: () => !input.closest(".field").hidden && ($("f_JUDGE_BACKEND")
+      ? $("f_JUDGE_BACKEND").value : form.defaults.JUDGE_BACKEND) === "endpoint",
+  }) : null;
   return el("div", { class: "field" + (field.wide ? " wide" : ""), "data-name": field.name },
     field.type === "bool"
       ? el("label", { class: "check" }, input, field.label)
-      : [el("label", { for: id }, field.label), input],
+      : [el("label", { for: id }, field.label), input, picker ? picker.wrap : null],
     el("div", { class: "help" }, field.help || ""),
     field.describe ? el("div", { class: "help describe" }) : null,
     el("div", { class: "help error" }));
@@ -768,6 +780,89 @@ function refreshForm() {
     const count = details.querySelectorAll(".field.changed:not([hidden])").length;
     details.querySelector(".changed-count").textContent = count ? ` · ${count} changed` : "";
   }
+  if (formPicker) formPicker.update();
+}
+
+// --- judge model picker -------------------------------------------------------
+
+// A select of the models a judge endpoint lists, and a button to ask again, put
+// beside a judge-model text box. The box is the truth -- it is what is sent,
+// and it takes anything typed, listed or not -- and the select only helps fill
+// it in: picking a model writes it into the box, and editing the box moves the
+// select to match (or to "not listed"). The list comes through the API
+// (GET /judge/models), since an endpoint such as LM Studio will not answer a
+// page from another origin, and it is the server's machine that grades.
+//   url()     the endpoint to list; "" for the server's own JUDGE_BASE_URL
+//   active()  whether the judge is on an endpoint at all (unsloth has no list)
+//   watch     inputs whose changes should re-check url() and active()
+function modelPicker(text, { url, active, watch = [] }) {
+  const select = el("select", { title: "The models the endpoint lists; picking one fills in the box" });
+  const again = el("button", { type: "button", title: "Ask the endpoint for its models again" }, "↻");
+  const note = el("div", { class: "help" });
+  const wrap = el("div", {}, el("div", { class: "picker" }, select, again), note);
+  let models = [], listedFor = null, pending = null, asked = 0;
+
+  function sync() {
+    const value = text.value.trim();
+    const listed = models.includes(value);
+    select.replaceChildren(
+      el("option", { value: "" }, !models.length ? "no list of models"
+        : value && !listed ? `not listed: ${value}` : "— pick one of the endpoint's models —"),
+      ...models.map((model) => el("option", { value: model }, model)));
+    select.value = listed ? value : "";
+    select.disabled = !models.length;
+  }
+
+  async function load() {
+    clearTimeout(pending);
+    const endpoint = url();
+    listedFor = endpoint;
+    const mine = ++asked;
+    again.disabled = true;
+    note.className = "help";
+    note.textContent = "Asking the endpoint for its models…";
+    try {
+      const reply = await api("GET", "/judge/models" + (endpoint ? "?base_url=" + encodeURIComponent(endpoint) : ""));
+      if (mine !== asked) return;
+      models = reply.models;
+      note.textContent = models.length ? `${models.length} model(s) at ${reply.base_url}`
+        : `${reply.base_url} lists no chat models — type one in the box.`;
+    } catch (error) {
+      if (mine !== asked) return;
+      models = [];
+      note.className = "help error";
+      note.textContent = `Could not list the endpoint's models: ${error.message} — type the model in the box.`;
+    }
+    again.disabled = false;
+    sync();
+  }
+
+  // Shown only where a list can exist; asked again, after a pause for typing,
+  // when the endpoint it would come from has changed.
+  function update() {
+    wrap.hidden = !active();
+    if (wrap.hidden || !key) return;
+    if (url() !== listedFor) {
+      clearTimeout(pending);
+      pending = setTimeout(load, 500);
+    }
+    sync();
+  }
+
+  select.addEventListener("change", () => {
+    if (!select.value) return sync();
+    text.value = select.value;
+    // As if typed, so whatever listens to the box (the form's markers) hears it.
+    text.dispatchEvent(new Event("input", { bubbles: true }));
+    text.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  text.addEventListener("input", sync);
+  again.addEventListener("click", load);
+  for (const input of watch) {
+    input.addEventListener("input", update);
+    input.addEventListener("change", update);
+  }
+  return { wrap, update, load };
 }
 
 // -> [overrides, errors]: the visible fields that differ from the server's value.
@@ -1060,6 +1155,7 @@ function refreshVerifyForm() {
   const blend = (verifyForm.individuals || []).find(
     (one) => String(one.number) === $("vBlend").value);
   const slots = $("vSlots").value === "all" ? verifyForm.slots : (blend ? blend.slots : []);
+  verifyPicker.update();
   $("vAgainst").textContent = slots.length
     ? `Contestants: the blend, and ${slots.join(", ")} on their own — ${slots.length + 1} runs.`
     : "This chromosome names no adapter.";
@@ -1382,6 +1478,7 @@ function refreshEvaluate() {
   const nothing = evalForm && !evalForm.answers && !evalForm.tested;
   $("eRun").disabled = !evalForm || nothing;
   if (nothing) say("evalMsg", "No answers yet — the search stopped before any script ran. Resume it instead.", "err");
+  evalPicker.update();
 }
 
 async function startEvaluation() {
@@ -1564,6 +1661,21 @@ $("vRun").addEventListener("click", startVerification);
 for (const id of ["vBlend", "vSlots", "vEvaluator", "vBackend"]) {
   $(id).addEventListener("change", refreshVerifyForm);
 }
+
+// The two judge-model boxes outside the submission form, each with a picker
+// listing what its own endpoint box names (blank there: the sweep's endpoint).
+const verifyPicker = modelPicker($("vModel"), {
+  url: () => $("vUrl").value.trim() || (verifyForm && verifyForm.defaults.judge_base_url) || "",
+  active: () => !$("vModelBox").hidden && $("vBackend").value === "endpoint",
+  watch: [$("vUrl"), $("vBackend")],
+});
+$("vModelBox").append(verifyPicker.wrap);
+const evalPicker = modelPicker($("eModel"), {
+  url: () => $("eUrl").value.trim() || (evalForm && evalForm.defaults.judge_base_url) || "",
+  active: () => !$("eJudge").hidden && $("eBackend").value === "endpoint",
+  watch: [$("eUrl"), $("eBackend")],
+});
+$("eModelBox").append(evalPicker.wrap);
 
 $("key").value = recall("key");
 $("token").value = recall("token");

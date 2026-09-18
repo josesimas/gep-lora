@@ -46,6 +46,11 @@ LOCKED_SETTINGS = (
 # The options a submission may pass to main.py, and what they become.
 MAIN_OPTIONS = ("no_test", "limit", "timeout", "test_min_quality")
 
+# How long GET /judge/models waits for a judge endpoint to list its models. The
+# demo asks it whenever an endpoint URL changes, so it is short: a dead
+# endpoint should say so in a few seconds, not hold a form up.
+JUDGE_MODELS_TIMEOUT = 5
+
 # Datasets a submission may name by file rather than send inline: only files
 # under this folder (relative to the repo folder).
 SHARED_DATASETS_DIR = "datasets"

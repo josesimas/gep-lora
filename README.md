@@ -2862,6 +2862,21 @@ sweep is worth nothing without the sweep.
 | `GET /health` | no key needed; what is loaded |
 | `GET /settings` | settings.py's values and the choices (templates, evaluators, backends), for a form |
 | `GET /datasets` | the shared dataset files a submission may name |
+| `GET /judge/models[?base_url=]` | the chat models a judge endpoint lists (default `JUDGE_BASE_URL`), asked by the server |
+
+**Every judge-model box on the page has a list of the endpoint's models under
+it** -- the submission form's, the verification's and the evaluation's. The box
+is the truth: it is what is sent, and it takes any model id, listed or not. The
+list only helps fill it in: picking a model writes it into the box, typing in
+the box moves the list to match (or to *not listed*), ↻ asks the endpoint
+again, and the list is asked afresh whenever the endpoint URL beside it
+changes. It comes from `GET /judge/models`, which asks the endpoint's
+`/models` from the server -- LM Studio sends no CORS headers, and the endpoint
+that matters is the one the worker's machine can reach -- with
+`$JUDGE_API_KEY` if it is set, leaving out embedding models the way
+`discover_model()` does, and giving up after `JUDGE_MODELS_TIMEOUT` (5s). An
+endpoint that cannot be reached says so under the box, which still works. On
+the `unsloth` backend there is no list to ask for, and none is shown.
 | `GET /demo` (or `/`) | no key needed; the test page |
 
 Every endpoint but `/health` and `/infer` takes `Authorization: Bearer <key>`,

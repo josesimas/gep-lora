@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from async_api import inference
 import start_run
@@ -342,3 +343,50 @@ class ResumeTests(ServerTestCase):
         self.assertEqual(status, 200, reply)
         self.assertEqual(reply["job"]["status"], reg.DONE)
         self.assertEqual(self.call("POST", "/jobs/%d/live" % job_id, {})[0], 201)
+
+
+class JudgeModelsTests(ServerTestCase):
+    """GET /judge/models: an endpoint's list of models, asked from the server."""
+
+    def endpoint(self, reply, status=200):
+        """A stand-in for LM Studio's /v1/models. -> its base URL."""
+        body = json.dumps(reply).encode("utf-8")
+
+        class Models(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                handler.send_response(status if handler.path == "/v1/models" else 404)
+                handler.send_header("Content-Type", "application/json")
+                handler.send_header("Content-Length", str(len(body)))
+                handler.end_headers()
+                handler.wfile.write(body)
+
+            def log_message(handler, *args):
+                pass
+
+        fake = HTTPServer(("127.0.0.1", 0), Models)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+        self.addCleanup(fake.server_close)
+        self.addCleanup(fake.shutdown)
+        return "http://127.0.0.1:%d/v1" % fake.server_address[1]
+
+    def test_the_chat_models_are_listed(self):
+        url = self.endpoint({"data": [{"id": "qwen/qwen3-8b"},
+                                      {"id": "text-embedding-nomic"},
+                                      {"id": "google/gemma-3-12b"}]})
+        status, reply = self.call("GET", "/judge/models?base_url=" + url)
+        self.assertEqual(status, 200, reply)
+        # Embedding models cannot grade, so they are not offered.
+        self.assertEqual(reply, {"base_url": url,
+                                 "models": ["qwen/qwen3-8b", "google/gemma-3-12b"]})
+
+    def test_an_endpoint_that_cannot_be_reached_is_a_502(self):
+        url = self.endpoint({"data": []})
+        status, reply = self.call("GET", "/judge/models?base_url=" + url + "/nowhere")
+        self.assertEqual(status, 502)
+        self.assertIn("cannot reach the judge", reply["error"])
+
+    def test_only_an_http_url_is_asked(self):
+        self.assertEqual(self.call("GET", "/judge/models?base_url=file:///etc")[0], 400)
+
+    def test_it_needs_a_key(self):
+        self.assertEqual(self.call("GET", "/judge/models", key="gep_wrong")[0], 401)

@@ -57,6 +57,8 @@ Inference
     GET    /health                         liveness, and what is loaded
 
 Other
+    GET    /judge/models[?base_url=]       the chat models a judge endpoint lists (default:
+                                           settings.py's JUDGE_BASE_URL), asked from here
     GET    /settings                       settings.py's values and the choices, for a form
     GET    /datasets                       shared dataset files a submission may name
     GET    /  or  /demo                    a test page that drives all of the above
@@ -80,6 +82,7 @@ from async_api import results
 from async_api import settings
 from async_api import submit
 from async_api import verify
+from config import settings as config
 
 
 # A page that exercises every endpoint, served at / and /demo. Same origin as
@@ -435,6 +438,27 @@ class App:
             names = []
         return 200, {"datasets": names}
 
+    def judge_models(self, user, query):
+        """The chat models a judge endpoint lists, for a form to offer.
+
+        Asked from here rather than by the browser: an endpoint such as LM Studio
+        sends no CORS headers, and the one worth listing is the one this machine
+        -- where the worker will grade -- can reach, which a browser elsewhere
+        may not. Only the model ids come back. $JUDGE_API_KEY goes with the
+        request, as it does when a step asks the same endpoint.
+        """
+        base_url = ((query.get("base_url") or [""])[0].strip()
+                    or config.JUDGE_BASE_URL or "")
+        if urlparse(base_url).scheme not in ("http", "https") or not urlparse(base_url).netloc:
+            raise ApiError(400, "base_url must be an http(s) URL, not %r" % base_url)
+        import evaluators                   # the judge transport, loaded when first asked
+        try:
+            models = evaluators.common.list_models(
+                base_url, evaluators.API_KEY, settings.JUDGE_MODELS_TIMEOUT)
+        except SystemExit as error:
+            raise ApiError(502, str(error), base_url=base_url)
+        return 200, {"base_url": base_url, "models": models}
+
     def list_live(self, user):
         return 200, {"live": [deployment_json(row)
                               for row in self.registry.deployments(user_id=user["id"])]}
@@ -500,6 +524,7 @@ ROUTES = [
     ("DELETE", r"/jobs/(\d+)/live", "unset_job", ()),
     ("GET", r"/settings", "submission_form", ()),
     ("GET", r"/datasets", "list_datasets", ()),
+    ("GET", r"/judge/models", "judge_models", ("query",)),
     ("GET", r"/live", "list_live", ()),
     ("DELETE", r"/live/(\d+)", "unset_one", ()),
 ]

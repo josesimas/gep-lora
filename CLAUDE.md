@@ -1038,6 +1038,13 @@ change to it. These rules hold it together:
   the `EVALUATOR`. The registry's new columns are added by `Registry._migrate()` --
   add a column there too, since `CREATE TABLE IF NOT EXISTS` leaves an old table alone.
 
+- **The page lists a judge endpoint's models through the API** (`GET /judge/models`,
+  `evaluators.common.list_models()` -- the same read `discover_model()` takes the first
+  of), because the browser cannot ask LM Studio itself (no CORS) and the endpoint worth
+  listing is the one the server's machine reaches. In `demo.html` the model *textbox* is
+  the truth and `modelPicker()` only fills it in; keep it that way, so a model the
+  endpoint does not list can still be typed.
+
 Its knobs live in `async_api/settings.py`, deliberately outside `config/settings.py`,
 whose `snapshot()` would store them in every sweep.
 

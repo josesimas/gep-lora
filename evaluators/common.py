@@ -6,7 +6,8 @@ evaluators beside it, and nothing here is an evaluator itself:
 
     the registry        Prepared, Evaluator, register(), get(), available()
     the judge transport ask_judge(), judge_settings(), resolve_model(),
-                        discover_model(), parse_reply(), judge_note() --
+                        discover_model(), list_models(), parse_reply(),
+                        judge_note() --
                         llm_judge, llm_judge_reference, llm_judge_answers,
                         llm_judge_baseline and panel all speak to a model
     the references      load_references(), reference_for(), prepare_references()
@@ -247,6 +248,20 @@ def _request(url, payload, api_key, timeout):
 
 def discover_model(base_url, api_key, timeout):
     """Ask the endpoint which model it has loaded (LMStudio serves one)."""
+    chat_models = list_models(base_url, api_key, timeout)
+    if not chat_models:
+        raise SystemExit("%s/models lists no chat models. Load one in LMStudio first."
+                         % base_url.rstrip("/"))
+    return chat_models[0]
+
+
+def list_models(base_url, api_key, timeout):
+    """The chat models an endpoint's /models lists, in its order. -> [id].
+
+    What discover_model() picks the first of, and what the async API's demo
+    offers to pick from. Raises SystemExit, naming the endpoint, when it
+    cannot be reached or does not answer in JSON.
+    """
     url = base_url.rstrip("/") + "/models"
     headers = {}
     if api_key:
@@ -255,7 +270,7 @@ def discover_model(base_url, api_key, timeout):
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             listed = json.loads(response.read().decode("utf-8")).get("data") or []
-    except (urllib.error.URLError, OSError, ValueError) as error:
+    except (urllib.error.URLError, OSError, ValueError, AttributeError) as error:
         raise SystemExit(
             "cannot reach the judge at %s (%s). Is LMStudio running with a model "
             "loaded and its server started? Point JUDGE_BASE_URL at a different "
@@ -263,11 +278,8 @@ def discover_model(base_url, api_key, timeout):
             % (base_url, error)
         )
     # LMStudio lists embedding models alongside chat ones; those cannot grade.
-    chat_models = [entry.get("id") for entry in listed
-                   if "embed" not in (entry.get("id") or "").lower()]
-    if not chat_models:
-        raise SystemExit("%s lists no chat models. Load one in LMStudio first." % url)
-    return chat_models[0]
+    ids = [entry.get("id") for entry in listed if isinstance(entry, dict)]
+    return [one for one in ids if isinstance(one, str) and "embed" not in one.lower()]
 
 
 def parse_reply(text):
