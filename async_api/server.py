@@ -11,7 +11,7 @@ python if anything real is going to go live.
 
 Every endpoint but /health and /infer needs `Authorization: Bearer <API key>`
 (create one with `python -m async_api.users add <name>`), and a user only ever
-sees their own jobs and deployments -- another user's job is a 404, not a 403.
+sees their own jobs, deployments and LoRAs -- another user's is a 404, not a 403.
 
 Jobs
     POST   /jobs                           submit -> 201 {job}        (see submit.py)
@@ -56,6 +56,20 @@ Inference
                                               Accept: text/event-stream)
     GET    /health                         liveness, and what is loaded
 
+LoRAs (the user's own rows of the catalogue a search draws its slots from)
+    GET    /loras[?base_model=]            the user's LoRAs
+    GET    /loras/form                     what a training may ask for: defaults, choices, the
+                                           base models there are LoRAs for or downloads of
+    POST   /loras                          {"name", "dataset", "settings"?, "mock"?}
+                                           -> 201 {lora, training}; queued like a job (see train.py)
+    POST   /loras/scan                     re-read loras/ into the catalogue; reports
+                                           on the user's own rows
+    GET    /loras/{id}                     one LoRA: its record, loss history and progress
+    GET    /loras/{id}/log[?lines=200]     the tail of its training's console
+    GET    /loras/{id}/dataset[?limit=20]  the conversations it was trained on
+    POST   /loras/{id}/cancel              cancel a queued training, or stop a running one
+    DELETE /loras/{id}                     a LoRA you trained here: its folder and its row
+
 Other
     GET    /judge/models[?base_url=]       the chat models a judge endpoint lists (default:
                                            settings.py's JUDGE_BASE_URL), asked from here
@@ -81,7 +95,9 @@ from async_api import registry as reg
 from async_api import results
 from async_api import settings
 from async_api import submit
+from async_api import train
 from async_api import verify
+from adapters import catalog as lora_catalog
 from config import settings as config
 
 
@@ -133,6 +149,61 @@ def verification_json(row, report=None):
     return out
 
 
+def training_json(registry, row):
+    out = {key: row[key] for key in ("id", "name", "status", "created_at", "started_at",
+                                     "finished_at", "exit_code", "error")}
+    out["options"] = json.loads(row["options"] or "{}")
+    out["cancel_requested"] = bool(row["cancel_requested"])
+    if row["status"] == reg.QUEUED:
+        out["queue_position"] = registry.training_queue_position(row["id"])
+    return out
+
+
+def default_slots():
+    """{folder: [slot]} for the server's own LORA_SLOTS, so a LoRA can say
+    which slots of the default search it fills."""
+    out = {}
+    for slot, where in sorted(config.LORA_SLOTS.items()):
+        out.setdefault(os.path.normcase(lora_catalog.absolute(where)), []).append(slot)
+    return out
+
+
+def training_of(registry, row):
+    """The training that made a catalogue row, or None.
+
+    Matched on the folder as well as the id: the two live in different files,
+    and a row forgotten and another catalogued in its place must never inherit
+    a training -- nor with it who may delete the folder.
+    """
+    training = registry.training_for_lora(row["id"])
+    if training is None or training["folder"] != row["folder"]:
+        return None
+    return training
+
+
+def lora_json(app, row, user, detail=False, slots=None):
+    """One of the user's catalogue rows as the API shows it: the row, the
+    training that made it here if one did, and what may be done with it."""
+    out = lora_catalog.as_dict(row)
+    training = training_of(app.registry, row)
+    if training is not None and training["user_id"] != user["id"]:
+        training = None
+    in_flight = row["status"] in lora_catalog.IN_FLIGHT
+    trained_here = training is not None
+    out["trained_here"] = trained_here
+    out["training"] = training_json(app.registry, training) if trained_here else None
+    out["progress"] = train.progress(row["folder"]) if in_flight else None
+    out["can_cancel"] = trained_here and in_flight
+    # Only what the API made can the API delete: a folder found on disk, or
+    # trained by hand, is left to whoever put it there, owner or not.
+    out["can_delete"] = trained_here and not in_flight and training["status"] in reg.FINISHED
+    slots = default_slots() if slots is None else slots
+    out["default_slots"] = slots.get(os.path.normcase(lora_catalog.absolute(row["folder"])), [])
+    if detail:
+        out["history"] = lora_catalog.history(row["folder"])
+    return out
+
+
 def deployment_json(row):
     spec = json.loads(row["spec"])
     return {"id": row["id"], "job_id": row["job_id"], "target": row["target"],
@@ -145,10 +216,12 @@ def deployment_json(row):
 class App:
     """The state every request shares: the registry, the targets, the cache."""
 
-    def __init__(self, registry=None, cache=None):
+    def __init__(self, registry=None, cache=None, catalog=None):
         self.registry = registry or reg.Registry()
         self.cache = cache or inference.ModelCache()
         self.targets = golive.targets(self.cache)
+        # The LoRAs are a table of the registry's own file.
+        self.catalog = catalog or self.registry.catalog
 
     # --- helpers -----------------------------------------------------------
 
@@ -469,6 +542,115 @@ class App:
             raise ApiError(404, "no live deployment %d" % deployment_id)
         return 200, {"unset": self.unset([row])}
 
+    # --- LoRAs -------------------------------------------------------------
+
+    def own_lora(self, user, lora_id):
+        """-> (the user's catalogue row, the training of theirs that made it,
+        or None). Another user's row is a 404, exactly as a missing one is."""
+        row = self.catalog.get(lora_id)
+        if row is None or row["owner"] != user["name"]:
+            raise ApiError(404, "no LoRA %d" % lora_id)
+        training = training_of(self.registry, row)
+        return row, (training if training is not None and training["user_id"] == user["id"]
+                     else None)
+
+    def list_loras(self, user, query):
+        base_model = (query.get("base_model") or [None])[0]
+        slots = default_slots()
+        return 200, {"loras": [lora_json(self, row, user, slots=slots) for row
+                               in self.catalog.all(base_model=base_model, owner=user["name"])]}
+
+    def lora_form(self, user):
+        return 200, train.form(self.catalog, user)
+
+    def create_lora(self, user, body):
+        try:
+            training, row = train.submit(self.registry, self.catalog, user, body)
+        except train.TrainError as error:
+            raise ApiError(error.status, str(error))
+        return 201, {"lora": lora_json(self, row, user),
+                     "training": training_json(self.registry, training),
+                     "note": "queued; the worker trains it after any queued job"}
+
+    def scan_loras(self, user):
+        """Re-read loras/. What is said back is about the user's own rows: a
+        folder found for the first time belongs to nobody, and becomes someone's
+        only through `python -m adapters.catalog own` on the server."""
+        mine = {row["name"] for row in self.catalog.all(owner=user["name"])}
+        report = self.catalog.scan()
+        return 200, {"missing": [name for name in report["missing"] if name in mine],
+                     "updated": [name for name in report["updated"] if name in mine],
+                     "loras": len(self.catalog.all(owner=user["name"])),
+                     "unowned": len(self.catalog.all(owner=None))}
+
+    def lora_detail(self, user, lora_id):
+        row, _ = self.own_lora(user, lora_id)
+        return 200, {"lora": lora_json(self, row, user, detail=True)}
+
+    def lora_log(self, user, lora_id, query):
+        row, training = self.own_lora(user, lora_id)
+        try:
+            lines = max(1, int((query.get("lines") or ["200"])[0]))
+        except ValueError:
+            raise ApiError(400, "lines must be a whole number")
+        if training is None:
+            return 200, {"lines": [], "note": "this LoRA was not trained through the API, "
+                                              "so there is no log of it here"}
+        path = os.path.join(self.registry.training_folder(training), "train.log")
+        if not os.path.exists(path):
+            return 200, {"lines": []}
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return 200, {"lines": handle.read().splitlines()[-lines:]}
+
+    def lora_dataset(self, user, lora_id, query):
+        """The conversations a LoRA learned."""
+        row, training = self.own_lora(user, lora_id)
+        try:
+            limit = max(1, min(500, int((query.get("limit") or ["20"])[0])))
+        except ValueError:
+            raise ApiError(400, "limit must be a whole number")
+        path = train.dataset_path(row, training, self.registry)
+        if path is None:
+            return 200, {"records": [], "total": 0,
+                         "note": "no copy of its data is kept with this adapter"}
+        return 200, dict(train.preview(path, limit),
+                         source=row["dataset"], sha256=row["dataset_sha256"])
+
+    def cancel_lora(self, user, lora_id):
+        row, training = self.own_lora(user, lora_id)
+        if training is None or row["status"] not in lora_catalog.IN_FLIGHT:
+            raise ApiError(409, "LoRA %d is %s; there is no training of it to stop"
+                           % (lora_id, row["status"]))
+        status = self.registry.request_training_cancel(training["id"])
+        if status == reg.CANCELLED:
+            self.catalog.update(lora_id, status=lora_catalog.CANCELLED,
+                                error="cancelled before it started")
+            note = "cancelled before it started"
+        else:
+            note = "the worker will stop it within a few seconds"
+        return 202 if status == reg.RUNNING else 200, {
+            "lora": lora_json(self, self.catalog.get(lora_id), user), "note": note}
+
+    def delete_lora(self, user, lora_id):
+        """A LoRA this user trained here: the adapter folder, the Trainer's
+        scratch beside it, the training's own folder, and both rows."""
+        row, training = self.own_lora(user, lora_id)
+        if training is None:
+            raise ApiError(403, "LoRA %d was not trained through the API; its folder "
+                                "is left to whoever put it there" % lora_id)
+        if row["status"] in lora_catalog.IN_FLIGHT or training["status"] not in reg.FINISHED:
+            raise ApiError(409, "LoRA %d is still training; stop it first" % lora_id)
+        slots = default_slots().get(os.path.normcase(lora_catalog.absolute(row["folder"])))
+        if slots:
+            raise ApiError(409, "LoRA %d is the server's default %s; point LORA_SLOTS "
+                                "elsewhere before deleting it" % (lora_id, ", ".join(slots)))
+        folder = lora_catalog.absolute(row["folder"])
+        for where in (folder, folder + "_outputs", self.registry.training_folder(training)):
+            shutil.rmtree(where, ignore_errors=True)
+        self.catalog.remove(lora_id)
+        self.registry.delete_training(training["id"])
+        return 200, {"deleted": lora_id}
+
     # --- inference ---------------------------------------------------------
 
     def open_stream(self, token, body):
@@ -525,6 +707,15 @@ ROUTES = [
     ("GET", r"/settings", "submission_form", ()),
     ("GET", r"/datasets", "list_datasets", ()),
     ("GET", r"/judge/models", "judge_models", ("query",)),
+    ("GET", r"/loras", "list_loras", ("query",)),
+    ("POST", r"/loras", "create_lora", ("body",)),
+    ("GET", r"/loras/form", "lora_form", ()),
+    ("POST", r"/loras/scan", "scan_loras", ()),
+    ("GET", r"/loras/(\d+)", "lora_detail", ()),
+    ("GET", r"/loras/(\d+)/log", "lora_log", ("query",)),
+    ("GET", r"/loras/(\d+)/dataset", "lora_dataset", ("query",)),
+    ("POST", r"/loras/(\d+)/cancel", "cancel_lora", ()),
+    ("DELETE", r"/loras/(\d+)", "delete_lora", ()),
     ("GET", r"/live", "list_live", ()),
     ("DELETE", r"/live/(\d+)", "unset_one", ()),
 ]

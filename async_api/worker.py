@@ -37,6 +37,14 @@ the same reasons. Jobs come first: a verification asks a question about a
 search that has already finished, and a job is one that has not started. One
 card, one queue, whichever kind of work is in it.
 
+And it runs **trainings** -- a LoRA asked for through the API (see train.py) --
+through `python -m adapters.create_lora`, again the same way: a log of its own
+(`train.log`), a cancel that stops it, and a catalogue row that create_lora.py
+keeps up while it runs and the worker settles when it could not (killed,
+cancelled, never started). Between the jobs and the verifications: a LoRA is an
+input a later search may be waiting for, and a verification is a question
+about one already done.
+
 One worker per JOBS_DIR. A worker that starts finds any job still marked
 running with nothing behind it (the last worker died) and marks it failed --
 not queued again on its own, since whether to spend the card on it is the
@@ -52,11 +60,14 @@ import subprocess
 import sys
 import time
 
+from adapters import catalog as lora_catalog
 from async_api import evaluate
 from async_api import results
 from async_api import settings
+from async_api import train
 from async_api import verify
-from async_api.registry import DONE, EVALUATE, FAILED, RESUME, STOPPED, Registry
+from async_api.registry import (CANCELLED, DONE, EVALUATE, FAILED, RESUME, STOPPED,
+                                Registry)
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN = os.path.join(_ROOT, "main.py")
@@ -295,6 +306,76 @@ def recover_verifications(registry):
     return len(stale)
 
 
+def train_command(registry, row, catalog, python=None):
+    """create_lora.py's command line for one training, from its options."""
+    return train.command(python or sys.executable, row, registry.training_folder(row),
+                         catalog.path)
+
+
+def lora_of(catalog, row):
+    """A training's catalogue row -- the one it reserved, for the folder it writes."""
+    lora = catalog.get(row["lora_id"]) if row["lora_id"] else None
+    return lora if lora is not None and lora["folder"] == row["folder"] else None
+
+
+def settle_lora(catalog, row, status, error):
+    """Put a training's catalogue row where the training ended, when the
+    training could not say so itself -- killed, never started, or cancelled.
+    A row create_lora.py already finished is left as it wrote it."""
+    lora = lora_of(catalog, row)
+    if lora is not None and lora["status"] in lora_catalog.IN_FLIGHT:
+        catalog.update(lora["id"], status=status, error=error)
+
+
+def run_training(registry, row, catalog, argv=None, poll=None):
+    """Run one claimed training to its end. -> the status it finished in.
+
+    Done means the catalogue says `ready` -- create_lora.py writes that last,
+    after the weights and training.json -- not merely exit 0.
+    """
+    argv = argv or train_command(registry, row, catalog)
+    what = "training %d (%s)" % (row["id"], row["name"])
+    say("%s: %s" % (what, " ".join(argv[3:])))
+    try:
+        code, why = supervise(argv, os.path.join(registry.training_folder(row), "train.log"),
+                              what, lambda pid: registry.set_training_pid(row["id"], pid),
+                              lambda: registry.training_cancel_requested(row["id"]), poll)
+    except Stopped as stopped:
+        error = "the worker stopped while this training was running"
+        registry.finish_training(row["id"], FAILED, exit_code=stopped.args[0], error=error)
+        settle_lora(catalog, row, lora_catalog.FAILED, error)
+        raise
+    if code is None:
+        error = "could not start create_lora.py: %s" % why
+        registry.finish_training(row["id"], FAILED, error=error)
+        settle_lora(catalog, row, lora_catalog.FAILED, error)
+        return FAILED
+    if why:
+        registry.finish_training(row["id"], CANCELLED, exit_code=code, error="stopped")
+        settle_lora(catalog, row, lora_catalog.CANCELLED, "stopped before it finished")
+        return CANCELLED
+    lora = lora_of(catalog, row)
+    if code == 0 and lora is not None and lora["status"] == lora_catalog.READY:
+        registry.finish_training(row["id"], DONE, exit_code=0)
+        return DONE
+    error = ("create_lora.py exited with %s; see the training log" % code if code
+             else "create_lora.py finished but the adapter is not ready; see the training log")
+    registry.finish_training(row["id"], FAILED, exit_code=code, error=error)
+    settle_lora(catalog, row, lora_catalog.FAILED, error)
+    return FAILED
+
+
+def recover_trainings(registry, catalog):
+    """Mark the trainings a dead worker left running as failed. -> how many."""
+    stale = registry.orphaned_trainings()
+    for row in stale:
+        error = "the worker stopped while this training was running"
+        registry.finish_training(row["id"], FAILED, error=error)
+        settle_lora(catalog, row, lora_catalog.FAILED, error)
+        say("training %d was left running by a previous worker; marked failed" % row["id"])
+    return len(stale)
+
+
 def search_finished(registry, job):
     """Did every generation of the job's search get scored, and the sweep end well?"""
     done = results.progress(registry.database(job), job["run_id"])
@@ -320,16 +401,26 @@ def recover(registry):
     return len(stale)
 
 
-def serve(registry, once=False, poll=None):
+def serve(registry, once=False, poll=None, catalog=None):
     poll = settings.WORKER_POLL_SECONDS if poll is None else poll
+    catalog = catalog or registry.catalog
     recover(registry)
     recover_verifications(registry)
+    recover_trainings(registry, catalog)
     say("watching %s" % registry.path)
     while True:
         job = registry.claim_next()
         if job is not None:
             status = run_job(registry, job, poll=poll)
             say("job %d: %s" % (job["id"], status))
+            if once:
+                return 0
+            continue
+        # Then a LoRA someone asked for: a later search may be waiting on it.
+        row = registry.claim_next_training()
+        if row is not None:
+            status = run_training(registry, row, catalog, poll=poll)
+            say("training %d: %s" % (row["id"], status))
             if once:
                 return 0
             continue

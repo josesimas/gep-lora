@@ -143,6 +143,10 @@ class RequeueTests(JobsTestCase):
         conn.commit()
         conn.close()
         old = reg.Registry(folder)
+        # Copied into the one database, and the old file put aside.
+        self.assertTrue(os.path.exists(os.path.join(folder, "api.sqlite")))
+        self.assertTrue(os.path.exists(os.path.join(folder, "jobs.sqlite3.merged")))
+        self.assertFalse(os.path.exists(os.path.join(folder, "jobs.sqlite3")))
         row = old.job(1)
         self.assertEqual((row["task"], row["task_options"], row["requeued_from"]),
                          (reg.SEARCH, "{}", None))

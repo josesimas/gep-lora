@@ -150,6 +150,7 @@
   .side-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   .side-head .spacer + button { margin-left: auto; }
   .joblist { flex: 1; overflow-y: auto; padding: 0 10px 16px; display: flex; flex-direction: column; gap: 4px; }
+  .joblist > * { flex: none; }
   .job { display: block; width: 100%; text-align: left; border: 1px solid transparent; background: transparent;
          border-radius: 10px; padding: 9px 10px; min-height: 0; white-space: normal; font-weight: 400; }
   .job:hover:not(:disabled) { background: var(--panel-2); border-color: var(--line); }
@@ -363,6 +364,36 @@
             vertical-align: -2px; background: var(--accent); animation: pulse 1s steps(2) infinite; }
   .answer.msg:not(:empty) { margin-top: 14px; }
   #inferStats { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  /* --- LoRAs ---------------------------------------------------------------------------------------------- */
+  .side-tools { display: flex; gap: 6px; padding: 0 16px 10px; }
+  .side-tools input { min-height: 30px; font-size: 13px; }
+  .lora-group { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+                padding: 12px 10px 4px; display: flex; gap: 6px; align-items: baseline; }
+  .lora-group:first-child { padding-top: 2px; }
+  .lora-group span { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--faint);
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { display: inline-block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+         padding: 0 6px; border-radius: 5px; color: var(--muted); background: var(--code); vertical-align: 1px; }
+  .tag.mock { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+  .tag.slot { color: var(--slot); background: color-mix(in srgb, var(--slot) 12%, transparent); }
+  .s-ready { color: var(--ok); } .s-training { color: var(--accent); } .s-missing { color: var(--warn); }
+  .s-training::before { animation: pulse 1.2s ease-in-out infinite; }
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+  .chips button { min-height: 24px; padding: 0 8px; font-size: 12px; }
+  .chips button.active { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent); }
+  .modules { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 10px; border: 1px solid var(--line);
+             border-radius: 8px; background: var(--panel-2); }
+  .modules label.check { margin: 0; font-family: var(--mono); font-size: 12px; }
+  .slots { display: grid; gap: 8px 12px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+  .slots label { font-family: var(--mono); color: var(--slot); font-weight: 600; }
+  .slots select { font-size: 12px; }
+  dl.kv { display: grid; grid-template-columns: minmax(110px, max-content) minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: 13px; }
+  dl.kv dt { color: var(--muted); }
+  dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .sample { white-space: pre-wrap; color: var(--ink-2); }
+  .overview.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 900px) { .overview.even { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
@@ -380,6 +411,7 @@
   <nav class="viewnav" aria-label="Views">
     <button type="button" data-view="new">New job</button>
     <button type="button" data-view="job" id="navJob" disabled>Job</button>
+    <button type="button" data-view="loras">LoRAs</button>
     <button type="button" data-view="infer">Inference</button>
   </nav>
   <div class="spacer"></div>
@@ -392,13 +424,25 @@
 </header>
 
 <div class="shell">
-  <aside class="sidebar">
+  <aside class="sidebar" data-side="jobs">
     <div class="side-head">
       <h2>Jobs</h2><span class="muted small" title="The list refreshes every 3 seconds">· live</span>
       <span class="spacer"></span>
       <button type="button" id="newJob" class="sm">+ New job</button>
     </div>
     <div id="jobs" class="joblist"><p class="empty">Enter an API key to see your jobs.</p></div>
+  </aside>
+  <aside class="sidebar" data-side="loras" hidden>
+    <div class="side-head">
+      <h2>LoRAs</h2><span class="muted small" id="loraCount"></span>
+      <span class="spacer"></span>
+      <button type="button" id="newLora" class="sm">+ New LoRA</button>
+    </div>
+    <div class="side-tools">
+      <input id="loraFilter" placeholder="Filter by name, model, rank…" autocomplete="off">
+      <button type="button" id="scanLoras" class="sm" title="Read loras/ again: adapters trained or copied there by hand are added, deleted ones marked missing">Rescan</button>
+    </div>
+    <div id="loras" class="joblist"><p class="empty">Enter an API key to see the LoRAs.</p></div>
   </aside>
 
   <main>
@@ -588,6 +632,106 @@
       </div>
     </section>
 
+    <!-- LoRAs: a new one, or the one picked in the sidebar -->
+    <section class="view" data-view="loras" hidden>
+      <div id="loraNew">
+        <div class="page-head">
+          <div>
+            <h1>New LoRA</h1>
+            <p>Train one adapter with <code>adapters/create_lora.py</code>, queued on the same worker as the
+              jobs. It lands in <code id="lFolder">loras/trained/</code>&lt;name&gt; and in the catalogue,
+              so any search can put it in a slot.</p>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom: 16px">
+          <div class="form-top">
+            <div><label for="lName">Name</label><input id="lName" placeholder="e.g. poem-r8" autocomplete="off">
+              <div class="help">Letters, digits, <code>.</code> <code>_</code> <code>-</code>; also its folder name.</div></div>
+            <div>
+              <label>Start from</label>
+              <div class="seg">
+                <button id="lPresetDemo" type="button" title="Mocked: no GPU, a fake loss curve, done in seconds">Quick demo</button>
+                <button id="lPresetDefaults" type="button" title="create_lora.py's own defaults, on the search's base model">Defaults</button>
+              </div>
+            </div>
+          </div>
+          <div class="fgrid" style="margin-top: 14px">
+            <div class="span2" id="lBaseBox"><label for="lBase">Base model</label>
+              <input id="lBase" class="mono" autocomplete="off" placeholder="a Hugging Face model id">
+              <div class="picker"><select id="lBasePick" title="Models there are LoRAs for, models downloaded here, and what the judge endpoint serves"></select>
+                <button type="button" id="lBaseAgain" title="Ask the judge endpoint for its models again">↻</button></div>
+              <div class="help" id="lBaseHelp"></div></div>
+          </div>
+          <label class="check"><input type="checkbox" id="lMock"> Mocked — train nothing: no GPU, a fake loss curve and an
+            adapter with no weights, usable only by a mocked search</label>
+        </div>
+
+        <details class="group" open>
+          <summary>Training data <span class="hint">the conversations it learns — every record needs an assistant turn</span></summary>
+          <div class="body">
+            <div class="fgrid">
+              <div><label for="lDataMode">Source</label>
+                <select id="lDataMode">
+                  <option value="shared">a shared file</option>
+                  <option value="upload">upload a file</option>
+                  <option value="paste">paste JSON Lines</option>
+                </select></div>
+              <div data-lmode="shared" class="span2"><label for="lDataShared">Shared file</label><select id="lDataShared"></select></div>
+              <div data-lmode="upload" class="span2"><label for="lDataUpload">File</label>
+                <input id="lDataUpload" type="file" accept=".json,.jsonl,.txt"></div>
+            </div>
+            <textarea id="lDataPaste" data-lmode="paste" rows="6" style="margin-top: 10px">{"messages": [{"role": "user", "content": "Tell me about the sea."}, {"role": "assistant", "content": "Salt and swell, the sea keeps time, / its tides a slow and silver rhyme."}]}
+{"messages": [{"role": "user", "content": "What is rain?"}, {"role": "assistant", "content": "Rain is the cloud's long-held reply, / let fall in threads from a grey sky."}]}</textarea>
+            <div class="help" id="lDataStatus"></div>
+          </div>
+        </details>
+        <div id="loraForm" class="settings" style="margin-top: 16px"></div>
+
+        <div class="submitbar">
+          <div id="loraMsg" class="msg"></div>
+          <button class="primary" id="lSubmit">Train LoRA</button>
+        </div>
+      </div>
+
+      <div id="loraDetail" hidden>
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">LoRA</div>
+            <h1 id="ldTitle"></h1>
+            <p id="ldSub"></p>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="group">
+            <button id="ldCancel">Stop</button>
+            <button id="ldUse" class="primary" title="Open a new job on this LoRA's base model, with it in a slot">Use in a new job</button>
+            <button id="ldAgain" title="A new LoRA form filled in with this one's recipe">Train again…</button>
+          </div>
+          <div class="group">
+            <button id="ldRefresh">Refresh</button>
+          </div>
+          <div class="group end">
+            <button id="ldDelete" class="danger">Delete LoRA</button>
+          </div>
+        </div>
+        <div id="ldMsg" class="msg"></div>
+        <div class="tiles" id="ldTiles"></div>
+        <nav class="tabs" role="tablist" aria-label="LoRA sections">
+          <button type="button" role="tab" data-ltab="overview">Overview</button>
+          <button type="button" role="tab" data-ltab="dataset">Dataset<span class="count" id="ldCountData"></span></button>
+          <button type="button" role="tab" data-ltab="log">Log</button>
+        </nav>
+        <div class="lpane" data-lpane="overview" id="ldOverview"></div>
+        <div class="lpane" data-lpane="dataset" id="ldDataset" hidden></div>
+        <div class="lpane" data-lpane="log" hidden>
+          <div class="card">
+            <div class="card-head"><h3>Training log</h3><span class="muted small">last 60 lines · follows a running training</span></div>
+            <pre id="ldLog" class="log">…</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- inference -->
     <section class="view" data-view="infer" hidden>
       <div class="page-head">
@@ -635,7 +779,8 @@ let verifyShown = null;       // the verification whose report is drawn
 let verifyAdapter = null;     // which adapter the per-question chart compares
 let evalForm = null;          // GET /jobs/{id}/evaluate, while its panel is open
 let formPicker = null;        // the submission form's judge-model picker
-let view = "new";             // which of the three views is on screen
+let view = "new";             // which of the four views is on screen
+let resumeView = recall("view");  // the one the page was left on, until the key is in
 let tab = "overview";         // which pane of the job view
 let shownIndividual = null;   // the individual whose transcript is open
 
@@ -685,12 +830,18 @@ function chromo(text, chips = false) {
 function setView(name) {
   if (name === "job" && selected === null) name = "new";
   view = name;
+  remember("view", name);
   for (const section of document.querySelectorAll(".view")) section.hidden = section.dataset.view !== name;
   for (const button of document.querySelectorAll(".viewnav [data-view]")) {
     button.classList.toggle("active", button.dataset.view === name);
   }
+  // The sidebar lists what the view is about: LoRAs beside the LoRAs, jobs elsewhere.
+  for (const side of document.querySelectorAll(".sidebar")) {
+    side.hidden = side.dataset.side !== (name === "loras" ? "loras" : "jobs");
+  }
   $("navJob").disabled = selected === null;
   $("navJob").textContent = selected === null ? "Job" : `Job #${selected}`;
+  if (name === "loras") refreshLoras();
 }
 
 function setTab(name) {
@@ -739,11 +890,19 @@ function recall(name) {
 async function useKey() {
   key = $("key").value.trim();
   remember("key", key);
+  const wanted = resumeView;
+  resumeView = null;
   await loadDatasets();
-  await Promise.all([loadForm(), refreshJobs(), refreshLive()]);
+  await Promise.all([loadForm(), loadLoraForm(), refreshJobs(), refreshLive()]);
   // Back to the job that was on screen last time, if it is still there.
   const last = Number(recall("job"));
   if (selected === null && last) select(last);
+  // And to the LoRAs, if that is where the page was left.
+  if (wanted === "loras") {
+    const lora = Number(recall("lora"));
+    if (lora) selectLora(lora);
+    else setView("loras");
+  }
 }
 
 async function refreshHealth() {
@@ -765,9 +924,10 @@ async function loadDatasets() {
   if (!key) return;
   try {
     const { datasets } = await api("GET", "/datasets");
-    for (const [split, preferred] of [["training", "medical_testing_lora_dataset.json"],
-                                      ["testing", "medical_validation_lora_dataset.json"]]) {
-      const select = $(split + "Shared");
+    for (const [id, preferred] of [["trainingShared", "medical_testing_lora_dataset.json"],
+                                   ["testingShared", "medical_validation_lora_dataset.json"],
+                                   ["lDataShared", "medical_training_lora_dataset.json"]]) {
+      const select = $(id);
       select.replaceChildren(...datasets.map((name) => el("option", { value: name }, name)));
       if (datasets.includes(preferred)) select.value = preferred;
     }
@@ -876,25 +1036,44 @@ const testingPass = () => $("testingMode").value !== "none" && $("runTest").chec
 // fields the user changed are sent, so a submission says what differs from
 // config/settings.py and nothing else.
 
-// The base models there are trained LoRAs for, and where each one's five
-// adapters live. An adapter only fits the model it was trained on, so choosing
-// a model also chooses its LORA_SLOTS -- sent whenever they differ from the
-// server's. Read from each adapter_config.json's base_model_name_or_path.
-const BASE_MODELS = {
-  "unsloth/Qwen3.5-0.8B": {
-    label: "Qwen3.5 0.8B", folder: "0.8b_own_template_lora_adapter" },
-  "unsloth/qwen2.5-0.5b-instruct-unsloth-bnb-4bit": {
-    label: "Qwen2.5 0.5B Instruct (4-bit)", folder: "QWen2.5-0.5b-lora_adapter" },
-  "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit": {
-    label: "Qwen2.5 1.5B Instruct (4-bit)", folder: "Qwen2.5-1.5B-Instruct-medical-lora_adapter" },
-};
+// The base models there are LoRAs for, and the LoRAs, come from the catalogue
+// (GET /loras). An adapter only fits the model it was trained on, so choosing a
+// model also chooses its LORA_SLOTS: the server's own when it is the server's
+// model, else the largest family of that model's LoRAs (a family is one
+// adapter folder name across loras/Lora001..Lora005 -- a set trained together).
+// Each slot can then be pointed at any LoRA of that model.
+const SLOTS = ["L1", "L2", "L3", "L4", "L5"];
+let catalogue = [];         // GET /loras
 
+const readyLoras = (model) => catalogue.filter((one) => one.status === "ready" && (!model || one.base_model === model));
+
+function baseModelChoices() {
+  const models = new Map();
+  for (const one of readyLoras()) models.set(one.base_model, (models.get(one.base_model) || 0) + 1);
+  const server = form && form.defaults.BASE_MODEL;
+  if (server && !models.has(server)) models.set(server, 0);
+  return [...models].sort((a, b) => (b[0] === server) - (a[0] === server) || b[1] - a[1])
+    .map(([value, count]) => ({ value, label: `${value} — ${count ? count + " LoRA" + (count > 1 ? "s" : "") : "no LoRAs catalogued"}` }));
+}
+
+// -> {L1: folder, ...} for a base model: see above.
 function slotsFor(model) {
-  const known = BASE_MODELS[model];
-  if (!known) return null;
+  const server = form.defaults.LORA_SLOTS || {};
+  if (model === form.defaults.BASE_MODEL) return Object.assign({}, server);
+  const pool = readyLoras(model);
+  if (!pool.length) return null;
+  const families = new Map();
+  for (const one of pool) families.set(one.family, (families.get(one.family) || []).concat([one]));
+  const members = [...families.values()].sort((a, b) => b.length - a.length)[0]
+    .sort((a, b) => a.folder.localeCompare(b.folder));
   const slots = {};
-  for (let n = 1; n <= 5; n++) slots["L" + n] = `loras/Lora00${n}/${known.folder}`;
+  SLOTS.forEach((slot, index) => { slots[slot] = members[index % members.length].folder; });
   return slots;
+}
+
+async function loadCatalogue() {
+  if (!key) return;
+  try { ({ loras: catalogue } = await api("GET", "/loras")); } catch (_) { catalogue = []; }
 }
 
 const FIELDS = [
@@ -919,7 +1098,9 @@ const FIELDS = [
               "template_remote_code.py": "Lora servers: base model loaded once",
               "template_code.py": "One model load per individual" } },
   { group: "Model", name: "BASE_MODEL", label: "Base model", type: "choice", wide: true, describe: true,
-    options: Object.keys(BASE_MODELS).map((value) => ({ value, label: BASE_MODELS[value].label })) },
+    options: baseModelChoices },
+  { group: "Model", name: "LORA_SLOTS", label: "LoRA slots", type: "slots", wide: true,
+    help: "The five adapters the search blends, from the LoRAs of the chosen base model. Their ranks decide which LIN nodes can run." },
   { group: "Model", name: "CHAT_TEMPLATE", label: "Chat template", type: "text",
     nullable: "blank = the model's own" },
   { group: "Model", name: "LORA_SERVER_COUNT", label: "Lora servers", type: "int", min: 1,
@@ -997,6 +1178,7 @@ async function loadForm() {
     $("form").replaceChildren(el("p", { class: "msg err" }, error.message));
     return;
   }
+  await loadCatalogue();
   const byGroup = (group) => FIELDS.filter((f) => f.group === group && f.name in form.defaults);
   $("form").replaceChildren(...GROUPS.map(([group, open]) =>
     el("details", Object.assign({ class: "group", "data-group": group }, open ? { open: "" } : {}),
@@ -1011,6 +1193,19 @@ async function loadForm() {
 function fieldControl(field) {
   const id = "f_" + field.name;
   let input;
+  if (field.type === "slots") {
+    // A select per slot; filled by fillSlots() for whichever base model is chosen.
+    input = el("div", { id, class: "slots" }, SLOTS.map((slot) => {
+      const select = el("select", { id: `${id}_${slot}`, "data-slot": slot });
+      select.addEventListener("change", refreshForm);
+      return el("div", {}, el("label", { for: `${id}_${slot}` }, slot), select);
+    }));
+    return el("div", { class: "field wide", "data-name": field.name },
+      el("label", {}, field.label), input,
+      el("div", { class: "help" }, field.help || ""),
+      el("div", { class: "help describe" }),
+      el("div", { class: "help error" }));
+  }
   if (field.type === "choice") {
     input = el("select", { id }, choicesOf(field).map((c) =>
       el("option", { value: c.value }, (field.labels && field.labels[c.value]) || c.label)));
@@ -1052,6 +1247,10 @@ function fieldControl(field) {
   }
   input.addEventListener("input", refreshForm);
   input.addEventListener("change", refreshForm);
+  // Another base model means another set of adapters: the slots follow it.
+  if (field.name === "BASE_MODEL") {
+    input.addEventListener("change", () => { setSlots(slotsFor(input.value)); refreshForm(); });
+  }
   // The endpoint's own list of models, as a helper beside the box -- which the
   // URL field above it names (blank: the server's), on an endpoint backend.
   const picker = field.picker ? formPicker = modelPicker(input, {
@@ -1072,7 +1271,8 @@ function fieldControl(field) {
 // A choice field's options: the server's list, or the field's own. A server
 // default missing from a fixed list is added, so the form can still show it.
 function choicesOf(field) {
-  const options = form.choices[field.name] || field.options || [];
+  const options = form.choices[field.name]
+    || (typeof field.options === "function" ? field.options() : field.options) || [];
   const current = form.defaults[field.name];
   if (typeof current === "string" && !options.some((c) => c.value === current)) {
     return options.concat([{ value: current, label: current + " (server default)" }]);
@@ -1080,9 +1280,35 @@ function choicesOf(field) {
   return options;
 }
 
+// Fill the five slot selects with the chosen base model's LoRAs, and pick
+// `slots` in them (or keep what each holds). A folder the catalogue does not
+// list -- or lists under another model -- is still offered, named for what it is.
+function setSlots(slots) {
+  const model = $("f_BASE_MODEL") ? $("f_BASE_MODEL").value : form.defaults.BASE_MODEL;
+  const pool = readyLoras(model).sort((a, b) => a.name.localeCompare(b.name));
+  for (const slot of SLOTS) {
+    const select = $("f_LORA_SLOTS_" + slot);
+    if (!select) return;
+    const want = slots ? slots[slot] : select.value;
+    const options = pool.map((one) => el("option", { value: one.folder },
+      `${one.name} · r${one.rank}${one.mock ? " · mock" : ""}`));
+    if (want && !pool.some((one) => one.folder === want)) {
+      const known = catalogue.find((one) => one.folder === want);
+      options.unshift(el("option", { value: want }, known
+        ? `${known.name} · r${known.rank} (${known.base_model})`
+        : Object.values(form.defaults.LORA_SLOTS || {}).includes(want) ? `${want} (the server's default)`
+        : `${want} (not one of your LoRAs)`));
+    }
+    if (!options.length) options.push(el("option", { value: "" }, "no LoRAs for this model — train one"));
+    select.replaceChildren(...options);
+    select.value = want || (pool[0] ? pool[0].folder : "");
+  }
+}
+
 function setField(field, value) {
   const input = $("f_" + field.name);
   if (!input) return;
+  if (field.type === "slots") return setSlots(value);
   if (field.type === "members") {
     const weights = {};
     for (const member of Array.isArray(value) ? value : []) {
@@ -1108,6 +1334,11 @@ function setField(field, value) {
 function readField(field) {
   const input = $("f_" + field.name);
   if (field.type === "bool") return [input.checked, null];
+  if (field.type === "slots") {
+    const slots = {};
+    for (const slot of SLOTS) slots[slot] = $("f_LORA_SLOTS_" + slot).value;
+    return Object.values(slots).every(Boolean) ? [slots, null] : [slots, "Every slot needs a LoRA."];
+  }
   if (field.type === "members") {
     // -> ["name", ["name", weight], ...]: a weight of 1 is just the name.
     const out = [];
@@ -1121,7 +1352,11 @@ function readField(field) {
     }
     return out.length ? [out, null] : [null, "Pick at least one evaluator."];
   }
-  const raw = input.value.trim();
+  return parseRaw(field, input.value.trim());
+}
+
+// A text box's value as its field's type. -> [value, error]
+function parseRaw(field, raw) {
   if (field.type === "choice") return [raw, null];
   if (raw === "") return field.nullable ? [null, null] : [null, "Required."];
   if (field.type === "text") return [raw, null];
@@ -1168,9 +1403,10 @@ function refreshForm() {
     const describe = box.querySelector(".describe");
     if (describe) {
       const chosen = choicesOf(field).find((c) => c.value === value);
-      describe.textContent = field.name === "BASE_MODEL"
-        ? `${value}, with adapters from loras/Lora001..005/${BASE_MODELS[value] ? BASE_MODELS[value].folder : "?"}`
+      describe.textContent = field.name === "LORA_SLOTS" ? slotsSummary(value, values)
+        : field.name === "BASE_MODEL" ? `${readyLoras(value).length} ready LoRA(s) on this model in the catalogue.`
         : (chosen ? chosen.description : "");
+      describe.classList.toggle("error", field.name === "LORA_SLOTS" && /^Careful/.test(describe.textContent));
     }
   }
   for (const details of document.querySelectorAll("#form details")) {
@@ -1272,9 +1508,22 @@ function overrides() {
     if (error) errors.push(`${field.label}: ${error}`);
     else if (differs(field, value)) out[field.name] = value;
   }
-  const slots = slotsFor(readField(FIELDS.find((f) => f.name === "BASE_MODEL"))[0]);
-  if (slots && JSON.stringify(slots) !== JSON.stringify(form.defaults.LORA_SLOTS)) out.LORA_SLOTS = slots;
   return [out, errors];
+}
+
+// What the chosen slots are: their ranks, and anything that will not run.
+function slotsSummary(slots, values) {
+  if (!slots) return "";
+  const held = SLOTS.map((slot) => catalogue.find((one) => one.folder === slots[slot]));
+  const ranks = held.map((one) => (one && one.rank !== null ? one.rank : "?"));
+  const problems = [];
+  const other = SLOTS.filter((slot, i) => held[i] && held[i].base_model !== values.BASE_MODEL);
+  if (other.length) problems.push(`${other.join(", ")} ${other.length > 1 ? "were" : "was"} trained on another base model`);
+  const mocked = SLOTS.filter((slot, i) => held[i] && held[i].mock);
+  if (mocked.length && values.TEMPLATE !== "template_code_mocked.py") {
+    problems.push(`${mocked.join(", ")} ${mocked.length > 1 ? "are mocked LoRAs" : "is a mocked LoRA"}, which only the mocked template can run`);
+  }
+  return (problems.length ? `Careful: ${problems.join("; ")}. ` : "") + `Ranks ${ranks.join(" · ")}.`;
 }
 
 // --- submit -----------------------------------------------------------------
@@ -2043,6 +2292,605 @@ async function goLive(number) {
   drawDetail();
 }
 
+// --- LoRAs ----------------------------------------------------------------------
+//
+// The catalogue (GET /loras) is every adapter on the server's machine: the sets
+// under loras/ and whatever has been trained since, through here or with
+// create_lora.py. A new one is queued work, like a job (POST /loras); its
+// progress, loss curve, log and data are read back from the API while the
+// worker trains it.
+
+let loraSelected = null;    // catalogue id on screen; null = the new-LoRA form
+let loraShown = null;       // GET /loras/{id} for it
+let loraTab = "overview";
+let loraForm = null;        // GET /loras/form
+let loraDataFor = null;     // which LoRA the dataset pane holds
+let judgeServed = [];       // what the judge endpoint serves, for the base-model list
+let loraUpload = null;      // {name, dataset, summary} of an uploaded training file
+let catalogueSeen = "";     // the ready LoRAs last drawn into the job form
+
+const IN_FLIGHT = ["queued", "training"];
+
+const LFIELDS = [
+  { group: "LoRA", name: "rank", label: "Rank", type: "int", min: 1, chips: [4, 8, 16, 32, 64],
+    help: "The one meant to differ between slots: CAT sums ranks, SVD takes the largest, LIN needs them equal." },
+  { group: "LoRA", name: "alpha", label: "Alpha", type: "int", min: 1, help: "The update is scaled by alpha / rank." },
+  { group: "LoRA", name: "dropout", label: "Dropout", type: "float", min: 0, max: 0.9, step: 0.05,
+    help: "0 keeps unsloth on its fast path." },
+  { group: "LoRA", name: "chat_template", label: "Chat template", type: "text", nullable: "blank = the model's own",
+    list: "chat_template", help: "A search must prompt it in the same one (its CHAT_TEMPLATE)." },
+  { group: "LoRA", name: "target_modules", label: "Target modules", type: "modules", wide: true,
+    help: "Every LoRA in one blend has to cover the same set; the existing ones cover all seven." },
+  { group: "Optimisation", name: "epochs", label: "Epochs", type: "float", min: 0.01, step: 1 },
+  { group: "Optimisation", name: "max_steps", label: "Max steps", type: "int", min: 1, nullable: "blank = the epochs decide" },
+  { group: "Optimisation", name: "learning_rate", label: "Learning rate", type: "float", min: 0 },
+  { group: "Optimisation", name: "scheduler", label: "Schedule", type: "choice" },
+  { group: "Optimisation", name: "warmup_steps", label: "Warmup steps", type: "int", min: 0 },
+  { group: "Optimisation", name: "weight_decay", label: "Weight decay", type: "float", min: 0, max: 1, step: 0.01 },
+  { group: "Optimisation", name: "optim", label: "Optimiser", type: "choice" },
+  { group: "Optimisation", name: "batch_size", label: "Batch size", type: "int", min: 1, help: "Per device." },
+  { group: "Optimisation", name: "grad_accum", label: "Gradient accumulation", type: "int", min: 1 },
+  { group: "Optimisation", name: "max_seq", label: "Max sequence length", type: "int", min: 16 },
+  { group: "Optimisation", name: "seed", label: "Seed", type: "int", min: 0 },
+  { group: "Smoke test", name: "prompt", label: "Prompt it answers once trained", type: "text", wide: true },
+  { group: "Smoke test", name: "no_sample", label: "Skip the smoke test", type: "bool" },
+];
+const LGROUPS = [["LoRA", true, "the adapter itself"], ["Optimisation", false, "how it is trained"],
+                 ["Smoke test", false, "one answer, to see it works"]];
+
+async function loadLoraForm() {
+  if (!key) return;
+  try {
+    loraForm = await api("GET", "/loras/form");
+  } catch (error) {
+    loraForm = null;
+    $("loraForm").replaceChildren(el("p", { class: "msg err" }, error.message));
+    return;
+  }
+  $("lFolder").textContent = loraForm.folder + "/";
+  $("loraForm").replaceChildren(...LGROUPS.map(([group, open, hint]) =>
+    el("details", Object.assign({ class: "group" }, open ? { open: "" } : {}),
+      el("summary", {}, group, el("span", { class: "hint" }, hint), el("span", { class: "changed-count" })),
+      el("div", { class: "body grid" }, LFIELDS.filter((f) => f.group === group).map(loraControl)))));
+  applyLoraPreset(recall("loraPreset") || "demo");
+  loadJudgeServed();
+}
+
+function loraControl(field) {
+  const id = "l_" + field.name;
+  let input, extra = null;
+  if (field.type === "choice") {
+    input = el("select", { id }, (loraForm.choices[field.name] || []).map((v) => el("option", { value: v }, v)));
+  } else if (field.type === "modules") {
+    input = el("div", { id, class: "modules" }, loraForm.choices.target_modules.map((name) =>
+      el("label", { class: "check" }, el("input", { type: "checkbox", "data-module": name }), name)));
+  } else if (field.type === "bool") {
+    input = el("input", { id, type: "checkbox" });
+  } else {
+    const attrs = { id, type: field.type === "text" ? "text" : "number", autocomplete: "off" };
+    if (field.type !== "text") attrs.step = field.step || (field.type === "int" ? 1 : "any");
+    if (field.min !== undefined) attrs.min = field.min;
+    if (field.max !== undefined) attrs.max = field.max;
+    if (field.nullable) attrs.placeholder = field.nullable;
+    if (field.list) {
+      attrs.list = id + "_list";
+      extra = el("datalist", { id: id + "_list" }, (loraForm.choices[field.list] || []).map((v) => el("option", { value: v })));
+    }
+    input = el("input", attrs);
+  }
+  if (field.chips) {
+    extra = el("div", { class: "chips" }, field.chips.map((value) => el("button", { type: "button", "data-chip": value,
+      onclick: () => { input.value = value; refreshLoraForm(); } }, value)));
+  }
+  input.addEventListener("input", refreshLoraForm);
+  input.addEventListener("change", refreshLoraForm);
+  return el("div", { class: "field" + (field.wide ? " wide" : ""), "data-lname": field.name },
+    field.type === "bool" ? el("label", { class: "check" }, input, field.label)
+      : [el("label", { for: id }, field.label), input, extra],
+    el("div", { class: "help" }, field.help || ""),
+    el("div", { class: "help error" }));
+}
+
+function setLoraField(field, value) {
+  const input = $("l_" + field.name);
+  if (!input) return;
+  if (field.type === "modules") {
+    const on = new Set(Array.isArray(value) ? value : []);
+    for (const tick of input.querySelectorAll("[data-module]")) tick.checked = on.has(tick.dataset.module);
+  } else if (field.type === "bool") input.checked = !!value;
+  else input.value = value === null || value === undefined ? "" : value;
+}
+
+// -> [value, error]
+function readLoraField(field) {
+  const input = $("l_" + field.name);
+  if (field.type === "bool") return [input.checked, null];
+  if (field.type === "modules") {
+    const ticked = [...input.querySelectorAll("[data-module]:checked")].map((t) => t.dataset.module);
+    return ticked.length ? [ticked, null] : [ticked, "Pick at least one."];
+  }
+  return parseRaw(field, input.value.trim());
+}
+
+const loraDiffers = (field, value) => JSON.stringify(value) !== JSON.stringify(loraForm.defaults[field.name]);
+
+function applyLoraPreset(name) {
+  if (!loraForm) return;
+  remember("loraPreset", name);
+  $("lPresetDemo").classList.toggle("active", name === "demo");
+  $("lPresetDefaults").classList.toggle("active", name === "defaults");
+  for (const field of LFIELDS) setLoraField(field, loraForm.defaults[field.name]);
+  $("lBase").value = loraForm.defaults.base_model || "";
+  $("lMock").checked = name === "demo";
+  if (!$("lName").value.trim()) $("lName").value = freeLoraName(name === "demo" ? "demo" : "lora");
+  refreshLoraForm();
+}
+
+function freeLoraName(stem) {
+  const taken = new Set(catalogue.map((one) => one.name));
+  if (!taken.has(stem)) return stem;
+  let n = 2;
+  while (taken.has(`${stem}-${n}`)) n += 1;
+  return `${stem}-${n}`;
+}
+
+// The judge endpoint's models, as a third list under the base-model box. They
+// are served names (LM Studio's, say), rarely Hugging Face ids -- offered for
+// what they are.
+async function loadJudgeServed() {
+  $("lBaseAgain").disabled = true;
+  try { judgeServed = (await api("GET", "/judge/models")).models; } catch (_) { judgeServed = []; }
+  $("lBaseAgain").disabled = false;
+  fillBasePicker();
+}
+
+// The base models again (after a rescan, say), without touching the form.
+async function loadLoraFormModels() {
+  if (!loraForm) return;
+  try { loraForm.base_models = (await api("GET", "/loras/form")).base_models; } catch (_) { return; }
+  fillBasePicker();
+}
+
+function fillBasePicker() {
+  if (!loraForm) return;
+  const models = loraForm.base_models;
+  const groups = [
+    ["LoRAs catalogued on it", models.filter((m) => m.loras)],
+    ["Downloaded here", models.filter((m) => !m.loras && m.local)],
+    ["The search's base model", models.filter((m) => !m.loras && !m.local && m.search)],
+    ["Served by the judge endpoint — not always a Hub id", judgeServed
+      .filter((id) => !models.some((m) => m.id === id)).map((id) => ({ id }))],
+  ].filter(([, list]) => list.length);
+  const label = (m) => m.id + (m.loras ? ` — ${m.ready} ready LoRA(s)` : "")
+    + (m.local && m.bytes ? ` · ${(m.bytes / 1e9).toFixed(1)} GB here` : "") + (m.search ? " · the search's" : "");
+  $("lBasePick").replaceChildren(el("option", { value: "" }, "— pick a model —"),
+    ...groups.map(([name, list]) => el("optgroup", { label: name },
+      list.map((m) => el("option", { value: m.id }, label(m))))));
+  syncBasePicker();
+}
+
+function syncBasePicker() {
+  const value = $("lBase").value.trim();
+  const listed = [...$("lBasePick").options].some((o) => o.value && o.value === value);
+  $("lBasePick").value = listed ? value : "";
+  const known = loraForm && loraForm.base_models.find((m) => m.id === value);
+  const notes = [];
+  if (!value) notes.push("Name the model to train on.");
+  else if (known) {
+    if (known.search) notes.push("The search's own base model.");
+    if (known.loras) notes.push(`${known.loras} LoRA(s) already trained on it.`);
+    notes.push(known.local ? "Downloaded here, so training starts without a fetch." : "Not downloaded here: the first training fetches it from the Hub.");
+  } else if (judgeServed.includes(value)) {
+    notes.push("A name the judge endpoint serves — usually a GGUF build, which cannot be trained. Prefer a Hugging Face id.");
+  } else notes.push("Not known here: it will be fetched from the Hub, if that is what it names.");
+  if (value && loraForm && value !== loraForm.search.base_model) {
+    notes.push(`The search runs on ${loraForm.search.base_model}; a LoRA on another model only fits a search on that model.`);
+  }
+  $("lBaseHelp").textContent = notes.join(" ");
+}
+
+function refreshLoraForm() {
+  if (!loraForm) return;
+  for (const field of LFIELDS) {
+    const box = document.querySelector(`.field[data-lname="${field.name}"]`);
+    if (!box) continue;
+    const [value, error] = readLoraField(field);
+    box.querySelector(".error").textContent = error || "";
+    box.classList.toggle("invalid", !!error);
+    box.classList.toggle("changed", !error && loraDiffers(field, value));
+    for (const chip of box.querySelectorAll("[data-chip]")) chip.classList.toggle("active", Number(chip.dataset.chip) === value);
+  }
+  for (const details of document.querySelectorAll("#loraForm details")) {
+    const count = details.querySelectorAll(".field.changed").length;
+    details.querySelector(".changed-count").textContent = count ? `${count} changed` : "";
+  }
+  for (const part of document.querySelectorAll("[data-lmode]")) part.hidden = part.dataset.lmode !== $("lDataMode").value;
+  if ($("lDataMode").value !== "upload") loraDataStatus("");
+  else if (loraUpload) loraDataStatus(loraUpload.summary, "ok");
+  $("lSubmit").textContent = $("lMock").checked ? "Queue a mocked training" : "Train LoRA";
+  syncBasePicker();
+}
+
+function loraDataStatus(text, kind) {
+  $("lDataStatus").textContent = text || "";
+  $("lDataStatus").className = "help" + (kind ? " " + kind : "");
+}
+
+async function loraUploaded() {
+  const file = $("lDataUpload").files[0];
+  loraUpload = null;
+  if (!file) return loraDataStatus("");
+  try {
+    const parsed = readDataset(await file.text());
+    loraUpload = Object.assign({ summary: `${file.name}: ${parsed.records} record(s).` }, parsed);
+    loraDataStatus(loraUpload.summary, "ok");
+  } catch (error) {
+    loraDataStatus(`${file.name}: ${error.message}`, "error");
+  }
+}
+
+// -> [dataset, error] as POST /loras takes it.
+function loraDataset() {
+  const mode = $("lDataMode").value;
+  if (mode === "shared") return $("lDataShared").value ? [{ file: $("lDataShared").value }, null] : [null, "Choose a shared file."];
+  if (mode === "paste") {
+    try { return [readDataset($("lDataPaste").value).dataset, null]; }
+    catch (error) { return [null, "Training data: " + error.message]; }
+  }
+  if (!$("lDataUpload").files[0]) return [null, "Choose a file to upload."];
+  return loraUpload ? [loraUpload.dataset, null] : [null, "The uploaded file cannot be used; see above."];
+}
+
+async function submitLora() {
+  if (!loraForm) return say("loraMsg", "Enter an API key first.", "err");
+  refreshLoraForm();
+  const settings = {}, errors = [];
+  for (const field of LFIELDS) {
+    const [value, error] = readLoraField(field);
+    if (error) errors.push(`${field.label}: ${error}`);
+    else if (loraDiffers(field, value)) settings[field.name] = value;
+  }
+  const base = $("lBase").value.trim();
+  if (!base) errors.push("Name a base model.");
+  else if (base !== loraForm.defaults.base_model) settings.base_model = base;
+  const [dataset, problem] = loraDataset();
+  if (problem) errors.push(problem);
+  if (errors.length) return say("loraMsg", errors.join(" "), "err");
+
+  say("loraMsg", "Queueing…");
+  $("lSubmit").disabled = true;
+  try {
+    const reply = await api("POST", "/loras", { name: $("lName").value.trim(), dataset, settings,
+                                                mock: $("lMock").checked });
+    say("loraMsg", "", "");
+    $("lName").value = "";
+    await refreshLoras();
+    selectLora(reply.lora.id);
+    say("ldMsg", `Queued at position ${reply.training.queue_position}. ` +
+      "Start a worker if none is running: python -m async_api.worker", "ok");
+  } catch (error) {
+    say("loraMsg", error.message, "err");
+  } finally {
+    $("lSubmit").disabled = false;
+  }
+}
+
+// --- the list ---
+
+async function refreshLoras() {
+  if (!key) return;
+  try {
+    ({ loras: catalogue } = await api("GET", "/loras"));
+  } catch (error) {
+    $("loras").replaceChildren(el("p", { class: "msg err" }, error.message));
+    return;
+  }
+  drawLoraList();
+  catalogueChanged();
+  if (loraSelected === null) return;
+  const now = catalogue.find((one) => one.id === loraSelected);
+  if (!now) return forgetLora();
+  // Until the worker has closed the training row too: the catalogue says
+  // `ready` a moment before, and what may be done next depends on both.
+  const working = (one) => one && one.training && ["queued", "running"].includes(one.training.status);
+  if (loraShown && now.status !== loraShown.status && loraShown.status === "queued") say("ldMsg", "");
+  if (!loraShown || now.status !== loraShown.status || IN_FLIGHT.includes(now.status)
+      || working(loraShown)) drawLora();
+}
+
+// A LoRA that became ready is one a new job can use: the job form's base
+// models and slots follow, only when the catalogue actually changed.
+function catalogueChanged() {
+  const seen = readyLoras().map((one) => one.id + ":" + one.folder).join(",");
+  if (seen === catalogueSeen || !form || !$("f_BASE_MODEL")) return;
+  catalogueSeen = seen;
+  const select = $("f_BASE_MODEL"), keep = select.value;
+  const field = FIELDS.find((f) => f.name === "BASE_MODEL");
+  select.replaceChildren(...choicesOf(field).map((c) => el("option", { value: c.value }, c.label)));
+  select.value = keep;
+  setSlots(null);
+  refreshForm();
+}
+
+const shortModel = (id) => String(id || "unknown base model").split("/").pop();
+
+function drawLoraList() {
+  const filter = $("loraFilter").value.trim().toLowerCase();
+  const shown = catalogue.filter((one) => !filter || [one.name, one.base_model, "r" + one.rank, one.status,
+    one.family, one.mock ? "mock" : ""].join(" ").toLowerCase().includes(filter));
+  $("loraCount").textContent = catalogue.length ? `· ${catalogue.length}` : "";
+  if (!catalogue.length) {
+    $("loras").replaceChildren(el("p", { class: "empty" }, "You have no LoRAs yet — train one. " +
+      "Adapters already on the server are given to a user there with: python -m adapters.catalog own <user> …"));
+    return;
+  }
+  const search = loraForm && loraForm.search.base_model;
+  const groups = new Map();
+  for (const one of shown) groups.set(one.base_model, (groups.get(one.base_model) || []).concat([one]));
+  const order = [...groups.keys()].sort((a, b) => (b === search) - (a === search) || groups.get(b).length - groups.get(a).length);
+  $("loras").replaceChildren(...(order.length ? order.flatMap((model) => [
+    el("div", { class: "lora-group", title: model }, shortModel(model), el("span", {}, `${groups.get(model).length}${model === search ? " · the search's" : ""}`)),
+    ...groups.get(model).map(loraItem)]) : [el("p", { class: "empty" }, "Nothing matches.")]));
+}
+
+function loraItem(one) {
+  const p = one.progress || {};
+  const flying = IN_FLIGHT.includes(one.status);
+  const loss = flying ? p.loss : one.final_loss;
+  return el("button", { type: "button", class: "job" + (one.id === loraSelected ? " selected" : ""),
+                        onclick: () => selectLora(one.id) },
+    el("div", { class: "job-top" }, el("span", { class: "job-name", title: one.name }, one.name), pill(one.status)),
+    el("div", { class: "job-best" },
+      el("b", {}, one.rank !== null ? "r" + one.rank : "r?"),
+      el("span", { class: "muted" }, loss !== null && loss !== undefined ? `loss ${fmt(loss)}` : ""),
+      one.mock ? el("span", { class: "tag mock" }, "mock") : null,
+      ...(one.default_slots || []).map((slot) => el("span", { class: "tag slot", title: "the server's default search puts it in " + slot }, slot))),
+    flying && p.of ? el("div", { class: "meter" }, el("i", { style: `width: ${Math.min(1, (p.step || 0) / p.of) * 100}%` })) : null);
+}
+
+// --- one LoRA ---
+
+function showLoraPanels() {
+  $("loraNew").hidden = loraSelected !== null;
+  $("loraDetail").hidden = loraSelected === null;
+}
+
+function selectLora(id) {
+  if (id !== loraSelected) {
+    loraShown = null;
+    loraDataFor = null;
+    setLoraTab("overview");
+  }
+  loraSelected = id;
+  remember("lora", id);
+  say("ldMsg", "");
+  showLoraPanels();
+  setView("loras");
+  drawLoraList();
+  drawLora();
+}
+
+function newLora() {
+  loraSelected = null;
+  loraShown = null;
+  remember("lora", "");
+  showLoraPanels();
+  setView("loras");
+  drawLoraList();
+  if (loraForm && !$("lName").value.trim()) $("lName").value = freeLoraName("lora");
+}
+
+function forgetLora() {
+  loraSelected = null;
+  loraShown = null;
+  remember("lora", "");
+  showLoraPanels();
+  drawLoraList();
+}
+
+function setLoraTab(name) {
+  loraTab = name;
+  for (const button of document.querySelectorAll(".tabs [data-ltab]")) {
+    button.setAttribute("aria-selected", String(button.dataset.ltab === name));
+  }
+  for (const pane of document.querySelectorAll(".lpane")) pane.hidden = pane.dataset.lpane !== name;
+  if (name === "log") refreshLoraLog();
+  if (name === "dataset" && loraSelected !== null && loraDataFor !== loraSelected) loadLoraDataset(loraSelected);
+}
+
+async function drawLora() {
+  const id = loraSelected;
+  if (id === null) return;
+  let lora;
+  try { ({ lora } = await api("GET", `/loras/${id}`)); }
+  catch (_) { return forgetLora(); }
+  if (id !== loraSelected) return;
+  loraShown = lora;
+  const flying = IN_FLIGHT.includes(lora.status);
+  const p = lora.progress || {};
+
+  $("ldTitle").replaceChildren(lora.name, el("span", { class: "job-num" }, "#" + lora.id), pill(lora.status),
+    lora.mock ? el("span", { class: "tag mock" }, "mock") : null);
+  const by = lora.trained_here ? "trained here" : lora.origin === "scanned" ? "found on disk" : "trained with create_lora.py";
+  $("ldSub").replaceChildren(el("code", {}, lora.folder), ` · ${lora.base_model || "unknown base model"} · ${by}`);
+
+  const training = lora.training;
+  $("ldCancel").disabled = !lora.can_cancel;
+  $("ldCancel").textContent = training && training.status === "running" ? "Stop" : "Cancel";
+  $("ldUse").disabled = lora.status !== "ready";
+  $("ldDelete").disabled = !lora.can_delete;
+  $("ldDelete").title = lora.can_delete ? "Delete its folder and its catalogue row"
+    : lora.trained_here ? "Stop it first" : "Only a LoRA trained here can be deleted from here";
+
+  const steps = flying ? p.step : lora.steps, of = flying ? p.of : lora.max_steps;
+  const loss = flying ? p.loss : lora.final_loss;
+  const time = flying ? p.seconds : lora.seconds;
+  const tiles = [
+    ["rank", lora.rank ?? "–", null],
+    ["steps", steps !== null && steps !== undefined ? `${steps} / ${of ?? "?"}` : "–", of ? (steps || 0) / of : null],
+    ["loss", fmt(loss), null],
+    ["records", lora.records ?? "–", null],
+    ["time", typeof time === "number" ? seconds(time) : "–", null],
+    [flying && training ? "queue" : "default search", flying && training
+      ? (training.queue_position ? `#${training.queue_position}` : training.status)
+      : (lora.default_slots.length ? lora.default_slots.join(", ") : "not in it"), null],
+  ];
+  $("ldTiles").replaceChildren(...tiles.map(([name, value, fraction]) => el("div", { class: "tile" },
+    el("span", {}, name), el("b", { title: String(value) }, value),
+    fraction === null ? null : el("div", { class: "meter" }, el("i", { style: `width: ${Math.max(0, Math.min(1, fraction)) * 100}%` })))));
+
+  const overview = [];
+  const error = lora.error || (training && training.error);
+  if (error) overview.push(el("p", { class: "msg full " + (lora.status === "ready" ? "" : "err") }, error));
+  overview.push(el("div", { class: "card full" },
+    el("div", { class: "card-head" }, el("h3", {}, "Training loss"),
+      el("span", { class: "muted small" }, lora.history.length ? `${lora.history.length} logged step(s)` : "")),
+    lora.history.length ? lossChart(lora.history)
+      : el("p", { class: "empty" }, flying ? "Waiting for the first logged step…" : "No loss was recorded for this adapter.")));
+  overview.push(el("div", { class: "card" }, el("h3", {}, "Recipe"), recipeList(lora)));
+  overview.push(el("div", { class: "card" }, el("h3", {}, "Adapter"), adapterList(lora)));
+  if (lora.sample || (lora.recipe && lora.recipe.prompt && lora.status === "ready")) {
+    overview.push(el("div", { class: "card full" }, el("h3", {}, "Smoke test"),
+      el("p", { class: "muted" }, "YOU: " + ((lora.recipe && lora.recipe.prompt) || "")),
+      el("p", { class: "sample" }, lora.sample || "(no answer recorded)")));
+  }
+  $("ldOverview").replaceChildren(el("div", { class: "overview even" }, overview));
+  $("ldCountData").textContent = lora.records || "";
+  if (loraTab === "log") refreshLoraLog();
+  if (loraTab === "dataset" && loraDataFor !== id) loadLoraDataset(id);
+}
+
+function kv(pairs) {
+  return el("dl", { class: "kv" }, pairs.filter(([, v]) => v !== null && v !== undefined && v !== "")
+    .flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]));
+}
+
+function recipeList(lora) {
+  const r = lora.recipe || {};
+  if (!Object.keys(r).length) return el("p", { class: "empty" }, "No recipe was recorded.");
+  const num = (v) => (v === null || v === undefined ? null : String(v));
+  return kv([["epochs", num(r.epochs)], ["max steps", r.max_steps ? String(r.max_steps) : null],
+    ["learning rate", num(r.learning_rate)], ["schedule", r.scheduler], ["warmup steps", num(r.warmup_steps)],
+    ["weight decay", num(r.weight_decay)], ["optimiser", r.optim], ["batch size", num(r.batch_size)],
+    ["grad. accumulation", num(r.grad_accum)], ["max sequence", num(r.max_seq)], ["seed", num(r.seed)],
+    ["dropout", num(r.dropout)], ["logging steps", num(r.logging_steps)]]);
+}
+
+function adapterList(lora) {
+  const modules = Array.isArray(lora.target_modules) ? lora.target_modules.join(", ")
+    : lora.target_modules ? el("code", { title: lora.target_modules }, "a PEFT pattern over the seven projections") : null;
+  return kv([["base model", lora.base_model], ["rank · alpha", `${lora.rank ?? "?"} · ${lora.alpha ?? "?"}`],
+    ["target modules", modules], ["chat template", lora.chat_template || (lora.recipe && "chat_template" in lora.recipe ? "the model's own" : null)],
+    ["dataset", lora.dataset], ["sha-256", lora.dataset_sha256 ? el("code", {}, lora.dataset_sha256.slice(0, 16) + "…") : null],
+    ["weights", lora.mock ? "none — mocked" : lora.weights ? "on disk" : "missing"],
+    ["trained", when(lora.trained_at)], ["catalogued", when(lora.created_at)], ["family", lora.family]]);
+}
+
+function lossChart(history) {
+  const points = history.filter((h) => typeof h.loss === "number" && typeof h.step === "number");
+  const W = 720, H = 220, L = 42, R = 14, T = 12, B = 28;
+  const first = points[0].step, last = points[points.length - 1].step;
+  const top = Math.max(...points.map((h) => h.loss)) * 1.08 || 1;
+  const x = (step) => L + (last === first ? (W - L - R) / 2 : (step - first) / (last - first) * (W - L - R));
+  const y = (v) => T + (1 - v / top) * (H - T - B);
+  const { svg, add } = drawing(W, H);
+  for (const k of [0, 0.25, 0.5, 0.75, 1]) {
+    add("line", { x1: L, x2: W - R, y1: y(top * k), y2: y(top * k), stroke: "var(--line)", "stroke-dasharray": k ? "3 4" : "" });
+    add("text", { x: L - 8, y: y(top * k) + 3, "text-anchor": "end" }, (top * k).toFixed(top * k >= 10 ? 0 : 2));
+  }
+  add("polyline", { fill: "none", stroke: "var(--accent)", "stroke-width": 2, "stroke-linejoin": "round",
+                    points: points.map((h) => `${x(h.step)},${y(h.loss)}`).join(" ") });
+  const every = Math.max(1, Math.ceil(points.length / 150));
+  points.forEach((h, i) => {
+    if (i % every && i !== points.length - 1) return;
+    add("circle", { cx: x(h.step), cy: y(h.loss), r: i === points.length - 1 ? 3.5 : 6, fill: i === points.length - 1 ? "var(--accent)" : "transparent" })
+      .append(hint(`step ${h.step}${h.epoch !== null && h.epoch !== undefined ? ` · epoch ${Number(h.epoch).toFixed(2)}` : ""}\nloss ${fmt(h.loss, 4)}`));
+  });
+  for (const step of [...new Set([first, Math.round((first + last) / 2), last])]) {
+    add("text", { x: x(step), y: H - 10, "text-anchor": step === first && last !== first ? "start"
+      : step === last && last !== first ? "end" : "middle" }, "step " + step);
+  }
+  return svg;
+}
+
+async function refreshLoraLog() {
+  if (loraSelected === null) return;
+  try {
+    const reply = await api("GET", `/loras/${loraSelected}/log?lines=60`);
+    const log = $("ldLog");
+    log.textContent = reply.lines.length ? reply.lines.join("\n") : (reply.note || "(nothing logged yet)");
+    log.scrollTop = log.scrollHeight;
+  } catch (_) { /* went away */ }
+}
+
+async function loadLoraDataset(id) {
+  loraDataFor = id;
+  $("ldDataset").replaceChildren(el("div", { class: "card" }, el("p", { class: "muted" }, "Loading…")));
+  let data;
+  try { data = await api("GET", `/loras/${id}/dataset?limit=50`); }
+  catch (error) {
+    $("ldDataset").replaceChildren(el("div", { class: "card" }, el("p", { class: "msg err" }, error.message)));
+    return;
+  }
+  if (id !== loraSelected) return;
+  $("ldDataset").replaceChildren(el("div", { class: "card" },
+    el("div", { class: "card-head" }, el("h3", {}, "What it was trained on"),
+      el("span", { class: "muted small" }, data.total ? `the first ${data.records.length} of ${data.total}` : "")),
+    data.records.length ? el("div", { class: "scroll" }, el("table", {},
+      el("thead", {}, el("tr", {}, el("th", {}, "#"), el("th", {}, "user"), el("th", {}, "assistant — what it learns"))),
+      el("tbody", {}, data.records.map((r, i) => el("tr", {},
+        el("td", {}, i + 1), el("td", {}, r.question || "–"), el("td", { class: "sample" }, r.answer || "–"))))))
+      : el("p", { class: "empty" }, data.note || "No records.")));
+}
+
+// --- what can be done with one ---
+
+async function loraAct(label, method, path, after) {
+  say("ldMsg", label + "…");
+  try {
+    const reply = await api(method, path);
+    say("ldMsg", (reply && reply.note) || label + " — ok", "ok");
+    if (after) after(reply);
+  } catch (error) {
+    say("ldMsg", error.message, "err");
+  }
+  await refreshLoras();
+  if (loraSelected !== null) drawLora();
+}
+
+// A new job on this LoRA's base model, with it in a slot.
+function useInJob(lora) {
+  if (!form) return;
+  setView("new");
+  catalogueChanged();
+  const select = $("f_BASE_MODEL");
+  if (![...select.options].some((o) => o.value === lora.base_model)) {
+    select.append(el("option", { value: lora.base_model }, lora.base_model));
+  }
+  select.value = lora.base_model;
+  const slots = slotsFor(lora.base_model) || {};
+  let slot = SLOTS.find((s) => slots[s] === lora.folder);
+  if (!slot) { slot = "L1"; slots.L1 = lora.folder; }
+  setSlots(slots);
+  refreshForm();
+  document.querySelector('.field[data-name="LORA_SLOTS"]').closest("details").open = true;
+  say("submitMsg", `${lora.name} is in slot ${slot}, on ${lora.base_model}. Change the other slots below if you like.`, "ok");
+}
+
+// A new-LoRA form filled in from this one's recipe, under a fresh name.
+function trainAgain(lora) {
+  newLora();
+  if (!loraForm) return;
+  const recipe = Object.assign({}, lora.recipe || {}, { rank: lora.rank, alpha: lora.alpha });
+  if (Array.isArray(lora.target_modules)) recipe.target_modules = lora.target_modules;
+  for (const field of LFIELDS) if (recipe[field.name] !== undefined && recipe[field.name] !== null) setLoraField(field, recipe[field.name]);
+  $("lBase").value = lora.base_model || loraForm.defaults.base_model;
+  $("lMock").checked = !!lora.mock;
+  $("lName").value = freeLoraName(lora.name.split("/").pop());
+  refreshLoraForm();
+  say("loraMsg", `Filled in from ${lora.name}. Choose the training data, then queue it.`, "ok");
+}
+
 // --- live deployments and inference -------------------------------------------
 
 async function refreshLive() {
@@ -2180,6 +3028,50 @@ for (const button of document.querySelectorAll(".viewnav [data-view]")) {
   button.addEventListener("click", () => setView(button.dataset.view));
 }
 $("newJob").addEventListener("click", () => setView("new"));
+
+// LoRAs
+$("newLora").addEventListener("click", newLora);
+$("scanLoras").addEventListener("click", async () => {
+  $("scanLoras").disabled = true;
+  try {
+    const report = await api("POST", "/loras/scan");
+    const text = `Rescanned: ${report.loras} LoRA(s) of yours, ${report.missing.length} missing on disk.`
+      + (report.unowned ? ` ${report.unowned} adapter(s) on the server belong to nobody yet (python -m adapters.catalog own).` : "");
+    if (loraSelected !== null) say("ldMsg", text, "ok"); else say("loraMsg", text, "ok");
+  } catch (error) {
+    say(loraSelected !== null ? "ldMsg" : "loraMsg", error.message, "err");
+  } finally {
+    $("scanLoras").disabled = false;
+  }
+  await Promise.all([refreshLoras(), loadLoraFormModels()]);
+});
+$("loraFilter").addEventListener("input", drawLoraList);
+$("lPresetDemo").addEventListener("click", () => applyLoraPreset("demo"));
+$("lPresetDefaults").addEventListener("click", () => applyLoraPreset("defaults"));
+$("lMock").addEventListener("change", refreshLoraForm);
+$("lBase").addEventListener("input", refreshLoraForm);
+$("lBasePick").addEventListener("change", () => {
+  if ($("lBasePick").value) $("lBase").value = $("lBasePick").value;
+  refreshLoraForm();
+});
+$("lBaseAgain").addEventListener("click", loadJudgeServed);
+$("lDataMode").addEventListener("change", refreshLoraForm);
+$("lDataUpload").addEventListener("change", loraUploaded);
+$("lSubmit").addEventListener("click", submitLora);
+$("ldRefresh").addEventListener("click", () => { loraDataFor = null; drawLora(); });
+$("ldCancel").addEventListener("click", () => loraAct($("ldCancel").textContent, "POST", `/loras/${loraSelected}/cancel`));
+$("ldDelete").addEventListener("click", () => {
+  if (loraShown && confirm(`Delete LoRA ${loraShown.name}, its folder and its training log?`)) {
+    loraAct("Delete", "DELETE", `/loras/${loraSelected}`, forgetLora);
+  }
+});
+$("ldUse").addEventListener("click", () => loraShown && useInJob(loraShown));
+$("ldAgain").addEventListener("click", () => loraShown && trainAgain(loraShown));
+for (const button of document.querySelectorAll(".tabs [data-ltab]")) {
+  button.addEventListener("click", () => setLoraTab(button.dataset.ltab));
+}
+setLoraTab("overview");
+showLoraPanels();
 for (const button of document.querySelectorAll(".tabs [data-tab]")) {
   button.addEventListener("click", () => setTab(button.dataset.tab));
 }
@@ -2198,6 +3090,8 @@ setInterval(() => {
   // change while the job it belongs to is finished and still.
   if (verifyForm && verifyForm.verifications.some(
       (row) => row.status === "queued" || row.status === "running")) loadVerifyForm();
+  // The LoRAs follow a training while they are on screen, or while one runs.
+  if (view === "loras" || catalogue.some((one) => IN_FLIGHT.includes(one.status))) refreshLoras();
 }, 3000);
 setInterval(refreshHealth, 10000);
 </script>

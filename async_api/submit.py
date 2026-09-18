@@ -88,10 +88,40 @@ def settings_for(overrides):
         raise SubmissionError("no template %r; there are: %s"
                               % (conf.get("TEMPLATE"),
                                  ", ".join(generate_runs.templates_available())))
+    # A mocked LoRA (create_lora.py --mock) is an adapter_config.json and
+    # nothing else: enough for the mocked template, which reads only the rank,
+    # and a crash an hour in for any template that loads the weights.
+    if "mocked" not in os.path.basename(template):
+        for slot, where in sorted(generate_runs.lora_slots(conf.get("LORA_SLOTS")).items()):
+            if os.path.isdir(where) and not any(
+                    os.path.exists(os.path.join(where, name))
+                    for name in ("adapter_model.safetensors", "adapter_model.bin")):
+                raise SubmissionError(
+                    "slot %s (%s) holds no adapter weights -- a mocked LoRA? Only the "
+                    "mocked template can run one" % (slot, where))
     generations = conf.get("GENERATIONS")
     if not isinstance(generations, int) or generations < 1:
         raise SubmissionError("GENERATIONS must be a whole number of at least 1")
     return conf
+
+
+def check_slot_owners(catalog, conf, user):
+    """Refuse a slot that names another user's LoRA.
+
+    The API shows a user their own LoRAs only, and a path typed into
+    LORA_SLOTS must not be a way round that. Two kinds of folder stay open to
+    everyone: one the catalogue gives to nobody, and the server's own default
+    slots -- config/settings.py's LORA_SLOTS is what every default search runs
+    on, whoever's catalogue rows those folders are.
+    """
+    defaults = {os.path.normcase(where)
+                for where in generate_runs.lora_slots(config.LORA_SLOTS).values()}
+    for slot, where in sorted(generate_runs.lora_slots(conf.get("LORA_SLOTS")).items()):
+        if not os.path.isdir(where) or os.path.normcase(where) in defaults:
+            continue
+        row = catalog.by_folder(where)
+        if row is not None and row["owner"] not in (None, user["name"]):
+            raise SubmissionError("slot %s: no LoRA of yours at %s" % (slot, where))
 
 
 def form():
@@ -230,6 +260,7 @@ def submit(registry, user, payload):
     if label is not None and not isinstance(label, str):
         raise SubmissionError("label must be a string")
     conf = settings_for(payload.get("settings"))
+    check_slot_owners(registry.catalog, conf, user)
     options = options_for(payload.get("options"))
 
     job = registry.reserve_job(user["id"], label, options)

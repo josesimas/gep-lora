@@ -14,6 +14,7 @@ import tempfile
 import unittest
 
 from async_api import registry as reg
+from async_api import settings as api_settings
 
 # The ranks the real slots were trained at, so the rank rule behaves as it does.
 RANKS = {"L1": 16, "L2": 16, "L3": 8, "L4": 4, "L5": 32}
@@ -38,7 +39,9 @@ def make_slots(folder):
 
 
 class JobsTestCase(unittest.TestCase):
-    """A registry in a temp folder, a user, and fake adapters."""
+    """A registry in a temp folder (its database holds the LoRA catalogue
+    too), a user, fake adapters, and a trained-LoRA folder of its own, so
+    nothing here reads or writes loras/."""
 
     def setUp(self):
         self.folder = tempfile.mkdtemp(prefix="gep-api-tests-")
@@ -46,8 +49,14 @@ class JobsTestCase(unittest.TestCase):
         self.key = self.registry.add_user("alice")
         self.user = self.registry.user_for_key(self.key)
         self.slots = make_slots(self.folder)
+        self._api_settings = {name: getattr(api_settings, name) for name in
+                              ("TRAINED_LORAS_DIR", "MOCK_TRAINING_DELAY")}
+        api_settings.TRAINED_LORAS_DIR = os.path.join(self.folder, "trained")
+        api_settings.MOCK_TRAINING_DELAY = 0
 
     def tearDown(self):
+        for name, value in self._api_settings.items():
+            setattr(api_settings, name, value)
         shutil.rmtree(self.folder, ignore_errors=True)
 
     def submission(self, **settings):

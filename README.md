@@ -2859,6 +2859,103 @@ When it finishes, the page draws the report the script left behind:
 Everything a verification writes lives in `verify<id>/` inside the job's folder,
 so `DELETE /jobs/{id}/run` takes its answers and scores with it: a reading of a
 sweep is worth nothing without the sweep.
+
+### LoRAs — the catalogue, and training new ones
+
+The page's **LoRAs** view lists the user's own adapters and trains new ones.
+Both halves go through the API, with the same key as every other screen.
+
+**One database holds everything the API knows**: `api_jobs/api.sqlite` --
+users, jobs, verifications, trainings, deployments and the LoRAs. (It was
+`jobs.sqlite3` plus a separate catalogue; the first registry to open a folder
+holding a `jobs.sqlite3` and no `api.sqlite` copies it across once, through
+sqlite's backup, and renames the old file `jobs.sqlite3.merged`. The LoRA rows
+came back with `catalog scan`, since their folders are their truth.)
+
+**The catalogue** is its `loras` table ([`adapters/catalog.py`](adapters/catalog.py)),
+one row per adapter folder: base model, rank, alpha, target modules, chat
+template, where its data came from, steps, final loss, and a status (`queued`,
+`training`, `ready`, `failed`, `cancelled`, `missing`). The folder is the truth
+and the row an index -- `python -m adapters.catalog scan` rebuilds it from
+`loras/`, reading `adapter_config.json`, the `training.json` that
+`create_lora.py` now writes beside the weights, or, for an adapter trained
+before that existed, its newest checkpoint's `trainer_state.json`. The three
+sets under `loras/Lora001..005` (Qwen3.5 0.8B, Qwen2.5 0.5B, Qwen2.5 1.5B
+medical) are its first fifteen rows, and belong to `ze`. `create_lora.py` keeps
+its own row up as it trains, whether it was started by the API or by hand;
+`--no-catalog` opts out.
+
+**A LoRA is seen by its owner and nobody else.** Every row has an `owner`, a
+user's name: a LoRA trained through the API is its trainer's from the moment it
+is queued, and one found by `scan` or trained by hand is nobody's -- and so
+nobody's to see -- until the server gives it to someone:
+
+```bash
+python -m adapters.catalog own ze --unowned      # every row nobody owns
+python -m adapters.catalog own ze 3 4 5          # or by id / name; 'nobody' takes them back
+python -m adapters.catalog scan --owner ze       # new folders go straight to ze
+python -m adapters.catalog scan | list [--owner ze] | show <id or name> | forget <id> | models
+```
+
+`own` refuses a name the database's `users` table does not hold. Another user's
+LoRA is a 404 on every `/loras` endpoint, exactly as another user's job is;
+names are unique per owner rather than across the catalogue, so choosing one can
+never reveal another user's; each user's trainings go to their own
+`loras/trained/user<N>/`; and a job may not name another user's LoRA as a slot
+by path (a 400) -- except the server's own default `LORA_SLOTS`, which is what
+every default search runs on.
+
+**Training one is queued work, like a job.** `POST /loras` takes a name, a
+dataset (the same shapes a job's does, but every record must be a conversation
+with an assistant turn) and any of `create_lora.py`'s options; the worker runs
+`python -m adapters.create_lora loras/trained/user<N>/<name> ...` after any queued job and
+before any verification, with its console in `api_jobs/user<N>/lora<id>/train.log`.
+The adapter lands in `TRAINED_LORAS_DIR` (`loras/trained/`) and in the
+catalogue, so a search's `LORA_SLOTS` can name it like any other. Defaults are
+`create_lora.defaults()` -- the command line's own -- except the base model and
+chat template, which are the search's. [`async_api/train.py`](async_api/train.py)
+owns only the API's half (form, checks, command line), the way `verify.py` does.
+
+`create_lora.py` gained the knobs the form offers -- `--dropout`,
+`--target-modules`, `--max-steps`, `--scheduler`, `--warmup-steps`,
+`--weight-decay`, `--optim` -- and writes, beside the weights, `training.json`
+(the recipe, the dataset's source, sha-256 and size, the loss at every logged
+step, how it ended) and `dataset.jsonl` (the data itself), so an adapter folder
+describes itself. Progress goes to stdout as
+`TRAIN: {"step", "of", "epoch", "loss", "lr"}` lines. `--mock` trains nothing: a
+fake loss curve and an `adapter_config.json` with no weights, in seconds, for
+checking the plumbing -- a mocked LoRA fits a mocked search and is refused
+(400) by a submission whose template loads weights.
+
+**Base models** for the form come from three places: the catalogue (models there
+are LoRAs for), the Hugging Face cache (models downloaded here with a
+`ForCausalLM`/`ForConditionalGeneration` head), and the judge endpoint's list
+(served names, labelled as such -- usually a GGUF build, not something unsloth
+can train). The box takes any id.
+
+On the page: pick a base model, the data (shared file, upload, paste), rank
+(with 4/8/16/32/64 chips), alpha, dropout, chat template, target modules, the
+optimisation settings and the smoke-test prompt, and queue it. The detail view
+follows it live -- a step meter, the loss curve drawn as it trains, the log --
+then shows the recipe, the adapter, the smoke test's answer and the data it
+learned. **Use in a new job** opens the job form on its base model with it in a
+slot; **Train again…** fills the form from its recipe; **Stop** and **Delete**
+are the trainer's own. The job form's base model and five **LoRA slots** now
+come from the catalogue too -- each slot a select of that model's ready LoRAs,
+with their ranks, and a warning for a slot on another model or a mocked LoRA
+under a real template.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /loras[?base_model=]` | the user's LoRAs, each with its training (if it was trained here) and what may be done with it |
+| `GET /loras/form` | defaults, choices, and the base models the user has LoRAs for or that are downloaded |
+| `POST /loras` | `{"name", "dataset", "settings"?, "mock"?}` -> 201, queued |
+| `POST /loras/scan` | re-read `loras/`; reports on the user's own rows, and how many belong to nobody |
+| `GET /loras/{id}` | one LoRA: its record, loss history and live progress |
+| `GET /loras/{id}/log` | the tail of its training's console |
+| `GET /loras/{id}/dataset[?limit=]` | the conversations it learned |
+| `POST /loras/{id}/cancel` | a queued training at once; a running one within a poll |
+| `DELETE /loras/{id}` | a LoRA you trained here: folder, scratch, log and rows; never a server default slot |
 | `GET /health` | no key needed; what is loaded |
 | `GET /settings` | settings.py's values and the choices (templates, evaluators, backends), for a form |
 | `GET /datasets` | the shared dataset files a submission may name |
@@ -3240,7 +3337,8 @@ async_api/    the search as a web service: jobs, a worker, live inference
 
 | Path | What it is |
 |---|---|
-| `adapters/create_lora.py` | trains one adapter into a folder |
+| `adapters/create_lora.py` | trains one adapter into a folder, with its recipe, data and loss history beside it, and catalogues it |
+| `adapters/catalog.py` | the LoRA catalogue, the `loras` table of `api_jobs/api.sqlite`: `scan`, `list`, `show`, `own`, `forget`, `models` |
 | `adapters/create_all_loras.py` | trains the whole set, varying rank or learning rate |
 | `adapters/test_lora.py` | asks one adapter a question, without a blend, and prints where the time went; `--no-unsloth` loads through plain transformers |
 | `adapters/base_models_and_loras_comparison.py` | times loading and inference for every base model under `loras/`, bare and with each of its adapters, into a markdown report in `loras/` -- run it on an idle GPU |

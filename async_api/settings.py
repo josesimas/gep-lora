@@ -55,6 +55,14 @@ JUDGE_MODELS_TIMEOUT = 5
 # under this folder (relative to the repo folder).
 SHARED_DATASETS_DIR = "datasets"
 
+# Where a LoRA trained through the API is written, as user<N>/<name> (relative
+# to the repo folder). Inside loras/, so the catalogue's scan finds
+# them and a search's LORA_SLOTS can name them like any other.
+TRAINED_LORAS_DIR = "loras/trained"
+
+# Seconds each step of a mocked training takes, so one can be watched.
+MOCK_TRAINING_DELAY = 0.05
+
 
 def _override():
     for name, value in list(globals().items()):

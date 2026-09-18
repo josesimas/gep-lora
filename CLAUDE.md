@@ -42,13 +42,15 @@ testing/      test_run_with_dataset -- the held-out pass;
 reporting/    generate_html_db_stats -- a sweep as a single HTML page
 adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
               a sweep blends. Not part of a sweep; what a sweep runs against.
+              catalog -- every adapter on the machine: the `loras` table
+              of the API's database, api_jobs/api.sqlite
               base_models_and_loras_comparison -- how fast each base model
               loads and answers, with and without each adapter, as markdown
 tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
 async_api/    server, worker, submit, registry, results, golive, inference,
-              users, verify, evaluate -- the search as a web service. See "The
-              async API" below.
+              users, verify, evaluate, train -- the search as a web service. See
+              "The async API" below.
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -705,7 +707,10 @@ step gets, and the argument parser. `config/settings.py` is the one copy of the 
 `storage/store.py` owns the sqlite schema (`runs -> settings, datasets, individuals -> executions -> exchanges`,
 plus `fitness_history` and `test_results` hanging off `runs`, plus `baselines`, which hangs
 off nothing -- see the evaluate section), its
-helpers, and `--list/--show/--export`. Nothing else imports sqlite3.
+helpers, and `--list/--show/--export`. Nothing else in the pipeline imports sqlite3; the
+two other files that do each own a database that is not a sweep --
+`async_api/registry.py` and `adapters/catalog.py`, which share one --
+`api_jobs/api.sqlite`, the API's -- and each own their own tables in it.
 
 `add_dataset.save_all()` runs inside `start_run.new_sweep()`, before the first step: it stores
 the dataset the sweep was given into `datasets`, alongside the settings and for the same
@@ -1002,9 +1007,13 @@ change to it. These rules hold it together:
   `main.py --db <job.sqlite3> --run <id>` in a subprocess. Settings go through
   `start_run.freeze()`, the function `new_sweep()` uses. Don't give jobs a second
   definition of what a sweep needs.
-- **`jobs.sqlite3` is the registry, not a sweep** -- users, jobs in arrival order,
-  deployments -- which is why `registry.py` is the one module besides `store.py` that
-  imports sqlite3. Keys and tokens are stored hashed. One worker per `JOBS_DIR`.
+- **`api.sqlite` is the API's one database, not a sweep** -- users, jobs in arrival
+  order, verifications, trainings, deployments (all `registry.py`'s) and the `loras`
+  table (`adapters/catalog.py`'s, created by the registry from `catalog.SCHEMA` so
+  the file is whole whichever opens it first). Those two and `store.py` are the only
+  modules that import sqlite3. Keys and tokens are stored hashed. One worker per
+  `JOBS_DIR`. A folder holding the old `jobs.sqlite3` is merged once by
+  `registry.merge_old()`.
 - **A deployment carries its blend spec**, derived once by `golive.blend_spec()`:
   the lora-server `/build` plan with weights from the individual's weight seed.
   `unittests/async_api/test_golive.py` runs a generated `template_remote_code.py`
@@ -1044,6 +1053,27 @@ change to it. These rules hold it together:
   listing is the one the server's machine reaches. In `demo.html` the model *textbox* is
   the truth and `modelPicker()` only fills it in; keep it that way, so a model the
   endpoint does not list can still be typed.
+
+- **A LoRA is the catalogue's; training one is the registry's.** `adapters/catalog.py`
+  (the `loras` table) holds one row per adapter folder, written by the API and the
+  command line, and the folder is the truth -- `catalog scan` rebuilds the rows from
+  `adapter_config.json`, the `training.json` create_lora.py writes beside the weights, or
+  an old adapter's checkpoint `trainer_state.json`. `POST /loras` reserves a catalogue
+  row (`queued`) and a registry `trainings` row; the worker runs
+  `python -m adapters.create_lora`, which keeps its own row up (`training` -> `ready` /
+  `failed`), and the worker settles the row only when the child could not (killed,
+  cancelled). `train.py` owns only the API's half, like `verify.py`; the form's defaults
+  are `create_lora.defaults()`, so a new create_lora option is a parser argument plus an
+  entry in `train.NUMBERS`/`CHOICES`/`TEXTS`. A training row belongs to a catalogue row
+  only when **both the id and the folder match** (`server.training_of`, `worker.lora_of`),
+  and catalogue ids are `AUTOINCREMENT` -- a stale link would hand someone the right to
+  delete a folder. **A LoRA is its owner's alone**: `loras.owner` is a user's name, every
+  `/loras` endpoint 404s on another's (`App.own_lora`), names are unique per owner, API
+  trainings go to `TRAINED_LORAS_DIR/user<N>/`, and `submit.check_slot_owners` refuses
+  another user's folder as a job's slot unless it is one of `config.LORA_SLOTS`. Rows
+  found by `scan` belong to nobody until `catalog own <user>`. `--mock` trains nothing and writes
+  a weightless adapter; `submit.settings_for` refuses a weightless slot unless the
+  template is the mocked one.
 
 Its knobs live in `async_api/settings.py`, deliberately outside `config/settings.py`,
 whose `snapshot()` would store them in every sweep.

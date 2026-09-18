@@ -63,8 +63,9 @@ ADAPTER_NAME = "QWen2.5-0.5b-lora_adapter"
 # line here rather than a hunt through the joins below.
 #
 # create_lora.py is the sibling beside this file rather than something under
-# _ROOT, and it is launched by path rather than by -m: it imports nothing from
-# this repo, so it needs no package on sys.path to run.
+# _ROOT, and it is launched by path rather than by -m. The one thing it imports
+# from this repo -- adapters.catalog, to enter each adapter in the LoRA
+# catalogue -- it finds by putting the repo on sys.path itself.
 CREATE_LORA = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "create_lora.py")
 LORA_DIR = os.path.join(_ROOT, "loras")

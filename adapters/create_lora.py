@@ -25,6 +25,27 @@ much as produce nonsense. The rank is the opposite case -- it is *meant* to vary
 (the existing five are 16, 16, 8, 4, 32) because that spread is what makes the
 rank rule bite, so --rank is the knob to reach for first.
 
+Every adapter it trains describes itself. Beside the weights go
+`training.json` -- the recipe (every option below), the dataset's source,
+fingerprint and size, the loss at every logged step, and how it ended -- and
+`dataset.jsonl`, a copy of the data, so the folder is the whole record of
+what it is even after datasets/ has been edited. And the adapter is entered in
+the LoRA catalogue (adapters/catalog.py -- the `loras` table of the async
+API's database, `api_jobs/api.sqlite`) as it goes:
+`training`, then `ready` or `failed`. `--no-catalog` leaves the catalogue
+alone; the folder is still written in full.
+
+Progress goes to stdout as a marker line per logged step, the way the
+generated scripts print TIMING lines:
+
+    TRAIN: {"step": 12, "of": 160, "epoch": 1.5, "loss": 1.234, "lr": 0.0002}
+
+`--mock` trains nothing: no GPU, no unsloth, a fake loss curve and a folder
+holding an adapter_config.json of the asked rank and base model but no
+weights. It is the plumbing check the mocked template is for a sweep -- a
+mocked adapter can go into a mocked search (which reads only the config) and
+into nothing else.
+
 Interpreter: this trains, so it needs the venv one level up, the same one the
 generated scripts run under --
 
@@ -32,10 +53,15 @@ generated scripts run under --
 """
 
 import argparse
+import hashlib
 import importlib.util
 import json
+import math
 import os
+import random
+import shutil
 import sys
+import time
 
 # Match the training/inference environment: disable Xet download acceleration.
 os.environ["HF_HUB_DISABLE_XET"] = "1"
@@ -61,6 +87,19 @@ MAX_SEQ = 2048
 
 # Where --dataset looks when it is given a bare name rather than a path.
 DATASET_DIR = os.path.join(_ROOT, "datasets")
+
+# The choices --scheduler and --optim offer: the ones transformers takes by
+# name that are worth reaching for on one card. The first of each is what
+# every existing adapter was trained with.
+SCHEDULERS = ("linear", "cosine", "cosine_with_restarts", "polynomial",
+              "constant", "constant_with_warmup")
+OPTIMIZERS = ("adamw_8bit", "paged_adamw_8bit", "adamw_torch", "adafactor", "sgd")
+
+# The marker a progress line starts with, like TIMING: in the generated scripts.
+PROGRESS = "TRAIN:"
+
+# The copy of the training data kept beside the adapter.
+DATASET_COPY = "dataset.jsonl"
 
 
 def check_interpreter():
@@ -146,6 +185,175 @@ def load_examples(path):
     return data
 
 
+def _catalog_module():
+    """adapters.catalog, however this file was started.
+
+    create_all_loras.py launches it by path, which puts adapters/ rather than
+    the repo on sys.path; the repo is added then, so the import means the same
+    module either way.
+    """
+    try:
+        from adapters import catalog
+    except ImportError:
+        sys.path.insert(0, _ROOT)
+        from adapters import catalog
+    return catalog
+
+
+def dataset_info(path, named=None):
+    """Where the data came from, its fingerprint and how many records it holds.
+
+    `named` says where it came from when the path would not -- the API trains
+    from a copy in its own work folder, and what the record should say is
+    which file or upload that copy was made from.
+    """
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    text = raw.decode("utf-8-sig", errors="replace").strip()
+    if text.startswith("["):
+        try:
+            records = len(json.loads(text))
+        except ValueError:
+            records = None
+    else:
+        records = sum(1 for line in text.splitlines() if line.strip())
+    try:
+        source = os.path.relpath(path, _ROOT)
+        source = path if source.startswith("..") else source.replace(os.sep, "/")
+    except ValueError:
+        source = path
+    return {"source": named or source, "sha256": hashlib.sha256(raw).hexdigest(),
+            "records": records, "copy": DATASET_COPY}
+
+
+def recipe(options):
+    """Every option that decides what gets trained, as the record keeps it."""
+    return {name: getattr(options, name) for name in (
+        "base_model", "rank", "alpha", "dropout", "target_modules", "epochs",
+        "max_steps", "learning_rate", "scheduler", "warmup_steps", "weight_decay",
+        "optim", "batch_size", "grad_accum", "max_seq", "seed", "chat_template",
+        "prompt", "no_sample")}
+
+
+class Journal:
+    """What this training has done so far, kept in two places.
+
+    `training.json` in the adapter folder is the record that travels with the
+    weights; the catalogue row is the index a list is drawn from. The file is
+    rewritten at most every WRITE_EVERY seconds while training runs, and once
+    more at the end, so a folder being trained can be read for progress. A
+    catalogue that cannot be written (locked, say) is warned about and never
+    fails a training -- the folder is the truth, and `catalog scan` re-reads it.
+    """
+
+    WRITE_EVERY = 2.0
+
+    def __init__(self, options, dataset):
+        self.options = options
+        self.path = os.path.join(options.folder, _catalog_module().RECIPE)
+        self.started = time.time()
+        self.written = 0.0
+        self.state = {"version": 1, "mock": bool(options.mock), "status": "training",
+                      "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                      "options": recipe(options), "dataset": dataset,
+                      "progress": {"step": 0, "of": None}, "history": [], "result": {}}
+        self.catalog = None
+        if not options.no_catalog:
+            try:
+                self.catalog = _catalog_module().Catalog(options.catalog)
+            except Exception as error:              # noqa: BLE001 - never fail a training
+                print("warning: the LoRA catalogue cannot be opened (%s); training "
+                      "without it" % error)
+
+    def _catalogue(self, status, **fields):
+        if self.catalog is None:
+            return
+        try:
+            self.catalog.record(self.options.folder, status, name=self.options.name,
+                                owner=self.options.owner, **fields)
+        except Exception as error:                  # noqa: BLE001 - never fail a training
+            print("warning: could not update the LoRA catalogue: %s" % error)
+
+    def write(self, force=False):
+        if not force and time.time() - self.written < self.WRITE_EVERY:
+            return
+        self.written = time.time()
+        temporary = self.path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(self.state, handle, indent=1)
+        os.replace(temporary, self.path)
+
+    def start(self):
+        self.write(force=True)
+        dataset = self.state["dataset"]
+        options = self.options
+        self._catalogue("training", base_model=options.base_model, rank=options.rank,
+                        alpha=options.alpha, target_modules=options.target_modules,
+                        chat_template=options.chat_template, mock=int(bool(options.mock)),
+                        recipe=recipe(options), dataset=dataset["source"],
+                        dataset_sha256=dataset["sha256"], records=dataset["records"],
+                        steps=0, max_steps=None, final_loss=None, seconds=None,
+                        sample=None, error=None, weights=0)
+
+    def progress(self, step, of, epoch, loss, lr=None):
+        """One logged step: a marker line on stdout, and the record kept up."""
+        entry = {"step": step, "of": of, "epoch": None if epoch is None else round(epoch, 4),
+                 "loss": None if loss is None else round(float(loss), 6), "lr": lr}
+        print("%s %s" % (PROGRESS, json.dumps(entry)), flush=True)
+        self.state["progress"] = dict(entry, seconds=round(time.time() - self.started, 1))
+        if loss is not None:
+            self.state["history"].append({key: entry[key] for key in ("step", "loss", "epoch", "lr")})
+        self.write()
+
+    def finish(self, sample=None):
+        losses = [entry["loss"] for entry in self.state["history"] if entry["loss"] is not None]
+        progress = self.state["progress"]
+        self.state["status"] = "ready"
+        self.state["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        self.state["result"] = {"steps": progress.get("step"), "max_steps": progress.get("of"),
+                                "epochs": progress.get("epoch"),
+                                "final_loss": losses[-1] if losses else None,
+                                "seconds": round(time.time() - self.started, 1),
+                                "rank": rank_of(self.options.folder), "sample": sample}
+        self.write(force=True)
+        # Read back off the folder, so the row says what the files say.
+        described = _catalog_module().describe(self.options.folder) or {}
+        self._catalogue("ready", error=None, **described)
+
+    def fail(self, error):
+        self.state["status"] = "failed"
+        self.state["error"] = error
+        self.state["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            self.write(force=True)
+        except OSError:
+            pass
+        self._catalogue("failed", error=error[:2000])
+
+
+def mock_train(options, journal):
+    """A training that trains nothing: a loss curve, and a folder of the right
+    shape with no weights in it. -> (None, None), where train() gives a model."""
+    records = journal.state["dataset"]["records"] or 1
+    per_epoch = max(1, math.ceil(records / float(options.batch_size * options.grad_accum)))
+    steps = options.max_steps if options.max_steps and options.max_steps > 0 \
+        else max(1, int(math.ceil(per_epoch * options.epochs)))
+    rng = random.Random(options.seed)
+    print("Mock training: %d step(s), %d a epoch, nothing loaded." % (steps, per_epoch))
+    for step in range(1, steps + 1):
+        loss = 3.5 * math.exp(-4.0 * step / steps) + 0.05 + rng.uniform(-0.04, 0.04)
+        journal.progress(step, steps, step / float(per_epoch), max(0.0, loss),
+                         options.learning_rate * (1 - step / float(steps + 1)))
+        if options.mock_delay:
+            time.sleep(options.mock_delay)
+    with open(os.path.join(options.folder, "adapter_config.json"), "w", encoding="utf-8") as handle:
+        json.dump({"peft_type": "LORA", "mock": True, "r": options.rank,
+                   "lora_alpha": options.alpha, "lora_dropout": options.dropout,
+                   "target_modules": options.target_modules,
+                   "base_model_name_or_path": options.base_model}, handle, indent=2)
+    return None, None
+
+
 def rank_of(adapter_dir):
     """The rank PEFT will allocate for the saved adapter.
 
@@ -180,14 +388,24 @@ def slot_line(folder, slot="L?"):
     return '"%s": "%s",' % (slot, relative.replace(os.sep, "/"))
 
 
-def train(options):
+def train(options, journal):
     """Fine-tune the base model on one dataset and save the adapter."""
     # Unsloth patches transformers, peft and trl as it loads, so it is imported
     # before any of them -- the same ordering the generated scripts keep.
     from unsloth import FastLanguageModel
     from unsloth.chat_templates import get_chat_template
     import torch
+    from transformers import TrainerCallback
     from trl import SFTTrainer, SFTConfig
+
+    class Report(TrainerCallback):
+        """Every logged step into the journal: a TRAIN: line and training.json."""
+
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            if logs and "loss" in logs:
+                journal.progress(state.global_step, state.max_steps,
+                                 logs.get("epoch", state.epoch), logs["loss"],
+                                 logs.get("learning_rate"))
 
     print("GPU available: %s" % torch.cuda.is_available())
 
@@ -220,9 +438,9 @@ def train(options):
         model,
         r=options.rank,
         lora_alpha=options.alpha,
-        lora_dropout=0,
+        lora_dropout=options.dropout,
         bias="none",
-        target_modules=TARGET_MODULES,
+        target_modules=options.target_modules,
         use_gradient_checkpointing="unsloth",
         random_state=options.seed,
     )
@@ -236,18 +454,21 @@ def train(options):
             max_seq_length=options.max_seq,
             per_device_train_batch_size=options.batch_size,
             gradient_accumulation_steps=options.grad_accum,
-            warmup_steps=5,
+            warmup_steps=options.warmup_steps,
             num_train_epochs=options.epochs,
+            # -1 is the Trainer's own "no cap": the epochs decide.
+            max_steps=options.max_steps if options.max_steps and options.max_steps > 0 else -1,
             learning_rate=options.learning_rate,
             logging_steps=1,
-            optim="adamw_8bit",
-            weight_decay=0.01,
-            lr_scheduler_type="linear",
+            optim=options.optim,
+            weight_decay=options.weight_decay,
+            lr_scheduler_type=options.scheduler,
             seed=options.seed,
             # Checkpoints and logs are scratch: they go *beside* the adapter,
             # never into it, so the folder stays a clean slot target.
             output_dir=options.folder + "_outputs",
         ),
+        callbacks=[Report()],
     )
     trainer.train()
 
@@ -316,9 +537,32 @@ def parse_args(argv=None):
         "--alpha", type=int, default=16,
         help="lora_alpha (default 16, as in all five existing adapters).")
     parser.add_argument(
+        "--dropout", type=float, default=0.0,
+        help="lora_dropout (default 0, which is also the only value unsloth's "
+             "fast path takes without falling back to slower kernels).")
+    parser.add_argument(
+        "--target-modules", type=_modules, default=list(TARGET_MODULES),
+        help="comma-separated projections to adapt (default %s). Every adapter "
+             "in one blend has to cover the same set, so leave it unless a whole "
+             "new set of slots is being trained." % ",".join(TARGET_MODULES))
+    parser.add_argument(
         "--epochs", type=float, default=20, help="training epochs (default 20).")
     parser.add_argument(
+        "--max-steps", type=int, default=None,
+        help="stop after this many optimiser steps, whatever --epochs says "
+             "(default: no cap). Handy for a quick look at a new recipe.")
+    parser.add_argument(
         "--learning-rate", type=float, default=2e-4, help="default 2e-4.")
+    parser.add_argument(
+        "--scheduler", choices=SCHEDULERS, default=SCHEDULERS[0],
+        help="learning-rate schedule (default %s)." % SCHEDULERS[0])
+    parser.add_argument(
+        "--warmup-steps", type=int, default=5, help="warmup steps (default 5).")
+    parser.add_argument(
+        "--weight-decay", type=float, default=0.01, help="default 0.01.")
+    parser.add_argument(
+        "--optim", choices=OPTIMIZERS, default=OPTIMIZERS[0],
+        help="optimiser (default %s)." % OPTIMIZERS[0])
     parser.add_argument(
         "--batch-size", type=int, default=2,
         help="per-device training batch size (default 2).")
@@ -351,14 +595,63 @@ def parse_args(argv=None):
     parser.add_argument(
         "--force", action="store_true",
         help="overwrite the output folder if it already holds something.")
+    parser.add_argument(
+        "--name", default=None,
+        help="the adapter's name in the LoRA catalogue (default: its folder "
+             "under loras/, such as Lora006/poem_adapter).")
+    parser.add_argument(
+        "--dataset-source", default=None,
+        help="what the record says the data was (default: the --dataset path). "
+             "For a copy, the name of what it is a copy of.")
+    parser.add_argument(
+        "--catalog", default=None,
+        help="the database the catalogue is in (default the async API's, "
+             "api_jobs/api.sqlite, or $GEP_LORA_CATALOG).")
+    parser.add_argument(
+        "--owner", default=None,
+        help="the async API user the adapter belongs to in the catalogue -- the "
+             "only one the API shows it to (default: nobody, until "
+             "`python -m adapters.catalog own` says whose it is).")
+    parser.add_argument(
+        "--no-catalog", action="store_true",
+        help="leave the catalogue alone; the folder is still written in full.")
+    parser.add_argument(
+        "--mock", action="store_true",
+        help="train nothing: a fake loss curve and an adapter_config.json with "
+             "no weights, for checking the plumbing. Needs no GPU.")
+    parser.add_argument(
+        "--mock-delay", type=float, default=0.05,
+        help="seconds each mocked step takes (default 0.05), so a mocked "
+             "training can be watched.")
     return parser.parse_args(argv)
+
+
+def _modules(text):
+    modules = [part.strip() for part in text.split(",") if part.strip()]
+    if not modules:
+        raise argparse.ArgumentTypeError("name at least one module")
+    return modules
+
+
+def defaults():
+    """Every option's default, as parse_args() would give it. -> dict.
+
+    The one statement of them: the API's form starts from these, so a LoRA
+    trained through it with nothing changed is the one this command trains.
+    """
+    options = vars(parse_args(["FOLDER", "--dataset", "DATASET"]))
+    for name in ("folder", "dataset", "dataset_source", "force", "name", "owner",
+                 "catalog", "no_catalog", "mock", "mock_delay"):
+        options.pop(name)
+    return options
 
 
 def main(argv=None):
     # After parsing, so --help still works on any interpreter, but before the
     # folder is touched or a model is fetched.
     options = parse_args(argv)
-    check_interpreter()
+    if not options.mock:
+        check_interpreter()
     options.dataset = resolve_dataset(options.dataset)
     options.folder = os.path.abspath(options.folder)
     check_output_dir(options.folder, options.force)
@@ -367,14 +660,36 @@ def main(argv=None):
         print("warning: --base-model %s is not what the existing slots were "
               "trained on (%s); the result cannot be blended with them."
               % (options.base_model, BASE_MODEL))
+    if sorted(options.target_modules) != sorted(TARGET_MODULES):
+        print("warning: --target-modules %s differs from every existing adapter's "
+              "(%s); add_weighted_adapter folds module by module, so this one "
+              "can only be blended with others trained over the same set."
+              % (",".join(options.target_modules), ",".join(TARGET_MODULES)))
 
-    model, tokenizer = train(options)
+    # The data goes into the folder with the weights, so the adapter is
+    # described by what it was actually trained on, whatever datasets/ says later.
+    dataset = dataset_info(options.dataset, options.dataset_source)
+    shutil.copyfile(options.dataset, os.path.join(options.folder, DATASET_COPY))
+    journal = Journal(options, dataset)
+    journal.start()
+    try:
+        if options.mock:
+            model, tokenizer = mock_train(options, journal)
+        else:
+            model, tokenizer = train(options, journal)
 
-    print("\nSaved a rank-%d adapter to %s" % (rank_of(options.folder), options.folder))
+        print("\nSaved a rank-%d adapter to %s" % (rank_of(options.folder), options.folder))
 
-    if not options.no_sample:
-        print("\nYOU: %s" % options.prompt)
-        print("LORA: %s" % sample(model, tokenizer, options.prompt))
+        answer = None
+        if not options.no_sample:
+            print("\nYOU: %s" % options.prompt)
+            answer = ("(mocked: nothing was trained, so nothing answers)" if options.mock
+                      else sample(model, tokenizer, options.prompt))
+            print("LORA: %s" % answer)
+    except BaseException as error:
+        journal.fail("%s: %s" % (type(error).__name__, error))
+        raise
+    journal.finish(answer)
 
     # The last mile: what to paste into settings.py so a tree can reach it.
     # A slot is *repointed* rather than added -- L1..L5 is the grammar's own

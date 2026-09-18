@@ -1,7 +1,8 @@
 """
 registry.py - Who submitted what, in which order, and what is live.
 
-One small sqlite file, `<JOBS_DIR>/jobs.sqlite3`, beside the job folders:
+One sqlite file, `<JOBS_DIR>/api.sqlite`, beside the job folders -- everything
+the API knows, in one place:
 
     users        a name and the hash of its API key
     jobs         one submitted sweep: its owner, its status, and the folder
@@ -17,6 +18,19 @@ One small sqlite file, `<JOBS_DIR>/jobs.sqlite3`, beside the job folders:
                  and taken by the same worker -- after the jobs, since a
                  verification is a question about a search that has finished
                  and a job is one still waiting to start.
+    trainings    a LoRA queued to be trained (see train.py): the same kind of
+                 work, taken by the same worker. The adapter itself is a row
+                 of `loras`; this row is only the work of making it.
+    loras        every LoRA adapter on the machine, and whose each is. Owned
+                 by adapters/catalog.py, which create_lora.py writes through
+                 with no API running, and created here from its SCHEMA so the
+                 file is whole whichever opens it first.
+
+It was two files until the LoRAs arrived -- `jobs.sqlite3` here and a
+catalogue under loras/. A registry that finds a `jobs.sqlite3` and no
+`api.sqlite` copies it across once (sqlite's backup, so a live WAL comes too)
+and renames the old file `jobs.sqlite3.merged`; the LoRA rows are rebuilt from
+disk by `python -m adapters.catalog scan`, since the folders are their truth.
 
 What a job *is* lives in its own database (see submit.py) -- the same file
 store.py writes for any sweep. This file only knows about jobs as work to be
@@ -35,6 +49,7 @@ import secrets
 import sqlite3
 import time
 
+from adapters import catalog as lora_catalog
 from async_api import settings
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -115,7 +130,26 @@ CREATE TABLE IF NOT EXISTS verifications (
     error            TEXT
 );
 
+CREATE TABLE IF NOT EXISTS trainings (
+    id               INTEGER PRIMARY KEY,     -- arrival order, as for jobs
+    user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    lora_id          INTEGER REFERENCES loras(id) ON DELETE SET NULL,
+    name             TEXT NOT NULL,
+    folder           TEXT NOT NULL,           -- the adapter folder it writes
+    status           TEXT NOT NULL DEFAULT 'preparing',
+    created_at       TEXT NOT NULL,
+    started_at       TEXT,
+    finished_at      TEXT,
+    options          TEXT NOT NULL DEFAULT '{}',  -- JSON, see train.py
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    pid              INTEGER,
+    exit_code        INTEGER,
+    error            TEXT
+);
+
 CREATE INDEX IF NOT EXISTS jobs_by_status ON jobs(status, id);
+CREATE INDEX IF NOT EXISTS trainings_by_status ON trainings(status, id);
+CREATE INDEX IF NOT EXISTS trainings_by_lora ON trainings(lora_id);
 CREATE INDEX IF NOT EXISTS verifications_by_status ON verifications(status, id);
 CREATE INDEX IF NOT EXISTS verifications_by_job ON verifications(job_id, id);
 CREATE INDEX IF NOT EXISTS jobs_by_user ON jobs(user_id, id);
@@ -131,9 +165,45 @@ def digest(secret):
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
 
+DATABASE = "api.sqlite"
+# What the database was called before the LoRAs moved into it.
+OLD_DATABASE = "jobs.sqlite3"
+
+
 def jobs_dir(value=None):
     value = value or settings.JOBS_DIR
     return os.path.abspath(value if os.path.isabs(value) else os.path.join(_ROOT, value))
+
+
+def database_path(root=None):
+    """The API's database: users, jobs, trainings, deployments and LoRAs."""
+    return os.path.join(jobs_dir(root), DATABASE)
+
+
+def merge_old(root):
+    """Carry a `jobs.sqlite3` over into a new `api.sqlite`, once. -> True if it did.
+
+    Through sqlite's backup rather than a file copy, so the pages still in a
+    WAL beside it come across. The old file is then renamed, not deleted: if
+    another process still holds it (Windows will say so), it is left as it is
+    and only the copy is new.
+    """
+    new, old = os.path.join(root, DATABASE), os.path.join(root, OLD_DATABASE)
+    if os.path.exists(new) or not os.path.exists(old):
+        return False
+    source = sqlite3.connect(old)
+    target = sqlite3.connect(new)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.replace(old + suffix, old + ".merged" + suffix)
+        except OSError:
+            pass
+    return True
 
 
 class Registry:
@@ -142,11 +212,14 @@ class Registry:
     def __init__(self, root=None):
         self.root = jobs_dir(root)
         os.makedirs(self.root, exist_ok=True)
-        self.path = os.path.join(self.root, "jobs.sqlite3")
+        merge_old(self.root)
+        self.path = database_path(self.root)
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode = WAL")
+            conn.executescript(lora_catalog.SCHEMA)
             conn.executescript(SCHEMA)
             self._migrate(conn)
+        self.catalog = lora_catalog.Catalog(self.path)
 
     # Columns added after a registry may already have been written. CREATE
     # TABLE IF NOT EXISTS leaves an existing table as it is, so each is added
@@ -459,6 +532,136 @@ class Registry:
         with self._connect() as conn:
             return conn.execute("SELECT * FROM verifications WHERE status = 'running'"
                                 " ORDER BY id").fetchall()
+
+    # --- trainings ---------------------------------------------------------
+
+    def training_folder(self, row):
+        """Where one training's dataset and log live: beside the user's jobs.
+
+        Not the adapter folder, which is the catalogue's and outlives the API;
+        this is the work of making it, and goes when the training row does.
+        """
+        return os.path.join(self.root, "user%d" % row["user_id"], "lora%d" % row["id"])
+
+    def reserve_training(self, user_id, name, folder, options):
+        """A training row in no queue yet (its dataset is written next). -> it."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO trainings (user_id, name, folder, status, created_at, options)"
+                " VALUES (?, ?, ?, 'preparing', ?, ?)",
+                (user_id, name, folder, now(), json.dumps(options or {})))
+            row_id = cursor.lastrowid
+        return self.training(row_id)
+
+    def enqueue_training(self, training_id, lora_id):
+        with self._connect() as conn:
+            conn.execute("UPDATE trainings SET status = 'queued', lora_id = ? WHERE id = ?",
+                         (lora_id, training_id))
+        return self.training(training_id)
+
+    def discard_training(self, training_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM trainings WHERE id = ?", (training_id,))
+
+    def training(self, training_id, user_id=None):
+        sql, args = "SELECT * FROM trainings WHERE id = ?", [training_id]
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            args.append(user_id)
+        with self._connect() as conn:
+            return conn.execute(sql, args).fetchone()
+
+    def training_for_lora(self, lora_id):
+        """The newest training that filled a catalogue row, or None."""
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM trainings WHERE lora_id = ?"
+                                " ORDER BY id DESC LIMIT 1", (lora_id,)).fetchone()
+
+    def trainings(self, user_id=None, status=None):
+        sql, args = "SELECT * FROM trainings WHERE 1 = 1", []
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            args.append(user_id)
+        if status:
+            sql += " AND status = ?"
+            args.append(status)
+        with self._connect() as conn:
+            return conn.execute(sql + " ORDER BY id DESC", args).fetchall()
+
+    def training_queue_position(self, training_id):
+        """1 for the next training the worker takes, None when not queued."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS ahead FROM trainings WHERE status = 'queued' AND id <= ?"
+                " AND EXISTS (SELECT 1 FROM trainings WHERE id = ? AND status = 'queued')",
+                (training_id, training_id)).fetchone()
+        return row["ahead"] or None
+
+    def claim_next_training(self):
+        """Take the oldest queued training. -> the row, or None."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute("SELECT id FROM trainings WHERE status = 'queued'"
+                                   " ORDER BY id LIMIT 1").fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    return None
+                conn.execute("UPDATE trainings SET status = 'running', started_at = ?"
+                             " WHERE id = ?", (now(), row["id"]))
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.training(row["id"])
+
+    def set_training_pid(self, training_id, pid):
+        with self._connect() as conn:
+            conn.execute("UPDATE trainings SET pid = ? WHERE id = ?", (pid, training_id))
+
+    def finish_training(self, training_id, status, exit_code=None, error=None):
+        with self._connect() as conn:
+            conn.execute("UPDATE trainings SET status = ?, finished_at = ?, exit_code = ?,"
+                         " error = ?, pid = NULL WHERE id = ?",
+                         (status, now(), exit_code, error, training_id))
+
+    def request_training_cancel(self, training_id):
+        """-> the training's status after asking: cancelled on the spot when
+        queued, flagged for the worker when running, as it was otherwise."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status FROM trainings WHERE id = ?",
+                               (training_id,)).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return None
+            if row["status"] in (QUEUED, PREPARING):
+                conn.execute("UPDATE trainings SET status = 'cancelled', finished_at = ?,"
+                             " cancel_requested = 1, error = ? WHERE id = ?",
+                             (now(), "cancelled before it started", training_id))
+                status = CANCELLED
+            elif row["status"] == RUNNING:
+                conn.execute("UPDATE trainings SET cancel_requested = 1 WHERE id = ?",
+                             (training_id,))
+                status = RUNNING
+            else:
+                status = row["status"]
+            conn.execute("COMMIT")
+        return status
+
+    def training_cancel_requested(self, training_id):
+        row = self.training(training_id)
+        return bool(row and row["cancel_requested"])
+
+    def orphaned_trainings(self):
+        """Trainings left running by a worker that died."""
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM trainings WHERE status = 'running'"
+                                " ORDER BY id").fetchall()
+
+    def delete_training(self, training_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM trainings WHERE id = ?", (training_id,))
 
     # --- deployments -------------------------------------------------------
 
