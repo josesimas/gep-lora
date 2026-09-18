@@ -3,289 +3,624 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GEP LoRA API demo</title>
+<title>GEP LoRA console</title>
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2230; --muted: #667085; --line: #e3e6ec;
-    --accent: #3b5bdb; --accent-ink: #ffffff; --ok: #2b8a3e; --warn: #b7791f; --bad: #c92a2a;
-    --code: #f1f3f7; --best: #3b5bdb; --mean: #9aa5b8; --worst: #d0d5de;
+    color-scheme: light;
+    --bg: #f3f4f7; --panel: #ffffff; --panel-2: #f8f9fb; --ink: #161a23; --ink-2: #394150;
+    --muted: #626b7a; --faint: #8b93a1; --line: #e3e6eb; --line-2: #d2d7df;
+    --accent: #4c5fd5; --accent-ink: #ffffff; --accent-soft: #eceffd;
+    --ok: #1e8449; --warn: #b45309; --bad: #c8322f;
+    --code: #f1f3f6; --best: var(--accent); --mean: #98a1b2; --worst: #cfd4dc;
+    --op: #7c3aed; --slot: #0e7490; --wt: #b45309;
+    --log-bg: #11151f; --log-ink: #cdd5e2;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .06);
+    --radius: 12px; --top: 56px;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #12151c; --panel: #1a1f29; --ink: #e6e9ef; --muted: #98a2b3; --line: #2a3140;
-      --accent: #748ffc; --accent-ink: #0d1020; --ok: #69db7c; --warn: #ffd43b; --bad: #ff8787;
-      --code: #232a36; --best: #748ffc; --mean: #6b7488; --worst: #3a4252;
+      color-scheme: dark;
+      --bg: #0e1117; --panel: #161a22; --panel-2: #1b2029; --ink: #e7eaf0; --ink-2: #c3c9d4;
+      --muted: #99a2b1; --faint: #6f7888; --line: #262c38; --line-2: #343b4a;
+      --accent: #8b9cff; --accent-ink: #0c0f1f; --accent-soft: #1f2547;
+      --ok: #5fd08a; --warn: #f0b454; --bad: #ff7b72;
+      --code: #1d222c; --mean: #6b7488; --worst: #3a4252;
+      --op: #b69cff; --slot: #5ccfe6; --wt: #f0b454;
+      --log-bg: #0a0d13; --log-ink: #c3cbd8;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3);
     }
   }
+
+  /* --- base ------------------------------------------------------------------ */
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
-           padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
-           position: sticky; top: 0; z-index: 2; }
-  header h1 { font-size: 16px; margin: 0 12px 0 0; }
-  main { display: grid; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto;
-         grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
-  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-            padding: 14px 16px; min-width: 0; }
-  h2 { font-size: 14px; margin: 0 0 10px; display: flex; gap: 8px; align-items: center; }
-  h3 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); font-weight: 600; }
-  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
-  input, textarea, select { width: 100%; font: inherit; color: var(--ink); background: var(--bg);
-           border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
-  textarea { font-family: ui-monospace, Consolas, monospace; font-size: 12px; resize: vertical; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
-  .row > * { flex: 1 1 120px; }
-  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-           border-radius: 6px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
-  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-  button.danger { color: var(--bad); }
-  button:disabled { opacity: .5; cursor: default; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; }
-  tr.selected td { background: var(--code); }
-  tr.click { cursor: pointer; }
-  .scroll { overflow-x: auto; }
-  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
-  pre { background: var(--code); border-radius: 6px; padding: 8px; margin: 0; overflow: auto;
-        max-height: 260px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
-          border: 1px solid currentColor; }
-  .s-done { color: var(--ok); } .s-failed, .s-cancelled { color: var(--bad); }
-  .s-running { color: var(--accent); } .s-queued, .s-preparing, .s-deleted { color: var(--muted); }
-  .s-stopped { color: var(--warn); }
-  .picker { display: flex; gap: 4px; margin-top: 4px; }
-  .picker select { flex: 1 1 auto; min-width: 0; }
-  .picker button { flex: none; padding: 4px 8px; }
-  .task { font-size: 11px; color: var(--muted); margin-left: 4px; }
-  .panel { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
-  .panel[hidden], .panel [hidden] { display: none; }
-  .panel h4 { font-size: 12px; margin: 0 0 6px; font-weight: 600; }
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  h1 { font-size: 20px; line-height: 1.25; margin: 0; letter-spacing: -.01em; display: flex;
+       gap: 10px; align-items: center; flex-wrap: wrap; }
+  h2 { font-size: 13px; margin: 0; }
+  h3 { font-size: 13px; margin: 0 0 10px; font-weight: 600; }
+  h4 { font-size: 12px; margin: 0 0 8px; font-weight: 600; color: var(--muted); }
+  p { margin: 0 0 8px; }
+  a { color: var(--accent); }
+  code, .mono { font-family: var(--mono); font-size: 12px; }
   .muted { color: var(--muted); }
-  .msg { margin-top: 8px; font-size: 13px; min-height: 1em; }
-  .msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
-  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
-  .answer { background: var(--code); border-radius: 6px; padding: 10px; min-height: 60px;
-            white-space: pre-wrap; margin-top: 8px; }
-  .tiles { display: flex; gap: 8px; flex-wrap: wrap; }
-  .tile { background: var(--code); border-radius: 8px; padding: 6px 10px; }
-  .tile b { display: block; font-size: 16px; }
-  .tile span { font-size: 11px; color: var(--muted); }
-  .span2 { grid-column: 1 / -1; }
-  svg text { fill: var(--muted); font-size: 10px; }
-  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
-  .legend i { display: inline-block; width: 10px; height: 3px; margin-right: 4px; vertical-align: middle; }
-  .q { margin: 8px 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-  details { border-top: 1px solid var(--line); padding: 6px 0 4px; margin-top: 8px; }
-  summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
-  .changed-count { color: var(--accent); font-weight: 400; }
-  .grid { display: grid; gap: 2px 12px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
-  .field.wide { grid-column: 1 / -1; }
-  .field[hidden] { display: none; }
-  .field label { margin-top: 6px; }
-  .field.changed > label::after { content: " \2022"; color: var(--accent); }
-  .field.invalid input { border-color: var(--bad); }
-  .help { font-size: 11px; color: var(--muted); line-height: 1.3; margin-top: 2px; }
+  .small { font-size: 12px; }
+
+  /* --- controls ---------------------------------------------------------------- */
+  label { display: block; font-size: 12px; font-weight: 500; color: var(--ink-2); margin: 0 0 4px; }
+  input, textarea, select { width: 100%; font: inherit; color: var(--ink); background: var(--panel);
+           border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 10px; min-height: 34px;
+           transition: border-color .12s, box-shadow .12s; }
+  input::placeholder, textarea::placeholder { color: var(--faint); }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent);
+           box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  select:disabled, input:disabled { opacity: .55; }
+  textarea { font-family: var(--mono); font-size: 12px; resize: vertical; line-height: 1.45; }
+  input[type="file"] { padding: 5px 6px; font-size: 12px; }
+  input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; min-height: 0; }
+  button { font: inherit; font-weight: 500; border: 1px solid var(--line-2); background: var(--panel);
+           color: var(--ink); border-radius: 8px; padding: 0 12px; min-height: 32px; cursor: pointer;
+           white-space: nowrap; transition: background .12s, border-color .12s, color .12s; }
+  button:hover:not(:disabled) { background: var(--panel-2); border-color: var(--faint); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--ink));
+           border-color: transparent; }
+  button.danger { color: var(--bad); }
+  button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 9%, var(--panel));
+           border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  button.ghost { border-color: transparent; background: transparent; }
+  button.sm { min-height: 28px; padding: 0 10px; font-size: 13px; }
+  button:disabled { opacity: .45; cursor: default; }
+  label.check { display: flex; gap: 8px; align-items: center; color: var(--ink); font-size: 13px;
+                font-weight: 400; margin: 12px 0 0; cursor: pointer; }
+  label.check input { width: auto; margin: 0; flex: none; }
+  .help { font-size: 12px; color: var(--muted); line-height: 1.35; margin-top: 4px; }
+  .help:empty { display: none; }
   .help.error { color: var(--bad); }
   .help.ok { color: var(--ok); }
-  .dataset { margin-top: 4px; }
-  .vgrid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
-  .vcard { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
-  .vcard h4 { font-size: 12px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
-  .verdict { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--code); }
-  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
-  .dataset [hidden] { display: none; }
-  input[type="file"] { padding: 4px; font-size: 12px; }
-  .help:empty { display: none; }
-  label.check { display: flex; gap: 6px; align-items: center; color: var(--ink); font-size: 13px; margin-top: 12px; }
-  label.check input { width: auto; margin: 0; }
-  .members { display: grid; gap: 2px 16px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  .fgrid { display: grid; gap: 12px 14px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+           align-items: start; }
+  .fgrid .span2 { grid-column: span 2; }
+  @media (max-width: 520px) { .fgrid .span2 { grid-column: auto; } }
+
+  /* A message line: invisible until it says something, then a tinted banner. */
+  .msg { font-size: 13px; }
+  .msg:not(:empty) { margin-top: 12px; padding: 8px 12px; border-radius: 8px; background: var(--panel-2);
+                     border: 1px solid var(--line); color: var(--ink-2); }
+  .msg.ok:not(:empty) { color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, var(--panel));
+                        border-color: color-mix(in srgb, var(--ok) 28%, transparent); }
+  .msg.err:not(:empty) { color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, var(--panel));
+                         border-color: color-mix(in srgb, var(--bad) 28%, transparent); }
+
+  /* --- status pills ---------------------------------------------------------------- */
+  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 9px 1px 7px; border-radius: 999px;
+          font-size: 12px; font-weight: 500; line-height: 1.6; color: var(--muted);
+          background: color-mix(in srgb, currentColor 11%, transparent); }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .s-done { color: var(--ok); } .s-failed, .s-cancelled { color: var(--bad); }
+  .s-running { color: var(--accent); } .s-queued, .s-preparing, .s-deleted { color: var(--muted); }
+  .s-stopped { color: var(--warn); } .s-best { color: var(--accent); }
+  .s-running::before { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .task { font-size: 11px; color: var(--muted); margin-left: 4px; font-weight: 500;
+          text-transform: uppercase; letter-spacing: .04em; }
+
+  /* --- chromosomes, token by token ----------------------------------------------------- */
+  .chromo { font-family: var(--mono); font-size: 12px; }
+  .chromo .op { color: var(--op); font-weight: 600; }
+  .chromo .slot { color: var(--slot); font-weight: 600; }
+  .chromo .wt { color: var(--wt); }
+  .chromo .dot { color: var(--faint); }
+  .chromo.chips { display: flex; flex-wrap: wrap; gap: 4px; font-size: 13px; }
+  .chromo.chips span { padding: 2px 8px; border-radius: 6px;
+                       background: color-mix(in srgb, currentColor 11%, transparent); }
+
+  /* --- top bar ---------------------------------------------------------------------- */
+  .topbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px;
+            min-height: var(--top); padding: 8px 20px; background: color-mix(in srgb, var(--panel) 92%, transparent);
+            backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand svg { width: 26px; height: 26px; flex: none; }
+  .brand b { display: block; font-size: 14px; line-height: 1.1; }
+  .brand span { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
+  .viewnav { display: flex; gap: 2px; padding: 3px; background: var(--panel-2); border: 1px solid var(--line);
+             border-radius: 10px; }
+  .viewnav button { border: 0; background: transparent; min-height: 28px; padding: 0 12px; color: var(--muted); }
+  .viewnav button:hover:not(:disabled) { background: var(--panel); color: var(--ink); }
+  .viewnav button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+  .spacer { flex: 1; }
+  .health { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
+            max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .health::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .health.up::before { background: var(--ok); }
+  .health.busy::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .health.down::before { background: var(--bad); }
+  .keybox { display: flex; gap: 6px; align-items: center; }
+  .keybox input { width: 250px; min-height: 32px; font-family: var(--mono); font-size: 12px; }
+
+  /* --- shell: sidebar and views ---------------------------------------------------------- */
+  .shell { display: grid; grid-template-columns: 290px minmax(0, 1fr); min-height: calc(100vh - var(--top)); }
+  .sidebar { position: sticky; top: var(--top); align-self: start; height: calc(100vh - var(--top));
+             display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel); }
+  .side-head { display: flex; align-items: center; gap: 8px; padding: 16px 16px 10px; }
+  .side-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .side-head .spacer + button { margin-left: auto; }
+  .joblist { flex: 1; overflow-y: auto; padding: 0 10px 16px; display: flex; flex-direction: column; gap: 4px; }
+  .job { display: block; width: 100%; text-align: left; border: 1px solid transparent; background: transparent;
+         border-radius: 10px; padding: 9px 10px; min-height: 0; white-space: normal; font-weight: 400; }
+  .job:hover:not(:disabled) { background: var(--panel-2); border-color: var(--line); }
+  .job.selected, .job.selected:hover:not(:disabled) { background: var(--accent-soft);
+         border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .job-top { display: flex; align-items: center; gap: 6px; }
+  .job-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .job-id { color: var(--faint); font-size: 12px; }
+  .job-top .pill { margin-left: auto; flex: none; }
+  .job-best { display: flex; gap: 6px; align-items: baseline; margin-top: 3px; font-size: 12px; min-width: 0; }
+  .job-best b { font-variant-numeric: tabular-nums; }
+  .job-best .chromo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .job-meta { font-size: 11px; color: var(--faint); margin-top: 2px; }
+  .empty { color: var(--muted); font-size: 13px; padding: 16px 8px; text-align: center; }
+
+  main { padding: 24px 28px 48px; min-width: 0; }
+  .view { max-width: 1240px; margin: 0 auto; }
+  .page-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between;
+               flex-wrap: wrap; margin-bottom: 18px; }
+  .page-head p { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+  .eyebrow { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em;
+             color: var(--accent); margin-bottom: 4px; }
+  .job-num { color: var(--faint); font-weight: 500; }
+
+  @media (max-width: 980px) {
+    .shell { grid-template-columns: minmax(0, 1fr); }
+    .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .joblist { max-height: 230px; }
+    main { padding: 20px 16px 40px; }
+  }
+  @media (max-width: 640px) {
+    .topbar { position: static; padding: 8px 16px; gap: 10px; }
+    .keybox { flex: 1 1 100%; }
+    .keybox input { width: auto; flex: 1; }
+    .health { order: 3; max-width: 100%; }
+  }
+
+  /* --- cards ------------------------------------------------------------------------------- */
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+          box-shadow: var(--shadow); padding: 18px; min-width: 0; }
+  .card + .card { margin-top: 16px; }
+  .overview > .card, .split > .card { margin-top: 0; }
+  .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+  .card-head h3 { margin: 0; }
+  .card-head p { margin: 0; }
+  .scroll { overflow-x: auto; }
+
+  /* Settings groups: <details> drawn as cards with a chevron. */
+  details.group { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+                  box-shadow: var(--shadow); min-width: 0; }
+  details.group > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+                            padding: 14px 18px; font-weight: 600; font-size: 14px; user-select: none; }
+  details.group > summary::-webkit-details-marker { display: none; }
+  details.group > summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid var(--faint);
+                            border-bottom: 2px solid var(--faint); transform: rotate(-45deg); transition: transform .15s;
+                            margin: 0 4px 0 2px; }
+  details.group[open] > summary::before { transform: rotate(45deg); margin-top: -3px; }
+  details.group > summary .hint { font-weight: 400; color: var(--muted); font-size: 12px; }
+  details.group > .body { padding: 0 18px 18px; }
+  .changed-count:not(:empty) { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--accent);
+                               background: var(--accent-soft); padding: 1px 8px; border-radius: 999px; }
+  .settings { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); align-items: start; }
+  .settings > p { grid-column: 1 / -1; }
+  @media (max-width: 520px) { .settings { grid-template-columns: minmax(0, 1fr); } }
+
+  .grid { display: grid; gap: 14px 14px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  .field { min-width: 0; }
+  .field.wide { grid-column: 1 / -1; }
+  .field.changed > label::after { content: "changed"; margin-left: 6px; font-size: 10px; font-weight: 600;
+                                  color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+  .field.changed input:not([type="checkbox"]), .field.changed select { border-color: color-mix(in srgb, var(--accent) 55%, var(--line-2)); }
+  .field.invalid input { border-color: var(--bad); }
+  .field.invalid .members input[type="number"] { border-color: var(--line-2); }
+  .field > label.check { margin-top: 24px; }
+  .picker { display: flex; gap: 6px; margin-top: 6px; }
+  .picker select { flex: 1 1 auto; min-width: 0; min-height: 30px; font-size: 13px; }
+  .picker button { flex: none; min-height: 30px; padding: 0 9px; }
+  .members { display: grid; gap: 4px 16px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+             padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
   .member { display: flex; gap: 8px; align-items: center; }
   .member label.check { flex: 1; margin-top: 4px; min-width: 0; }
-  .member input[type="number"] { width: 72px; flex: none; padding: 3px 6px; }
+  .member input[type="number"] { width: 76px; flex: none; min-height: 28px; padding: 2px 8px; }
   .member input[type="number"]:disabled { opacity: .4; }
-  .field.invalid .members input[type="number"] { border-color: var(--line); }
+
+  .form-top { display: grid; gap: 14px 24px; grid-template-columns: minmax(200px, 360px) auto; align-items: end; }
+  @media (max-width: 640px) { .form-top { grid-template-columns: minmax(0, 1fr); } }
+  .seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel-2); border: 1px solid var(--line);
+         border-radius: 10px; }
+  .seg button { border: 0; background: transparent; min-height: 28px; color: var(--muted); }
+  .seg button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+
+  .datasets { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  @media (max-width: 520px) { .datasets { grid-template-columns: minmax(0, 1fr); } }
+  .dataset { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--panel-2); min-width: 0; }
+  .dataset h4 { color: var(--ink); font-size: 13px; margin-bottom: 10px; }
+  .dataset textarea { margin-top: 10px; }
+  .dataset .grid { margin-top: 12px; }
+
+  .submitbar { position: sticky; bottom: 0; z-index: 3; margin-top: 18px; padding: 12px 0 16px;
+               display: flex; gap: 12px; align-items: center; justify-content: flex-end; flex-wrap: wrap;
+               background: linear-gradient(to bottom, transparent, var(--bg) 30%); }
+  .submitbar .msg { flex: 1 1 300px; margin: 0; }
+  .submitbar .msg:not(:empty) { margin: 0; }
+  .submitbar button { min-height: 38px; padding: 0 20px; }
+
+  /* --- job view ------------------------------------------------------------------------------- */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  .toolbar .group { display: flex; gap: 6px; flex-wrap: wrap; }
+  .toolbar .group + .group { padding-left: 14px; border-left: 1px solid var(--line); }
+  .toolbar .group.end { margin-left: auto; }
+  @media (max-width: 640px) {
+    .toolbar .group + .group { padding-left: 0; border-left: 0; }
+    .toolbar .group.end { margin-left: 0; }
+  }
+  .panel { border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: var(--radius);
+           padding: 16px 18px; margin-top: 16px; background: var(--panel); box-shadow: var(--shadow); }
+  .panel h4 { color: var(--ink); font-size: 14px; margin: 0 0 6px; }
+
+  .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-top: 18px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+          box-shadow: var(--shadow); padding: 12px 14px; min-width: 0; }
+  .tile span { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--muted); }
+  .tile b { display: block; font-size: 20px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meter { height: 4px; border-radius: 4px; background: var(--code); margin-top: 8px; overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
+
+  .tabs { display: flex; gap: 4px; margin: 22px 0 16px; box-shadow: inset 0 -1px 0 var(--line);
+          overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent;
+                 padding: 0 12px; min-height: 38px; color: var(--muted); }
+  .tabs button:hover:not(:disabled) { background: transparent; color: var(--ink); }
+  .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  .tabs .count { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 6px; border-radius: 999px;
+                 font-size: 11px; background: var(--code); color: var(--muted); }
+  .tabs .count:empty { display: none; }
+
+  .overview { display: grid; gap: 16px; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); align-items: start; }
+  .overview > .full { grid-column: 1 / -1; }
+  @media (max-width: 900px) { .overview { grid-template-columns: minmax(0, 1fr); } }
+  .hero { display: flex; gap: 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .hero .chromo { margin-top: 8px; }
+  .hero-stats { display: flex; gap: 24px; }
+  .hero-stats div span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase;
+                         letter-spacing: .06em; font-weight: 600; }
+  .hero-stats div b { font-size: 22px; font-variant-numeric: tabular-nums; }
+
+  .bars { display: grid; gap: 7px; }
+  .bar-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) 56px; gap: 10px; align-items: center; font-size: 12px; }
+  .bar-row .name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-row .track { height: 8px; border-radius: 4px; background: var(--code); overflow: hidden; }
+  .bar-row .track i { display: block; height: 100%; border-radius: 4px; background: var(--accent); opacity: .8; }
+  .bar-row .value { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+  .split { display: grid; gap: 16px; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; }
+  .split > .sticky { position: sticky; top: calc(var(--top) + 16px); max-height: calc(100vh - var(--top) - 32px);
+                     overflow-y: auto; }
+  @media (max-width: 1100px) { .split { grid-template-columns: minmax(0, 1fr); }
+                               .split > .sticky { position: static; max-height: none; } }
+
+  /* --- tables ---------------------------------------------------------------------------------- */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+       background: var(--panel-2); position: sticky; top: 0; }
+  thead tr th:first-child { border-top-left-radius: 8px; }
+  thead tr th:last-child { border-top-right-radius: 8px; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.end { text-align: right; white-space: nowrap; }
+  tr.click { cursor: pointer; }
+  tr.click:hover td { background: var(--panel-2); }
+  tr.selected td, tr.selected:hover td { background: var(--accent-soft); }
+  .up { color: var(--ok); } .down { color: var(--bad); }
+
+  /* --- transcript --------------------------------------------------------------------------------- */
+  .q { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .q:last-child { border-bottom: 0; }
+  .q .ask { font-weight: 600; margin-bottom: 6px; }
+  .q .reply { white-space: pre-wrap; color: var(--ink-2); }
+  .q .grade { display: flex; gap: 8px; align-items: baseline; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .score { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; padding: 0 7px; border-radius: 6px;
+           background: color-mix(in srgb, currentColor 12%, transparent); }
+  .score.hi { color: var(--ok); } .score.mid { color: var(--warn); } .score.lo { color: var(--bad); }
+  pre { background: var(--code); border-radius: 8px; padding: 10px 12px; margin: 0; overflow: auto;
+        max-height: 260px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+  pre.log { background: var(--log-bg); color: var(--log-ink); max-height: 62vh; min-height: 200px; padding: 14px 16px; }
+
+  /* --- charts --------------------------------------------------------------------------------------- */
+  svg.chart { fill: var(--muted); font-size: 10px; font-family: system-ui, sans-serif; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .legend i.line { height: 3px; vertical-align: 2px; }
+
+  /* --- verification ----------------------------------------------------------------------------------- */
+  .vgrid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-top: 16px; }
+  .vcard { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+           box-shadow: var(--shadow); padding: 16px; min-width: 0; }
+  .vcard.wide { grid-column: 1 / -1; }
+  .vcard h4 { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .vcard select { width: auto; min-height: 28px; font-size: 12px; padding: 2px 8px; margin: -4px 0; }
+  .verdict { margin: 16px 0 0; padding: 12px 16px; border-radius: var(--radius); background: var(--accent-soft);
+             border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); color: var(--ink); }
+  #vReport > h3 { margin-top: 20px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  /* --- inference ---------------------------------------------------------------------------------------- */
+  .answer { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+            min-height: 120px; white-space: pre-wrap; margin-top: 14px; line-height: 1.6; }
+  .answer.streaming::after { content: ""; display: inline-block; width: 7px; height: 15px; margin-left: 2px;
+            vertical-align: -2px; background: var(--accent); animation: pulse 1s steps(2) infinite; }
+  .answer.msg:not(:empty) { margin-top: 14px; }
+  #inferStats { font-size: 12px; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
-<header>
-  <h1>GEP LoRA API demo</h1>
-  <div style="flex: 1 1 360px">
-    <input id="key" type="password" placeholder="API key (python -m async_api.users add <name>)">
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 26 26" aria-hidden="true">
+      <rect width="26" height="26" rx="7" fill="var(--accent)"/>
+      <path d="M13 8 L8 17 M13 8 L18 17" stroke="var(--accent-ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+      <circle cx="13" cy="7.5" r="2.6" fill="var(--accent-ink)"/>
+      <circle cx="8" cy="18" r="2.2" fill="var(--accent-ink)"/>
+      <circle cx="18" cy="18" r="2.2" fill="var(--accent-ink)"/>
+    </svg>
+    <div><b>GEP LoRA</b><span>API console</span></div>
   </div>
-  <button id="saveKey">Use key</button>
-  <span id="health" class="muted"></span>
+  <nav class="viewnav" aria-label="Views">
+    <button type="button" data-view="new">New job</button>
+    <button type="button" data-view="job" id="navJob" disabled>Job</button>
+    <button type="button" data-view="infer">Inference</button>
+  </nav>
+  <div class="spacer"></div>
+  <span id="health" class="health"></span>
+  <div class="keybox">
+    <input id="key" type="password" autocomplete="off" placeholder="API key"
+           title="Create one with: python -m async_api.users add <name>">
+    <button id="saveKey">Use key</button>
+  </div>
 </header>
 
-<main>
-  <!-- submit -->
-  <section>
-    <h2>1. Submit a job</h2>
-    <div class="row">
-      <div><label for="label">Label</label><input id="label" value="demo"></div>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="side-head">
+      <h2>Jobs</h2><span class="muted small" title="The list refreshes every 3 seconds">· live</span>
+      <span class="spacer"></span>
+      <button type="button" id="newJob" class="sm">+ New job</button>
     </div>
-    <div class="actions">
-      <span class="muted">Start from:</span>
-      <button id="presetDemo" type="button" title="Mocked template, 4 individuals, 2 generations, every question: done in seconds">Quick demo</button>
-      <button id="presetDefaults" type="button">Server defaults</button>
-    </div>
-    <div id="form"><p class="muted">Enter an API key to load the settings.</p></div>
+    <div id="jobs" class="joblist"><p class="empty">Enter an API key to see your jobs.</p></div>
+  </aside>
 
-    <details open>
-      <summary>Datasets and testing</summary>
-      <div class="dataset" data-split="training">
-        <div class="row">
-          <div><label for="trainingMode">Training questions</label>
-            <select id="trainingMode">
-              <option value="shared">a shared file</option>
-              <option value="upload">upload a file</option>
-              <option value="paste">paste JSON Lines</option>
-            </select></div>
-          <div data-mode="shared"><label for="trainingShared">Shared file</label><select id="trainingShared"></select></div>
-          <div data-mode="upload"><label for="trainingUpload">File</label>
-            <input id="trainingUpload" type="file" accept=".json,.jsonl,.txt"></div>
+  <main>
+    <!-- new job -->
+    <section class="view" data-view="new">
+      <div class="page-head">
+        <div>
+          <h1>New job</h1>
+          <p>A search over LoRA blends. The form starts at the server's own settings, and only what you
+            change is sent.</p>
         </div>
-        <textarea id="trainingPaste" data-mode="paste" rows="5">{"messages": [{"role": "user", "content": "I have a headache and a fever. What should I do?"}, {"role": "assistant", "content": "Rest, drink fluids, and see a doctor if the fever lasts more than three days."}]}
+      </div>
+      <div class="card" style="margin-bottom: 16px">
+        <div class="form-top">
+          <div><label for="label">Label</label><input id="label" value="demo"></div>
+          <div>
+            <label>Start from</label>
+            <div class="seg">
+              <button id="presetDemo" type="button" title="Mocked template, 4 individuals, 2 generations, every question: done in seconds">Quick demo</button>
+              <button id="presetDefaults" type="button">Server defaults</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="form" class="settings"><p class="empty">Enter an API key to load the settings.</p></div>
+
+      <details class="group" open style="margin-top: 16px">
+        <summary>Datasets and testing <span class="hint">what the search is judged on, and what it is tested on</span></summary>
+        <div class="body datasets">
+          <div class="dataset" data-split="training">
+            <h4>Training questions</h4>
+            <div class="fgrid">
+              <div><label for="trainingMode">Source</label>
+                <select id="trainingMode">
+                  <option value="shared">a shared file</option>
+                  <option value="upload">upload a file</option>
+                  <option value="paste">paste JSON Lines</option>
+                </select></div>
+              <div data-mode="shared"><label for="trainingShared">Shared file</label><select id="trainingShared"></select></div>
+              <div data-mode="upload"><label for="trainingUpload">File</label>
+                <input id="trainingUpload" type="file" accept=".json,.jsonl,.txt"></div>
+            </div>
+            <textarea id="trainingPaste" data-mode="paste" rows="6">{"messages": [{"role": "user", "content": "I have a headache and a fever. What should I do?"}, {"role": "assistant", "content": "Rest, drink fluids, and see a doctor if the fever lasts more than three days."}]}
 {"messages": [{"role": "user", "content": "How much water should I drink a day?"}, {"role": "assistant", "content": "About two litres for most adults, more in hot weather or when exercising."}]}
 {"messages": [{"role": "user", "content": "Is it safe to take ibuprofen on an empty stomach?"}, {"role": "assistant", "content": "It can irritate the stomach; take it with food when you can."}]}</textarea>
-        <div class="help" id="trainingStatus"></div>
-        <div id="trainingFields"></div>
-      </div>
-      <div class="dataset" data-split="testing">
-        <div class="row">
-          <div><label for="testingMode">Testing questions</label>
-            <select id="testingMode">
-              <option value="none">none</option>
-              <option value="shared" selected>a shared file</option>
-              <option value="upload">upload a file</option>
-            </select></div>
-          <div data-mode="shared"><label for="testingShared">Shared file</label><select id="testingShared"></select></div>
-          <div data-mode="upload"><label for="testingUpload">File</label>
-            <input id="testingUpload" type="file" accept=".json,.jsonl,.txt"></div>
+            <div class="help" id="trainingStatus"></div>
+            <div id="trainingFields"></div>
+          </div>
+          <div class="dataset" data-split="testing">
+            <h4>Testing questions</h4>
+            <div class="fgrid">
+              <div><label for="testingMode">Source</label>
+                <select id="testingMode">
+                  <option value="none">none</option>
+                  <option value="shared" selected>a shared file</option>
+                  <option value="upload">upload a file</option>
+                </select></div>
+              <div data-mode="shared"><label for="testingShared">Shared file</label><select id="testingShared"></select></div>
+              <div data-mode="upload"><label for="testingUpload">File</label>
+                <input id="testingUpload" type="file" accept=".json,.jsonl,.txt"></div>
+            </div>
+            <div class="help" id="testingStatus"></div>
+            <label class="check" data-mode="shared upload"><input id="runTest" type="checkbox" checked> Run the testing pass</label>
+            <div id="testingFields"></div>
+          </div>
         </div>
-        <div class="help" id="testingStatus"></div>
-        <label class="check" data-mode="shared upload"><input id="runTest" type="checkbox" checked> Run the testing pass</label>
+      </details>
+
+      <div class="submitbar">
+        <div id="submitMsg" class="msg"></div>
+        <button class="primary" id="submit">Submit job</button>
       </div>
-      <div id="testingFields"></div>
-    </details>
-    <div class="actions"><button class="primary" id="submit">Submit job</button></div>
-    <div id="submitMsg" class="msg"></div>
-  </section>
+    </section>
 
-  <!-- jobs -->
-  <section>
-    <h2>2. Jobs <span class="muted" style="font-weight: 400">refreshes every 3s</span></h2>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>#</th><th>Label</th><th>Status</th><th>Best</th><th>Created</th></tr></thead>
-        <tbody id="jobs"><tr><td colspan="5" class="muted">Enter an API key.</td></tr></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- detail -->
-  <section class="span2" id="detailSection" hidden>
-    <h2>3. Job <span id="detailTitle"></span></h2>
-    <div class="actions">
-      <button id="aCancel">Cancel</button>
-      <button id="aResume" title="Carry the search on from where it stopped: the rest of that generation, the generations left, then the testing pass">Resume</button>
-      <button id="aEvaluate" title="Grade the answers this job already holds, with the judge wherever it is now">Evaluate…</button>
-      <button id="aLive" class="primary">Set live (best)</button>
-      <button id="aUnset">Unset live</button>
-      <button id="aDeleteRun" class="danger">Delete run</button>
-      <button id="aDeleteJob" class="danger">Delete job</button>
-      <button id="aDownload" title="A snapshot of job.sqlite3: settings, dataset, population, transcripts, scores">Download database</button>
-      <button id="aRefresh">Refresh</button>
-    </div>
-    <div id="detailMsg" class="msg"></div>
-    <div class="panel" id="evalPanel" hidden>
-      <h4>Evaluate this job's answers</h4>
-      <p class="help" id="eSummary"></p>
-      <div class="row" id="eJudge">
-        <div><label for="eBackend">Judge runs on</label><select id="eBackend"></select></div>
-        <div id="eModelBox"><label for="eModel">Judge model</label>
-          <input id="eModel" placeholder="blank = the sweep's own"></div>
-        <div id="eUrlBox" style="flex: 2 1 220px"><label for="eUrl">Judge endpoint</label><input id="eUrl"></div>
+    <!-- job -->
+    <section class="view" data-view="job" id="detailSection" hidden>
+      <div class="page-head">
+        <div>
+          <div class="eyebrow">Job</div>
+          <h1 id="detailTitle"></h1>
+          <p id="detailSub"></p>
+        </div>
       </div>
-      <label class="check"><input type="checkbox" id="eForce"> Grade every answer again, not only the ungraded ones</label>
-      <p class="help">Graded by the sweep's own evaluator, so the scores stay comparable with its fitness;
-        a changed judge is written into the sweep's settings. Fitness is restated when the population is
-        still the one those answers came from — otherwise a resume takes it from there. Another rubric is a
-        question for a verification.</p>
-      <div class="actions">
-        <button class="primary" id="eRun">Queue evaluation</button>
-        <button id="eClose">Close</button>
+      <div class="toolbar">
+        <div class="group">
+          <button id="aCancel">Cancel</button>
+          <button id="aResume" title="Carry the search on from where it stopped: the rest of that generation, the generations left, then the testing pass">Resume</button>
+          <button id="aEvaluate" title="Grade the answers this job already holds, with the judge wherever it is now">Evaluate…</button>
+        </div>
+        <div class="group">
+          <button id="aLive" class="primary">Set live (best)</button>
+          <button id="aUnset">Unset live</button>
+        </div>
+        <div class="group">
+          <button id="aDownload" title="A snapshot of job.sqlite3: settings, dataset, population, transcripts, scores">Download database</button>
+          <button id="aRefresh">Refresh</button>
+        </div>
+        <div class="group end">
+          <button id="aDeleteRun" class="danger">Delete run</button>
+          <button id="aDeleteJob" class="danger">Delete job</button>
+        </div>
       </div>
-      <div id="evalMsg" class="msg"></div>
-    </div>
-    <div class="tiles" id="tiles"></div>
-    <div id="detailBody"></div>
-  </section>
+      <div id="detailMsg" class="msg"></div>
 
-  <!-- verification -->
-  <section class="span2" id="verifySection" hidden>
-    <h2>4. Verification <span class="muted" style="font-weight: 400">is the blend better than the LoRAs it is made of?</span></h2>
-    <p class="muted" id="vIntro">Pick a blend. Each LoRA it names is run on its own, at full
-      strength, on the same questions, and everything is graded by one judge.</p>
-    <div class="row">
-      <div style="flex: 3 1 280px"><label for="vBlend">Blend</label><select id="vBlend"></select></div>
-      <div><label for="vSlots">Compare against</label>
-        <select id="vSlots">
-          <option value="blend">the LoRAs in this blend</option>
-          <option value="all">every LoRA slot</option>
-        </select></div>
-      <div><label for="vSplit">Questions from</label><select id="vSplit"></select></div>
-      <div><label for="vCount">How many</label>
-        <input id="vCount" type="number" min="1" placeholder="blank = all of them"></div>
-    </div>
-    <div class="row">
-      <div><label for="vEvaluator">Evaluator</label><select id="vEvaluator"></select></div>
-      <div id="vBackendBox"><label for="vBackend">Judge runs on</label><select id="vBackend"></select></div>
-      <div id="vModelBox"><label for="vModel">Judge model</label>
-        <input id="vModel" placeholder="blank = the sweep's own"></div>
-      <div id="vUrlBox"><label for="vUrl">Judge endpoint</label><input id="vUrl"></div>
-    </div>
-    <div class="help" id="vAgainst"></div>
-    <div class="actions">
-      <button class="primary" id="vRun">Run verification</button>
-      <span class="muted">One base-model load per contestant, so this is queued like a job.</span>
-    </div>
-    <div id="verifyMsg" class="msg"></div>
-    <h3>Verifications</h3>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>#</th><th>Blend</th><th>Against</th><th>Judge</th><th>Status</th><th>Best LoRA</th><th>Blend</th></tr></thead>
-        <tbody id="vList"></tbody>
-      </table>
-    </div>
-    <div id="vReport"></div>
-  </section>
+      <div class="panel" id="evalPanel" hidden>
+        <h4>Evaluate this job's answers</h4>
+        <p class="help" id="eSummary"></p>
+        <div class="fgrid" id="eJudge" style="margin-top: 12px">
+          <div><label for="eBackend">Judge runs on</label><select id="eBackend"></select></div>
+          <div id="eModelBox" class="span2"><label for="eModel">Judge model</label>
+            <input id="eModel" placeholder="blank = the sweep's own"></div>
+          <div id="eUrlBox" class="span2"><label for="eUrl">Judge endpoint</label><input id="eUrl"></div>
+        </div>
+        <label class="check"><input type="checkbox" id="eForce"> Grade every answer again, not only the ungraded ones</label>
+        <p class="help" style="margin-top: 10px">Graded by the sweep's own evaluator, so the scores stay comparable with its fitness;
+          a changed judge is written into the sweep's settings. Fitness is restated when the population is
+          still the one those answers came from — otherwise a resume takes it from there. Another rubric is a
+          question for a verification.</p>
+        <div class="actions">
+          <button class="primary" id="eRun">Queue evaluation</button>
+          <button id="eClose">Close</button>
+        </div>
+        <div id="evalMsg" class="msg"></div>
+      </div>
 
-  <!-- inference -->
-  <section class="span2">
-    <h2>5. Inference</h2>
-    <div class="row">
-      <div style="flex: 3 1 300px"><label for="token">Live token</label>
-        <input id="token" class="mono" placeholder="returned by Set live"></div>
-      <div><label for="maxTokens">Max new tokens</label><input id="maxTokens" type="number" value="200"></div>
-      <div><label for="format">Stream as</label>
-        <select id="format"><option value="text">chunked text</option><option value="sse">server-sent events</option></select></div>
-    </div>
-    <label for="prompt">Prompt</label>
-    <textarea id="prompt" rows="3">What are common symptoms of the flu?</textarea>
-    <div class="actions"><button class="primary" id="ask">Ask</button><span id="inferStats" class="muted"></span></div>
-    <div id="answer" class="answer muted">The answer streams here.</div>
-    <h3>Live deployments</h3>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>#</th><th>Job</th><th>Individual</th><th>Chromosome</th><th>Engine</th><th>Since</th><th></th></tr></thead>
-        <tbody id="live"></tbody>
-      </table>
-    </div>
-  </section>
-</main>
+      <div class="tiles" id="tiles"></div>
+
+      <nav class="tabs" role="tablist" aria-label="Job sections">
+        <button type="button" role="tab" data-tab="overview">Overview</button>
+        <button type="button" role="tab" data-tab="population">Population<span class="count" id="countPopulation"></span></button>
+        <button type="button" role="tab" data-tab="testing">Testing<span class="count" id="countTesting"></span></button>
+        <button type="button" role="tab" data-tab="verify" id="tabVerify" hidden>Verification<span class="count" id="countVerify"></span></button>
+        <button type="button" role="tab" data-tab="log">Log</button>
+      </nav>
+
+      <div class="pane" data-pane="overview" id="paneOverview"></div>
+      <div class="pane" data-pane="population" id="panePopulation" hidden></div>
+      <div class="pane" data-pane="testing" id="paneTesting" hidden></div>
+
+      <div class="pane" data-pane="verify" id="verifySection" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h3>Is the blend better than the LoRAs it is made of?</h3>
+          </div>
+          <p class="muted" id="vIntro">Pick a blend. Each LoRA it names is run on its own, at full
+            strength, on the same questions, and everything is graded by one judge.</p>
+          <div class="fgrid" style="margin-top: 12px">
+            <div class="span2"><label for="vBlend">Blend</label><select id="vBlend"></select></div>
+            <div><label for="vSlots">Compare against</label>
+              <select id="vSlots">
+                <option value="blend">the LoRAs in this blend</option>
+                <option value="all">every LoRA slot</option>
+              </select></div>
+            <div><label for="vSplit">Questions from</label><select id="vSplit"></select></div>
+            <div><label for="vCount">How many</label>
+              <input id="vCount" type="number" min="1" placeholder="blank = all of them"></div>
+            <div><label for="vEvaluator">Evaluator</label><select id="vEvaluator"></select></div>
+            <div id="vBackendBox"><label for="vBackend">Judge runs on</label><select id="vBackend"></select></div>
+            <div id="vModelBox" class="span2"><label for="vModel">Judge model</label>
+              <input id="vModel" placeholder="blank = the sweep's own"></div>
+            <div id="vUrlBox" class="span2"><label for="vUrl">Judge endpoint</label><input id="vUrl"></div>
+          </div>
+          <div class="help" id="vAgainst" style="margin-top: 10px"></div>
+          <div class="actions">
+            <button class="primary" id="vRun">Run verification</button>
+            <span class="muted small">One base-model load per contestant, so this is queued like a job.</span>
+          </div>
+          <div id="verifyMsg" class="msg"></div>
+        </div>
+        <div class="card">
+          <h3>Verifications</h3>
+          <div class="scroll">
+            <table>
+              <thead><tr><th>#</th><th>Blend</th><th>Against</th><th>Judge</th><th>Status</th><th>Best LoRA</th><th>Blend</th></tr></thead>
+              <tbody id="vList"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="vReport"></div>
+      </div>
+
+      <div class="pane" data-pane="log" hidden>
+        <div class="card">
+          <div class="card-head"><h3>Log</h3><span class="muted small">last 40 lines · follows a running job</span></div>
+          <pre id="log" class="log">…</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- inference -->
+    <section class="view" data-view="infer" hidden>
+      <div class="page-head">
+        <div>
+          <h1>Inference</h1>
+          <p>Stream answers from a blend that has been set live. The first call loads its base model.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="fgrid">
+          <div class="span2"><label for="token">Live token</label>
+            <input id="token" class="mono" placeholder="returned by Set live"></div>
+          <div><label for="maxTokens">Max new tokens</label><input id="maxTokens" type="number" value="200"></div>
+          <div><label for="format">Stream as</label>
+            <select id="format"><option value="text">chunked text</option><option value="sse">server-sent events</option></select></div>
+        </div>
+        <label for="prompt" style="margin-top: 12px">Prompt</label>
+        <textarea id="prompt" rows="3" style="font-family: inherit; font-size: 14px">What are common symptoms of the flu?</textarea>
+        <div class="actions"><button class="primary" id="ask">Ask</button><span id="inferStats" class="muted"></span></div>
+        <div id="answer" class="answer muted">The answer streams here.</div>
+      </div>
+      <div class="card">
+        <h3>Live deployments</h3>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>#</th><th>Job</th><th>Individual</th><th>Chromosome</th><th>Engine</th><th>Since</th><th></th></tr></thead>
+            <tbody id="live"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
 
 <script>
 "use strict";
@@ -300,6 +635,9 @@ let verifyShown = null;       // the verification whose report is drawn
 let verifyAdapter = null;     // which adapter the per-question chart compares
 let evalForm = null;          // GET /jobs/{id}/evaluate, while its panel is open
 let formPicker = null;        // the submission form's judge-model picker
+let view = "new";             // which of the three views is on screen
+let tab = "overview";         // which pane of the job view
+let shownIndividual = null;   // the individual whose transcript is open
 
 // --- small helpers ----------------------------------------------------------
 
@@ -322,6 +660,54 @@ const pill = (status) => el("span", { class: "pill s-" + status }, status);
 // A job queued again, or running, for something other than its search says which.
 const taskOf = (job) => job.task && job.task !== "search" && ["queued", "running"].includes(job.status)
   ? el("span", { class: "task" }, job.task) : null;
+const when = (iso) => {
+  const text = (iso || "").replace("T", " ").slice(0, 19);
+  const today = new Date().toISOString().slice(0, 10);
+  return text.startsWith(today) ? text.slice(11, 16) : text.slice(0, 16);
+};
+const seconds = (s) => s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${s.toFixed(1)}s`;
+const scoreClass = (q) => q === null || q === undefined ? "" : q >= 0.66 ? "hi" : q >= 0.33 ? "mid" : "lo";
+
+// A chromosome, token by token: operators, adapter slots and weights each in
+// their own colour, and a break allowed after every dot so it wraps in a table.
+function chromo(text, chips = false) {
+  const node = el("span", { class: "chromo" + (chips ? " chips" : ""), title: text || "" });
+  String(text || "").split(".").forEach((token, index) => {
+    if (index && !chips) node.append(el("span", { class: "dot" }, "."), document.createElement("wbr"));
+    const kind = /^L\d$/.test(token) ? "slot" : /^w\d$/.test(token) ? "wt" : "op";
+    node.append(el("span", { class: kind }, token));
+  });
+  return node;
+}
+
+// --- views and tabs -------------------------------------------------------------
+
+function setView(name) {
+  if (name === "job" && selected === null) name = "new";
+  view = name;
+  for (const section of document.querySelectorAll(".view")) section.hidden = section.dataset.view !== name;
+  for (const button of document.querySelectorAll(".viewnav [data-view]")) {
+    button.classList.toggle("active", button.dataset.view === name);
+  }
+  $("navJob").disabled = selected === null;
+  $("navJob").textContent = selected === null ? "Job" : `Job #${selected}`;
+}
+
+function setTab(name) {
+  if (name === "verify" && $("tabVerify").hidden) name = "overview";
+  tab = name;
+  for (const button of document.querySelectorAll(".tabs [data-tab]")) {
+    button.setAttribute("aria-selected", String(button.dataset.tab === name));
+  }
+  for (const pane of document.querySelectorAll(".pane")) pane.hidden = pane.dataset.pane !== name;
+  if (name === "log") refreshLog();
+}
+
+// The verification tab exists only for a job that can be verified.
+function verifyAvailable(yes) {
+  $("tabVerify").hidden = !yes;
+  if (!yes && tab === "verify") setTab("overview");
+}
 
 function say(target, text, kind) {
   const node = $(target);
@@ -355,6 +741,9 @@ async function useKey() {
   remember("key", key);
   await loadDatasets();
   await Promise.all([loadForm(), refreshJobs(), refreshLive()]);
+  // Back to the job that was on screen last time, if it is still there.
+  const last = Number(recall("job"));
+  if (selected === null && last) select(last);
 }
 
 async function refreshHealth() {
@@ -364,8 +753,11 @@ async function refreshHealth() {
     $("health").textContent = loaded.length
       ? "loaded: " + loaded.map((m) => `${m.base_model} (${m.engine}, unloads in ${Math.round(m.unloads_in)}s)`).join(", ")
       : "server up · no model loaded";
+    $("health").className = "health " + (loaded.length ? "busy" : "up");
+    $("health").title = $("health").textContent;
   } catch (_) {
     $("health").textContent = "server unreachable";
+    $("health").className = "health down";
   }
 }
 
@@ -572,6 +964,8 @@ const FIELDS = [
 ];
 
 const GROUPS = [["Search", true], ["Model", true], ["Scoring", true], ["Seeds", false]];
+const GROUP_HINTS = { Search: "the GEP loop", Model: "what a blend runs on", Scoring: "the fitness criterion",
+                      Seeds: "for a repeatable sweep" };
 
 const PRESETS = {
   demo: { TEMPLATE: "template_code_mocked.py", GENERATIONS: 1, COUNT: 4, TRAINING_COUNT: null,
@@ -605,9 +999,10 @@ async function loadForm() {
   }
   const byGroup = (group) => FIELDS.filter((f) => f.group === group && f.name in form.defaults);
   $("form").replaceChildren(...GROUPS.map(([group, open]) =>
-    el("details", Object.assign({ "data-group": group }, open ? { open: "" } : {}),
-      el("summary", {}, group, el("span", { class: "changed-count" })),
-      el("div", { class: "grid" }, byGroup(group).map(fieldControl)))));
+    el("details", Object.assign({ class: "group", "data-group": group }, open ? { open: "" } : {}),
+      el("summary", {}, group, el("span", { class: "hint" }, GROUP_HINTS[group] || ""),
+        el("span", { class: "changed-count" })),
+      el("div", { class: "body grid" }, byGroup(group).map(fieldControl)))));
   $("trainingFields").replaceChildren(el("div", { class: "grid" }, byGroup("Training").map(fieldControl)));
   $("testingFields").replaceChildren(el("div", { class: "grid" }, byGroup("Testing").map(fieldControl)));
   applyPreset(recall("preset") || "demo");
@@ -749,6 +1144,8 @@ const differs = (field, value) => JSON.stringify(value) !== JSON.stringify(form.
 function applyPreset(name) {
   if (!form) return;
   remember("preset", name);
+  $("presetDemo").classList.toggle("active", name === "demo");
+  $("presetDefaults").classList.toggle("active", name === "defaults");
   const preset = PRESETS[name] || {};
   for (const field of FIELDS) {
     setField(field, field.name in preset ? preset[field.name] : form.defaults[field.name]);
@@ -778,7 +1175,7 @@ function refreshForm() {
   }
   for (const details of document.querySelectorAll("#form details")) {
     const count = details.querySelectorAll(".field.changed:not([hidden])").length;
-    details.querySelector(".changed-count").textContent = count ? ` · ${count} changed` : "";
+    details.querySelector(".changed-count").textContent = count ? `${count} changed` : "";
   }
   if (formPicker) formPicker.update();
 }
@@ -917,21 +1314,26 @@ async function refreshJobs() {
   let jobs;
   try { ({ jobs } = await api("GET", "/jobs")); }
   catch (error) {
-    $("jobs").replaceChildren(el("tr", {}, el("td", { colspan: 5, class: "msg err" }, error.message)));
+    $("jobs").replaceChildren(el("p", { class: "msg err" }, error.message));
     return;
   }
   if (!jobs.length) {
-    $("jobs").replaceChildren(el("tr", {}, el("td", { colspan: 5, class: "muted" }, "No jobs yet.")));
+    $("jobs").replaceChildren(el("p", { class: "empty" }, "No jobs yet — submit one."));
     return;
   }
   $("jobs").replaceChildren(...jobs.map((job) => {
     const best = job.summary && job.summary.best;
-    return el("tr", { class: "click" + (job.id === selected ? " selected" : ""), onclick: () => select(job.id) },
-      el("td", {}, job.id),
-      el("td", {}, job.label || el("span", { class: "muted" }, "–")),
-      el("td", {}, pill(job.status), taskOf(job), job.queue_position ? el("span", { class: "muted" }, " #" + job.queue_position) : null),
-      el("td", { class: "mono" }, best ? `${fmt(best.fitness)} ${best.chromosome}` : "–"),
-      el("td", { class: "muted" }, (job.created_at || "").replace("T", " ")));
+    return el("button", { type: "button", class: "job" + (job.id === selected ? " selected" : ""),
+                          onclick: () => select(job.id) },
+      el("div", { class: "job-top" },
+        el("span", { class: "job-name" }, job.label || "unlabelled"),
+        el("span", { class: "job-id" }, "#" + job.id),
+        pill(job.status)),
+      el("div", { class: "job-best" }, best
+        ? [el("b", {}, fmt(best.fitness)), chromo(best.chromosome)]
+        : el("span", { class: "muted" }, "no score yet")),
+      el("div", { class: "job-meta" }, when(job.created_at), taskOf(job),
+        job.queue_position ? ` · queue #${job.queue_position}` : null));
   }));
   const current = jobs.find((job) => job.id === selected);
   if (current && current.status !== lastStatus) drawDetail();
@@ -940,21 +1342,33 @@ async function refreshJobs() {
 // --- detail -----------------------------------------------------------------
 
 function select(jobId) {
+  const another = jobId !== selected;
   selected = jobId;
+  remember("job", jobId);
   lastStatus = null;
-  $("detailSection").hidden = false;
-  $("verifySection").hidden = true;
-  verifyForm = null;
-  verifyShown = null;
+  if (another) {
+    verifyForm = null;
+    verifyShown = null;
+    shownIndividual = null;
+    verifyAvailable(false);
+    $("vReport").replaceChildren();
+    setTab("overview");
+  }
   closeEvaluate();
   say("detailMsg", "");
   say("verifyMsg", "");
-  $("vReport").replaceChildren();
-  // The panel sits below the submission form, usually off screen: without this
-  // a click on a job looks like it did nothing.
-  $("detailSection").scrollIntoView({ behavior: "smooth", block: "start" });
+  setView("job");
+  window.scrollTo({ top: 0, behavior: "smooth" });
   drawDetail();
   refreshJobs();
+}
+
+// The job on screen went away (deleted, or not ours): back to the form.
+function forgetJob() {
+  selected = null;
+  remember("job", "");
+  if (view === "job") setView("new");
+  else setView(view);
 }
 
 async function drawDetail() {
@@ -963,13 +1377,15 @@ async function drawDetail() {
   try {
     [detail, status] = await Promise.all([api("GET", `/jobs/${selected}`), api("GET", `/jobs/${selected}/status`)]);
   } catch (error) {
-    $("detailSection").hidden = true;
-    selected = null;
+    forgetJob();
     return;
   }
   const job = detail.job;
   lastStatus = job.status;
-  $("detailTitle").replaceChildren(el("span", {}, `${job.id} · ${job.label || "unlabelled"} `, pill(job.status), taskOf(job)));
+  $("detailTitle").replaceChildren(...[job.label || "unlabelled", el("span", { class: "job-num" }, "#" + job.id),
+    pill(job.status), taskOf(job)].filter(Boolean));
+  $("detailSub").textContent = `Created ${(job.created_at || "").replace("T", " ").slice(0, 19)}`
+    + (job.queue_position ? ` · position ${job.queue_position} in the queue` : "");
 
   // A running job is stopped rather than cancelled: what it did stays in its
   // database, and Resume carries it on from there.
@@ -989,45 +1405,107 @@ async function drawDetail() {
 
   const progress = status.progress || {};
   const results = detail.results;
+  const scored = progress.generations_scored ?? 0, expected = progress.generations_expected;
+  const graded = progress.answers ? progress.answers - progress.unscored : null;
+  const bestFitness = results && results.best ? results.best.fitness : null;
+  // [label, value, fraction for a meter or null]
   const tiles = [
-    ["status", job.status],
-    ["generations", `${progress.generations_scored ?? 0} / ${progress.generations_expected ?? "?"}`],
-    ["last step", progress.last_step ? `${progress.last_step.step} ${progress.last_step.generation || ""}` : "–"],
-    ["answers graded", progress.answers ? `${progress.answers - progress.unscored} / ${progress.answers}` : "–"],
-    ["best fitness", results && results.best ? fmt(results.best.fitness) : "–"],
-    ["live tokens", detail.live.length],
+    ["generations", `${scored} / ${expected ?? "?"}`, expected ? scored / expected : null],
+    ["answers graded", progress.answers ? `${graded} / ${progress.answers}` : "–",
+     progress.answers ? graded / progress.answers : null],
+    ["best fitness", fmt(bestFitness), bestFitness],
+    ["last step", progress.last_step ? `${progress.last_step.step} ${progress.last_step.generation || ""}` : "–", null],
+    ["live tokens", detail.live.length, null],
   ];
-  $("tiles").replaceChildren(...tiles.map(([name, value]) => el("div", { class: "tile" }, el("b", {}, value), el("span", {}, name))));
+  $("tiles").replaceChildren(...tiles.map(([name, value, fraction]) => el("div", { class: "tile" },
+    el("span", {}, name), el("b", { title: String(value) }, value),
+    fraction === null || fraction === undefined ? null
+      : el("div", { class: "meter" }, el("i", { style: `width: ${Math.max(0, Math.min(1, fraction)) * 100}%` })))));
 
-  const body = [];
-  if (job.error) body.push(el("p", { class: "msg " + (job.status === "done" ? "" : "err") }, job.error));
+  // Overview: what went wrong, the best individual, the search, the cost.
+  const overview = [];
+  if (job.error) overview.push(el("p", { class: "msg full " + (job.status === "done" ? "" : "err") }, job.error));
   if (results) {
-    if (results.best) {
-      body.push(el("h3", {}, "Best individual"),
-        el("p", { class: "mono" }, `#${results.best.number}  ${results.best.chromosome}  fitness ${fmt(results.best.fitness)}  rank ${results.best.rank}`));
-    }
-    if (results.fitness_history.length) body.push(el("h3", {}, "Fitness by generation"), chart(results.fitness_history));
-    body.push(el("h3", {}, "Population — click a row for its transcript"), populationTable(results.population, results.best && results.best.number));
-    body.push(el("div", { id: "transcript" }));
-    if (results.testing.summary.length) {
-      body.push(el("h3", {}, "Testing pass"),
-        el("div", { class: "scroll" }, el("table", {},
-          el("thead", {}, el("tr", {}, ["#", "chromosome", "training", "testing", "verdict"].map((h) => el("th", {}, h)))),
-          el("tbody", {}, results.testing.individuals.map((t) => el("tr", {},
-            el("td", {}, t.number), el("td", { class: "mono" }, t.chromosome),
-            el("td", {}, fmt(t.selected_on)), el("td", {}, fmt(t.quality)), el("td", {}, t.verdict)))))));
-    }
-    if (results.costs.length) {
-      body.push(el("h3", {}, "What it cost"),
-        el("p", { class: "muted" }, results.costs.map((c) => `${c.step} ${c.seconds.toFixed(1)}s`).join(" · ")));
-    }
+    if (results.best) overview.push(bestCard(results.best, job.status));
+    overview.push(el("div", { class: "card" },
+      el("div", { class: "card-head" }, el("h3", {}, "Fitness by generation"),
+        el("span", { class: "muted small" }, `${results.fitness_history.length} generation(s) scored`)),
+      results.fitness_history.length ? chart(results.fitness_history)
+        : el("p", { class: "empty" }, "No generation has been scored yet.")));
+    overview.push(el("div", { class: "card" },
+      el("div", { class: "card-head" }, el("h3", {}, "What it cost"),
+        results.costs.length ? el("span", { class: "muted small" },
+          seconds(results.costs.reduce((sum, c) => sum + c.seconds, 0)) + " in all") : null),
+      results.costs.length ? costBars(results.costs) : el("p", { class: "empty" }, "Nothing timed yet.")));
   } else {
-    body.push(el("p", { class: "muted" }, job.status === "deleted" ? "The run's results were deleted." : "No results yet."));
+    overview.push(el("div", { class: "card full" }, el("p", { class: "empty" },
+      job.status === "deleted" ? "The run's results were deleted." : "No results yet — they appear once the first generation is scored.")));
   }
-  body.push(el("h3", {}, "Log (last 40 lines)"), el("pre", { id: "log" }, "…"));
-  $("detailBody").replaceChildren(...body);
+  $("paneOverview").replaceChildren(el("div", { class: "overview" }, overview));
+
+  // Population: the table, and the transcript of whichever row was clicked.
+  const population = results ? results.population : [];
+  $("countPopulation").textContent = population.length || "";
+  $("panePopulation").replaceChildren(results
+    ? el("div", { class: "split" },
+        el("div", { class: "card" },
+          el("div", { class: "card-head" }, el("h3", {}, "Population"),
+            el("span", { class: "muted small" }, "click a row for its transcript")),
+          populationTable(population, results.best && results.best.number)),
+        el("div", { class: "card sticky", id: "transcript" },
+          el("p", { class: "empty" }, "Pick an individual to read what it answered and how each answer was graded.")))
+    : el("div", { class: "card" }, el("p", { class: "empty" }, "No population yet.")));
+  if (shownIndividual !== null && population.some((one) => one.number === shownIndividual)) showIndividual(shownIndividual, false);
+
+  // Testing: training quality beside testing quality, and the difference.
+  const tested = results ? results.testing.individuals : [];
+  $("countTesting").textContent = tested.length || "";
+  $("paneTesting").replaceChildren(tested.length
+    ? el("div", { class: "card" },
+        el("div", { class: "card-head" }, el("h3", {}, "Testing pass"),
+          el("span", { class: "muted small" }, "questions the search was never judged on")),
+        el("div", { class: "scroll" }, el("table", {},
+          el("thead", {}, el("tr", {},
+            el("th", {}, "#"), el("th", {}, "chromosome"), el("th", { class: "num" }, "training"),
+            el("th", { class: "num" }, "testing"), el("th", { class: "num" }, "Δ"), el("th", {}, "verdict"))),
+          el("tbody", {}, tested.map((t) => {
+            const delta = t.quality === null || t.selected_on === null ? null : t.quality - t.selected_on;
+            return el("tr", {},
+              el("td", {}, t.number), el("td", {}, chromo(t.chromosome)),
+              el("td", { class: "num" }, fmt(t.selected_on)), el("td", { class: "num" }, fmt(t.quality)),
+              el("td", { class: "num " + (delta === null ? "" : delta >= 0 ? "up" : "down") },
+                delta === null ? "–" : (delta >= 0 ? "+" : "") + fmt(delta)),
+              el("td", {}, t.verdict));
+          })))))
+    : el("div", { class: "card" }, el("p", { class: "empty" },
+        results && results.testing.summary.length ? "The testing pass tested nobody."
+          : "No testing pass has run. It runs last, when the job was given testing questions.")));
+
   refreshLog();
   loadVerifyForm();
+}
+
+function bestCard(best, status) {
+  return el("div", { class: "card full" },
+    el("div", { class: "hero" },
+      el("div", { style: "min-width: 0" },
+        el("h4", {}, `Best individual · #${best.number}`),
+        chromo(best.chromosome, true)),
+      el("div", { class: "hero-stats" },
+        el("div", {}, el("span", {}, "fitness"), el("b", {}, fmt(best.fitness))),
+        el("div", {}, el("span", {}, "rank"), el("b", {}, best.rank ?? "–"))),
+      el("div", { class: "actions", style: "margin: 0" },
+        el("button", { type: "button", onclick: () => { setTab("population"); showIndividual(best.number); } }, "Read its answers"),
+        status === "done" ? el("button", { type: "button", class: "primary", onclick: () => goLive(best.number) }, "Set live") : null)));
+}
+
+function costBars(costs) {
+  const top = Math.max(...costs.map((c) => c.seconds), 1e-9);
+  return el("div", { class: "bars" }, costs.slice().sort((a, b) => b.seconds - a.seconds).map((c) =>
+    el("div", { class: "bar-row", title: `${c.step}: ${c.seconds.toFixed(2)}s` },
+      el("span", { class: "name" }, c.step),
+      el("span", { class: "track" }, el("i", { style: `width: ${Math.max(0.5, c.seconds / top * 100)}%` })),
+      el("span", { class: "value" }, seconds(c.seconds)))));
 }
 
 async function refreshLog() {
@@ -1042,66 +1520,82 @@ async function refreshLog() {
 
 function populationTable(population, bestNumber) {
   return el("div", { class: "scroll" }, el("table", {},
-    el("thead", {}, el("tr", {}, ["#", "chromosome", "state", "rank", "fitness", "answers", ""].map((h) => el("th", {}, h)))),
-    el("tbody", {}, population.map((one) => el("tr", { class: "click", onclick: () => showIndividual(one.number) },
-      el("td", {}, one.number), el("td", { class: "mono" }, one.chromosome),
-      el("td", {}, one.state || "–"), el("td", {}, one.rank ?? "–"),
-      el("td", {}, fmt(one.fitness)), el("td", {}, one.answers),
-      el("td", {}, one.number === bestNumber ? pill("best") : "",
+    el("thead", {}, el("tr", {},
+      el("th", {}, "#"), el("th", {}, "chromosome"), el("th", {}, "state"), el("th", { class: "num" }, "rank"),
+      el("th", { class: "num" }, "fitness"), el("th", { class: "num" }, "answers"), el("th", {}))),
+    el("tbody", {}, population.map((one) => el("tr", {
+        class: "click" + (one.number === shownIndividual ? " selected" : ""), "data-number": one.number,
+        onclick: () => showIndividual(one.number) },
+      el("td", {}, one.number), el("td", {}, chromo(one.chromosome)),
+      el("td", {}, one.state || "–"), el("td", { class: "num" }, one.rank ?? "–"),
+      el("td", { class: "num" }, fmt(one.fitness)), el("td", { class: "num" }, one.answers),
+      el("td", { class: "end" }, one.number === bestNumber ? pill("best") : "",
         one.state === "ok" && lastStatus === "done"
-          ? el("button", { onclick: (event) => { event.stopPropagation(); goLive(one.number); } }, "Set live")
+          ? el("button", { class: "sm", style: "margin-left: 6px",
+                           onclick: (event) => { event.stopPropagation(); goLive(one.number); } }, "Set live")
           : null))))));
 }
 
-async function showIndividual(number) {
+async function showIndividual(number, scroll = true) {
   const target = $("transcript");
+  if (!target) return;
+  shownIndividual = number;
+  for (const row of document.querySelectorAll("#panePopulation tr[data-number]")) {
+    row.classList.toggle("selected", Number(row.dataset.number) === number);
+  }
   try {
     const { individual } = await api("GET", `/jobs/${selected}/individuals/${number}`);
     const exchanges = individual.execution ? individual.execution.exchanges : [];
     target.replaceChildren(...[
-      el("h3", {}, `Individual #${number} — ${individual.chromosome}`),
-      individual.tree ? el("pre", {}, individual.tree) : null,
-      exchanges.length ? null : el("p", { class: "muted" }, "Never ran."),
+      el("h4", {}, `Individual #${number}`),
+      chromo(individual.chromosome, true),
+      individual.tree ? el("pre", { style: "margin-top: 12px" }, individual.tree) : null,
+      exchanges.length ? null : el("p", { class: "empty" }, "Never ran."),
       ...exchanges.map((x) => el("div", { class: "q" },
-        el("div", {}, el("b", {}, "Q: "), x.question),
-        el("div", {}, el("b", {}, "A: "), x.answer || el("span", { class: "muted" }, "(empty)")),
-        el("div", { class: "muted" }, `quality ${fmt(x.quality, 2)} — ${x.reason || ""}`)))].filter(Boolean));
-    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        el("div", { class: "ask" }, x.question),
+        el("div", { class: "reply" }, x.answer || el("span", { class: "muted" }, "(empty)")),
+        el("div", { class: "grade" },
+          el("span", { class: "score " + scoreClass(x.quality) }, fmt(x.quality, 2)),
+          el("span", {}, x.reason || ""))))].filter(Boolean));
+    if (scroll) target.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (error) {
     target.replaceChildren(el("p", { class: "msg err" }, error.message));
   }
 }
 
 function chart(history) {
-  const W = 520, H = 150, P = 26;
+  const W = 720, H = 230, L = 34, R = 14, T = 12, B = 28;
   const n = history.length;
-  const x = (i) => P + (n === 1 ? (W - 2 * P) / 2 : i * (W - 2 * P) / (n - 1));
-  const y = (v) => H - P - (v ?? 0) * (H - 2 * P);
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  svg.setAttribute("style", "width: 100%; max-width: 520px; height: auto; display: block");
-  const add = (tag, attrs, text) => {
-    const node = document.createElementNS(ns, tag);
-    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
-    if (text !== undefined) node.textContent = text;
-    svg.append(node);
-  };
-  for (const v of [0, 0.5, 1]) {
-    add("line", { x1: P, x2: W - P, y1: y(v), y2: y(v), stroke: "var(--line)" });
-    add("text", { x: 4, y: y(v) + 3 }, v.toFixed(1));
+  const x = (i) => L + (n === 1 ? (W - L - R) / 2 : i * (W - L - R) / (n - 1));
+  const y = (v) => T + (1 - (v ?? 0)) * (H - T - B);
+  const { svg, add } = drawing(W, H);
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+    add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: "var(--line)",
+                  "stroke-dasharray": v === 0 ? "" : "3 4" });
+    add("text", { x: L - 8, y: y(v) + 3, "text-anchor": "end" }, v.toFixed(2));
   }
-  for (const [field, color, width] of [["worst", "var(--worst)", 2], ["mean", "var(--mean)", 2], ["best", "var(--best)", 3]]) {
-    add("polyline", { fill: "none", stroke: color, "stroke-width": width,
-                      points: history.map((g, i) => `${x(i)},${y(g[field])}`).join(" ") });
-    history.forEach((g, i) => add("circle", { cx: x(i), cy: y(g[field]), r: 3, fill: color }));
-  }
-  history.forEach((g, i) => add("text", { x: x(i) - 3, y: H - 8 }, g.generation));
+  // The spread of the population, best to worst, as a band behind the lines.
+  const band = history.map((g, i) => `${x(i)},${y(g.best)}`)
+    .concat(history.map((g, i) => `${x(i)},${y(g.worst)}`).reverse()).join(" ");
+  add("polygon", { points: band, fill: "var(--accent)", "fill-opacity": 0.08 });
+  const line = (field) => history.map((g, i) => `${x(i)},${y(g[field])}`).join(" ");
+  add("polyline", { fill: "none", stroke: "var(--worst)", "stroke-width": 1.5, points: line("worst") });
+  add("polyline", { fill: "none", stroke: "var(--mean)", "stroke-width": 1.5, "stroke-dasharray": "5 4", points: line("mean") });
+  add("polyline", { fill: "none", stroke: "var(--best)", "stroke-width": 2.5, "stroke-linejoin": "round", points: line("best") });
+  const every = Math.ceil(n / 14);
+  history.forEach((g, i) => {
+    if (n <= 60) {
+      add("circle", { cx: x(i), cy: y(g.best), r: 3.5, fill: "var(--panel)", stroke: "var(--best)", "stroke-width": 2 })
+        .append(hint(`generation ${g.generation}\nbest ${fmt(g.best)} · mean ${fmt(g.mean)} · worst ${fmt(g.worst)}`));
+    }
+    if (i % every === 0 || i === n - 1) add("text", { x: x(i), y: H - 10, "text-anchor": "middle" }, g.generation);
+  });
   return el("div", {}, svg,
     el("div", { class: "legend" },
-      el("span", {}, el("i", { style: "background: var(--best)" }), "best"),
-      el("span", {}, el("i", { style: "background: var(--mean)" }), "mean"),
-      el("span", {}, el("i", { style: "background: var(--worst)" }), "worst")));
+      el("span", {}, el("i", { class: "line", style: "background: var(--best)" }), "best"),
+      el("span", {}, el("i", { class: "line", style: "background: var(--mean)" }), "mean"),
+      el("span", {}, el("i", { class: "line", style: "background: var(--worst)" }), "worst"),
+      el("span", {}, el("i", { style: "background: color-mix(in srgb, var(--accent) 15%, transparent)" }), "spread")));
 }
 
 // --- verification -------------------------------------------------------------
@@ -1112,15 +1606,15 @@ function chart(history) {
 
 async function loadVerifyForm() {
   if (selected === null) return;
-  const section = $("verifySection");
   try {
     verifyForm = await api("GET", `/jobs/${selected}/verify`);
   } catch (_) {
     verifyForm = null;
-    section.hidden = true;
+    verifyAvailable(false);
     return;
   }
-  section.hidden = false;
+  verifyAvailable(true);
+  $("countVerify").textContent = verifyForm.verifications.length || "";
   const blends = verifyForm.individuals.filter((one) => one.state !== "BAD");
   const keep = $("vBlend").value;
   $("vBlend").replaceChildren(...blends.map((one) => el("option", { value: one.number },
@@ -1199,10 +1693,10 @@ function drawVerifications() {
   const rows = (verifyForm && verifyForm.verifications) || [];
   $("vList").replaceChildren(...(rows.length ? rows.map((row) => {
     const options = row.options || {};
-    return el("tr", { class: "click" + (row.id === verifyShown ? " selected" : ""),
+    return el("tr", { class: "click" + (row.id === verifyShown ? " selected" : ""), "data-id": row.id,
                       onclick: () => showVerification(row.id) },
       el("td", {}, row.id),
-      el("td", { class: "mono" }, `#${row.number} ${row.chromosome}`),
+      el("td", {}, el("span", { class: "muted" }, `#${row.number} `), chromo(row.chromosome)),
       el("td", {}, (options.slots || []).join(", ")),
       el("td", {}, options.evaluator || "–", options.judge_model ? el("div", { class: "muted" }, options.judge_model) : null),
       el("td", {}, pill(row.status), row.error ? el("div", { class: "muted" }, row.error) : null),
@@ -1218,7 +1712,7 @@ function drawVerifications() {
 
 async function showVerification(id) {
   verifyShown = id;
-  for (const row of $("vList").children) row.className = "click";
+  for (const row of $("vList").children) row.classList.toggle("selected", Number(row.dataset.id) === id);
   let reply = null;
   try {
     reply = await api("GET", `/verifications/${id}`);
@@ -1228,12 +1722,12 @@ async function showVerification(id) {
   }
   const one = reply.verification;
   const report = one.report;
-  const body = [el("h3", {}, `Verification ${id} — #${one.number} ${one.chromosome} `, pill(one.status))];
+  const body = [el("h3", {}, `Verification ${id} · #${one.number}`, chromo(one.chromosome), pill(one.status))];
   if (one.error) body.push(el("p", { class: "msg err" }, one.error));
   if (!report) {
     body.push(el("p", { class: "muted" }, one.status === "done"
       ? "It left no scores." : "No scores yet — it is " + one.status + "."));
-    body.push(el("pre", { id: "vlog" }, "…"));
+    body.push(el("pre", { id: "vlog", class: "log" }, "…"));
     $("vReport").replaceChildren(...body);
     refreshVerifyLog(id);
     return;
@@ -1248,15 +1742,15 @@ async function showVerification(id) {
   body.push(el("p", { class: "muted" },
     `${meta.questions} question(s) from the ${meta.split || "given"} split, graded by ` +
     `${meta.evaluator} (${meta.judge}). Training quality was ${fmt(meta.training_quality)}.`));
+  body.push(verdict(report));
   body.push(el("div", { class: "vgrid" },
     el("div", { class: "vcard" }, el("h4", {}, "Mean quality — the blend against each LoRA alone"),
       meansChart(report)),
     el("div", { class: "vcard" }, el("h4", {}, "Question by question: did the blend win?"),
       winsChart(report)),
-    el("div", { class: "vcard" }, el("h4", {}, "Per question, blend minus one LoRA"),
-      adapterPicker(report), deltaChart(report)),
-    el("div", { class: "vcard" }, el("h4", {}, "The numbers"), summaryTable(report))));
-  body.push(verdict(report));
+    el("div", { class: "vcard" }, el("h4", {}, "Per question, blend minus one LoRA", adapterPicker(report)),
+      deltaChart(report)),
+    el("div", { class: "vcard wide" }, el("h4", {}, "The numbers"), summaryTable(report))));
   $("vReport").replaceChildren(...body);
 }
 
@@ -1278,6 +1772,7 @@ function drawing(width, height) {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("class", "chart");
   svg.setAttribute("style", "width: 100%; height: auto; display: block");
   const add = (tag, attrs, text) => {
     const node = document.createElementNS(ns, tag);
@@ -1556,7 +2051,7 @@ async function refreshLive() {
     const { live } = await api("GET", "/live");
     $("live").replaceChildren(...(live.length ? live.map((d) => el("tr", {},
       el("td", {}, d.id), el("td", {}, d.job_id), el("td", {}, "#" + d.individual),
-      el("td", { class: "mono" }, d.chromosome), el("td", {}, d.engine),
+      el("td", {}, chromo(d.chromosome)), el("td", {}, d.engine),
       el("td", { class: "muted" }, d.created_at.replace("T", " ")),
       el("td", {}, el("button", { class: "danger", onclick: () => act("Unset", "DELETE", `/live/${d.id}`) }, "Unset"))))
       : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Nothing is live."))]));
@@ -1567,7 +2062,7 @@ async function ask() {
   const answer = $("answer");
   const sse = $("format").value === "sse";
   remember("token", $("token").value.trim());
-  answer.className = "answer";
+  answer.className = "answer streaming";
   answer.textContent = "";
   $("ask").disabled = true;
   const started = performance.now();
@@ -1612,6 +2107,7 @@ async function ask() {
         if (data.text) { answer.textContent += data.text; chars += data.text.length; }
       }
     }
+    answer.className = "answer";
     const total = (performance.now() - started) / 1000;
     $("inferStats").textContent = `first chunk ${((first ?? 0) / 1000).toFixed(2)}s · total ${total.toFixed(2)}s · ${chars} chars`;
   } catch (error) {
@@ -1655,7 +2151,7 @@ $("aDeleteRun").addEventListener("click", () => {
 });
 $("aDeleteJob").addEventListener("click", () => {
   if (confirm(`Delete job ${selected} and all its files?`))
-    act("Delete job", "DELETE", `/jobs/${selected}`, () => { selected = null; $("detailSection").hidden = true; });
+    act("Delete job", "DELETE", `/jobs/${selected}`, forgetJob);
 });
 $("aRefresh").addEventListener("click", drawDetail);
 $("aDownload").addEventListener("click", downloadDatabase);
@@ -1679,6 +2175,16 @@ const evalPicker = modelPicker($("eModel"), {
   watch: [$("eUrl"), $("eBackend")],
 });
 $("eModelBox").append(evalPicker.wrap);
+
+for (const button of document.querySelectorAll(".viewnav [data-view]")) {
+  button.addEventListener("click", () => setView(button.dataset.view));
+}
+$("newJob").addEventListener("click", () => setView("new"));
+for (const button of document.querySelectorAll(".tabs [data-tab]")) {
+  button.addEventListener("click", () => setTab(button.dataset.tab));
+}
+setView("new");
+setTab("overview");
 
 $("key").value = recall("key");
 $("token").value = recall("token");
