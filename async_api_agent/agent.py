@@ -13,19 +13,33 @@ so a provider that is down, has no key or is set to "scripted" changes how a
 step is phrased and nothing else. The note says which it was, and the page
 shows it under the message.
 
+The chat box is the one step that *does* things: `chat()` gives the model
+the tools in tools.py and runs what it calls -- a few rounds at most -- then
+lets it say what happened. With no model that can take tools, commands.py
+reads the plain requests people make most into the same calls, so "only the
+first 20, rank 32" works either way. What the tools changed goes back to the
+page as a session and a list of actions, which the page carries out through
+the API.
+
 Nothing here keeps state between calls. The page holds the conversation and
-sends back what a step needs; the dataset is re-read rather than remembered,
-which costs milliseconds and means a server restart loses nothing.
+the session and sends back what a step needs; the dataset is re-read rather
+than remembered, which costs milliseconds and means a server restart loses
+nothing.
 """
 
 import json
-import re
 
 from adapters import catalog as lora_catalog
+from async_api_agent import commands
 from async_api_agent import planner
 from async_api_agent import prompts
 from async_api_agent import providers
 from async_api_agent import settings
+from async_api_agent import tools
+
+# The most rounds of tool calls one chat message may take before the agent
+# stops asking and reports what was done.
+MAX_ROUNDS = 6
 
 
 def _bullets(lines):
@@ -119,57 +133,22 @@ def recommend(options):
     return None
 
 
-def wait(catalog, records, choice=None, mock=False, history=None):
-    options = planner.choices(catalog, records, mock)
+def wait(catalog, records, choice=None, mock=False, history=None, session=None, quiet=False):
+    """The wait question and its options. `quiet` gives the options alone,
+    for a page redrawing them after the plan changed."""
+    options = planner.choices(catalog, records, mock, session)
     recommended = recommend(options)
-    facts = {"loras": len(settings.LORA_RANKS), "records": records,
+    loras = options[0]["estimate"]["loras"]
+    if quiet:
+        return {"message": None, "choices": options,
+                "recommended": recommended["id"] if recommended else None}
+    facts = {"loras": loras, "records": records,
              "choices": [{"id": one["id"], "label": one["label"], "epochs": one["epochs"],
                           "time": one["time"]} for one in options],
              "recommended": recommended, "estimate_source": options[0]["estimate"]["source"]}
-    fallback = prompts.FALLBACK_WAIT.format(loras=len(settings.LORA_RANKS))
+    fallback = prompts.FALLBACK_WAIT.format(loras=loras)
     return {"message": say("wait", facts, fallback, choice, history), "choices": options,
             "recommended": recommended["id"] if recommended else None}
-
-
-_JSON = re.compile(r"\{.*\}", re.DOTALL)
-
-
-def interpret(catalog, records, text, choice=None, mock=False):
-    """A typed wait as epochs: the model's reading, checked, else the rules'.
-    -> {epochs or None, how, estimate, message}."""
-    one = planner.estimate(catalog, records, 1, mock)
-    per_epoch = one["seconds_per_epoch"]
-    overhead = one["overhead_seconds"] * one["loras"]
-    epochs, how = None, None
-    try:
-        resolved = providers.resolve(choice)
-        if resolved["kind"] != "scripted":
-            facts = {"seconds_per_epoch": per_epoch, "overhead_seconds": overhead,
-                     "min_epochs": settings.MIN_EPOCHS, "max_epochs": settings.MAX_EPOCHS,
-                     "choices": [{"label": c["label"], "epochs": c["epochs"]}
-                                 for c in settings.WAIT_CHOICES]}
-            reply, _ = providers.chat(resolved, prompts.system("wait_interpret"), [
-                {"role": "user", "content": "FACTS:\n%s\n\nTheir answer:\n%s"
-                 % (json.dumps(facts), text)}])
-            found = _JSON.search(reply)
-            parsed = json.loads(found.group(0)) if found else {}
-            value = parsed.get("epochs")
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
-                epochs, how = planner.clamp(value), (parsed.get("reason") or "").strip() or None
-    except (providers.ProviderError, ValueError, AttributeError):
-        pass
-    if epochs is None:
-        epochs, how = planner.read_wait(text, per_epoch, overhead)
-    if epochs is None:
-        return {"epochs": None, "how": how, "estimate": None,
-                "message": {"text": prompts.FALLBACK_WAIT_UNCLEAR, "by": "built-in wording",
-                            "fallback": True, "note": None}}
-    found = planner.estimate(catalog, records, epochs, mock)
-    return {"epochs": epochs, "how": how, "estimate": found,
-            "message": {"text": prompts.FALLBACK_WAIT_UNDERSTOOD.format(epochs=epochs,
-                                                                        time=found["time"]),
-                        "by": "built-in wording", "fallback": False,
-                        "note": "How I read it: %s." % how.rstrip(".") if how else None}}
 
 
 def confirm(trainings, estimate, mock=False):
@@ -197,11 +176,74 @@ def started(trainings, epochs, estimate, mock=False, choice=None, history=None):
     return say("start", facts, fallback, choice, history)
 
 
-def chat(message, stage, context=None, choice=None, history=None):
+def _summary(box):
+    """What the tools did, as the fallback says it."""
+    done = [step["summary"] for step in box.steps if step["ok"]]
+    failed = [step["summary"] for step in box.steps if not step["ok"]]
+    parts = []
+    if done:
+        parts.append(prompts.FALLBACK_TOOLS.format(lines=_bullets(done)))
+    if failed:
+        parts.append(prompts.FALLBACK_TOOLS_FAILED.format(lines=_bullets(failed)))
+    return "\n\n".join(parts)
+
+
+def chat(catalog, user, message, stage, session=None, dataset=None, context=None,
+         choice=None, history=None, shared_datasets=None):
+    """A typed message: answered, and acted on with the tools.
+
+    -> {message, session, actions, steps, preview, analysis} -- the reply,
+    and what the page must now do (Toolbox.outcome()).
+    """
+    box = tools.Toolbox(catalog, user, stage, session, dataset, shared_datasets)
     instructions = prompts.STEP_INSTRUCTIONS.get(stage, "")
-    facts = {"stage": stage, "step_instructions": instructions, "context": context or {}}
-    fallback = prompts.FALLBACK_CHAT.format(instructions=instructions)
-    return say("chat", facts, fallback, choice, history, message)
+    facts = {"stage": stage, "step_instructions": instructions, "session": box.session,
+             "dataset_given": bool(dataset), "context": context or {}}
+    history = list(history or [])[-settings.HISTORY_TURNS:]
+    note, reason = None, None
+    try:
+        resolved = providers.resolve(choice)
+        if resolved["kind"] == "scripted":
+            raise providers.ProviderError(None)
+        exchange = [{"role": "user", "content": "FACTS:\n%s\n\nThe person wrote:\n%s" % (
+            json.dumps(facts, indent=1, ensure_ascii=False, default=str), message)}]
+        text, model = "", None
+        for _ in range(MAX_ROUNDS):
+            reply = providers.converse(resolved, prompts.system("chat"), history, exchange,
+                                       tools.schemas())
+            text, model = reply["text"], reply["model"]
+            if not reply["calls"]:
+                break
+            exchange.append({"role": "assistant", "content": text, "calls": reply["calls"],
+                             "raw": reply["raw"]})
+            for call in reply["calls"]:
+                result = box.run(call["name"], call["arguments"])
+                exchange.append({"role": "tool", "id": call["id"], "name": call["name"],
+                                 "content": json.dumps(result, ensure_ascii=False,
+                                                       default=str)[:8000]})
+        else:
+            text = ""                       # still calling tools: report what they did
+        spoken = {"text": text or _summary(box) or prompts.FALLBACK_CHAT.format(
+                      instructions=instructions),
+                  "by": "%s \u00b7 %s" % (resolved["label"], model), "fallback": False,
+                  "note": None}
+        return dict(box.outcome(), message=spoken)
+    except providers.ProviderError as error:
+        reason = error.args[0] if error.args else None
+    note = prompts.FALLBACK_NOTE.format(reason=reason) if reason else None
+    if box.steps:
+        # The model failed part way: what already ran stands, and is reported.
+        spoken = {"text": _summary(box), "by": "built-in wording", "fallback": True, "note": note}
+        return dict(box.outcome(), message=spoken)
+    demos = [one["file"] for one in (shared_datasets() if shared_datasets else [])]
+    for name, arguments in commands.parse(message, stage, demos):
+        box.run(name, arguments)
+    if box.steps:
+        spoken = {"text": _summary(box), "by": "built-in wording", "fallback": True, "note": note}
+    else:
+        fallback = prompts.FALLBACK_CHAT.format(instructions=instructions)
+        spoken = say("chat", facts, fallback, choice, history, message)
+    return dict(box.outcome(), message=spoken)
 
 
 def debrief(catalog, user, lora_ids, choice=None, history=None, mock=False):

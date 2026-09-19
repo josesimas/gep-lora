@@ -12,8 +12,9 @@ any Python 3, and a provider is two HTTP shapes, not an SDK each.
     "scripted"   no call at all; the agent's fallback wording answers
 
 `resolve()` turns what the page asked for ({provider, model, base_url}) into
-everything a call needs, `chat()` makes one, and `list_models()` is what the
-page's model box offers. Anything that goes wrong is a ProviderError whose
+everything a call needs, `chat()` makes one, `converse()` makes one that may
+call tools (the chat box's, tools.py), and `list_models()` is what the page's
+model box offers. Anything that goes wrong is a ProviderError whose
 text says what and where, which the agent turns into a fallback and a note.
 """
 
@@ -188,11 +189,81 @@ def chat(resolved, system, messages):
         raise ProviderError("nothing to send")
     model = model_for(resolved)
     if resolved["kind"] == "anthropic":
-        return _anthropic(resolved, model, system, turns), model
-    return _openai(resolved, model, system, turns), model
+        reply = _anthropic_post(resolved, model, system, turns)
+    else:
+        reply = _openai_post(resolved, model, system, turns)
+    if not reply["text"]:
+        raise ProviderError("%s replied with nothing (a reasoning model out of tokens?)" % model)
+    return reply["text"], model
 
 
-def _openai(resolved, model, system, turns):
+def converse(resolved, system, history, exchange, tools):
+    """One turn of a conversation that may call tools. -> {text, calls, raw,
+    model}; `calls` is [{id, name, arguments}] and empty when the model is
+    done. Raises ProviderError.
+
+    `history` is the plain conversation so far ([{role, content}]).
+    `exchange` is this message's own turns, provider-neutral: the user's
+    message, then per round the assistant's reply ({"role": "assistant",
+    "content", "calls", "raw"}) and a {"role": "tool", "id", "name",
+    "content"} per call it made -- each provider's shape is made from these
+    here, so the agent's loop is written once. `tools` is [(name,
+    description, JSON schema)].
+    """
+    if resolved["kind"] == "scripted":
+        raise ProviderError("no model is configured")
+    turns = _turns(list(history or []) + exchange[:1])
+    if not turns:
+        raise ProviderError("nothing to send")
+    model = model_for(resolved)
+    if resolved["kind"] == "anthropic":
+        messages = turns + _anthropic_rest(exchange[1:])
+        spec = [{"name": name, "description": about, "input_schema": schema}
+                for name, about, schema in tools]
+        reply = _anthropic_post(resolved, model, system, messages, spec)
+    else:
+        messages = turns + _openai_rest(exchange[1:])
+        spec = [{"type": "function",
+                 "function": {"name": name, "description": about, "parameters": schema}}
+                for name, about, schema in tools]
+        reply = _openai_post(resolved, model, system, messages, spec)
+    reply["model"] = model
+    return reply
+
+
+def _openai_rest(exchange):
+    out = []
+    for turn in exchange:
+        if turn["role"] == "assistant":
+            out.append({"role": "assistant", "content": turn.get("content") or "",
+                        "tool_calls": [{"id": call["id"], "type": "function",
+                                        "function": {"name": call["name"],
+                                                     "arguments": json.dumps(call["arguments"])}}
+                                       for call in turn.get("calls") or []]})
+        elif turn["role"] == "tool":
+            out.append({"role": "tool", "tool_call_id": turn["id"], "name": turn["name"],
+                        "content": turn["content"]})
+    return out
+
+
+def _anthropic_rest(exchange):
+    """Anthropic's shape: the assistant's content blocks exactly as they came
+    (thinking included -- they must go back unchanged), then one user turn
+    holding a tool_result per call."""
+    out = []
+    for turn in exchange:
+        if turn["role"] == "assistant":
+            out.append({"role": "assistant", "content": turn.get("raw") or turn.get("content")})
+        elif turn["role"] == "tool":
+            result = {"type": "tool_result", "tool_use_id": turn["id"], "content": turn["content"]}
+            if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list):
+                out[-1]["content"].append(result)
+            else:
+                out.append({"role": "user", "content": [result]})
+    return out
+
+
+def _openai_post(resolved, model, system, turns, tools=None):
     payload = {"model": model, "messages": [{"role": "system", "content": system}] + turns}
     # OpenAI's own reasoning models take max_completion_tokens and refuse
     # max_tokens; every other server here takes max_tokens.
@@ -200,20 +271,32 @@ def _openai(resolved, model, system, turns):
         settings.MAX_TOKENS
     if resolved["temperature"]:
         payload["temperature"] = settings.TEMPERATURE
+    if tools:
+        payload["tools"] = tools
     reply = _request(resolved["base_url"] + "/chat/completions", payload, _headers(resolved))
     try:
-        text = reply["choices"][0]["message"].get("content") or ""
+        message = reply["choices"][0]["message"]
+        text = message.get("content") or ""
     except (KeyError, IndexError, TypeError, AttributeError):
         raise ProviderError("%s sent a reply with no message in it" % resolved["base_url"])
-    text = _THINKING.sub("", text).strip()
-    if not text:
-        raise ProviderError("%s replied with nothing (a reasoning model out of tokens?)" % model)
-    return text
+    calls = []
+    for number, call in enumerate(message.get("tool_calls") or [], 1):
+        function = call.get("function") or {}
+        raw = function.get("arguments") or "{}"
+        try:
+            arguments = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        except (ValueError, TypeError):
+            arguments = {"__unreadable__": str(raw)[:200]}
+        calls.append({"id": call.get("id") or "call_%d" % number,
+                      "name": function.get("name") or "", "arguments": arguments})
+    return {"text": _THINKING.sub("", text).strip(), "calls": calls, "raw": None}
 
 
-def _anthropic(resolved, model, system, turns):
+def _anthropic_post(resolved, model, system, messages, tools=None):
     payload = {"model": model, "max_tokens": settings.ANTHROPIC_MAX_TOKENS,
-               "system": system, "messages": turns}
+               "system": system, "messages": messages}
+    if tools:
+        payload["tools"] = tools
     if settings.ANTHROPIC_EFFORT:
         payload["output_config"] = {"effort": settings.ANTHROPIC_EFFORT}
     url = resolved["base_url"] + "/messages"
@@ -228,9 +311,10 @@ def _anthropic(resolved, model, system, turns):
         reply = _request(url, payload, _headers(resolved))
     if reply.get("stop_reason") == "refusal":
         raise ProviderError("%s declined to answer" % model)
+    blocks = [block for block in reply.get("content") or [] if isinstance(block, dict)]
     # Thinking blocks come first on the newest models; only text is the reply.
-    text = "".join(block.get("text", "") for block in reply.get("content") or []
-                   if isinstance(block, dict) and block.get("type") == "text").strip()
-    if not text:
-        raise ProviderError("%s replied with no text" % model)
-    return text
+    text = "".join(block.get("text", "") for block in blocks if block.get("type") == "text")
+    calls = [{"id": block.get("id"), "name": block.get("name"),
+              "arguments": block.get("input") or {}}
+             for block in blocks if block.get("type") == "tool_use"]
+    return {"text": text.strip(), "calls": calls, "raw": blocks}

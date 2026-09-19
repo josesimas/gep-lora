@@ -80,9 +80,11 @@ Other
 The LoRA agent (async_api_agent/routes.py)
     GET    /agent                          the agent page: a guide that trains LoRAs
     GET    /agent/config, /agent/models    its providers, plan and demo datasets
-    POST   /agent/{intro,analyse,wait,interpret,plan,started,chat,debrief}
+    POST   /agent/{intro,analyse,wait,plan,started,debrief}
                                            one step of the conversation each; the
                                            page trains through POST /loras above
+    POST   /agent/chat                     a typed message, answered and acted on with
+                                           the agent's tools
 """
 
 import argparse

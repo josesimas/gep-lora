@@ -11,18 +11,23 @@ App and the user, like an App method, and returns (status, payload).
     GET  /agent/models?provider=    the chat models a provider lists
          [&base_url=]
     POST /agent/intro               {agent, mock}             -> the welcome
-    POST /agent/analyse             {agent, dataset}          -> facts + summary
-    POST /agent/wait                {agent, records, mock}    -> the question, choices
-    POST /agent/interpret           {agent, records, text, mock} -> epochs, or not
-    POST /agent/plan                {dataset, epochs, mock}   -> POST /loras bodies
+    POST /agent/analyse             {agent, dataset, session?} -> facts + summary
+    POST /agent/wait                {agent, records, mock, session?, quiet?}
+                                                              -> the question, choices
+    POST /agent/plan                {dataset, epochs, mock, session?}
+                                                              -> POST /loras bodies
     POST /agent/started             {agent, trainings, epochs, estimate, mock}
-    POST /agent/chat                {agent, message, stage, context, history}
+    POST /agent/chat                {agent, message, stage, session, dataset?,
+                                     context, history}        -> the reply, and what the
+                                                                 tools changed
     POST /agent/debrief             {agent, loras: [id], mock, history}
 
 `agent` is the page's choice of model -- {"provider", "model", "base_url"} --
-and `dataset` is {"text", "name"} for pasted or uploaded data, or {"file"}
-for one of the shared datasets. None of these trains anything: the page sends
-the plan to POST /loras itself.
+`dataset` is {"text", "name"} for pasted or uploaded data, or {"file"} for
+one of the shared datasets, and `session` is what the chat has set up so far
+(planner.session_of): the part of the dataset in use, the ranks, the epochs,
+the options. None of these trains anything: the page sends the plan to
+POST /loras itself, and carries out the actions a chat reply hands back.
 """
 
 import os
@@ -80,12 +85,19 @@ def dataset_of(body):
     return text, name, None
 
 
-def _analysed(body):
+def _analysed(body, selection=None):
     text, name, shared = dataset_of(body)
     try:
-        return analysis.analyse(text, name), shared
+        return analysis.analyse(text, name, selection), shared
     except analysis.DatasetError as error:
         raise AgentError(400, "I could not read that dataset: %s" % error)
+
+
+def _session(body):
+    try:
+        return planner.session_of((body or {}).get("session"))
+    except planner.SessionError as error:
+        raise AgentError(400, "session: %s" % error)
 
 
 def _choice(body):
@@ -158,7 +170,7 @@ def config(app, user):
                  "words": {"instructions": prompts.STEP_INSTRUCTIONS,
                            "not_yet": prompts.NOT_YET, "ask_dataset": prompts.ASK_DATASET,
                            "another_dataset": prompts.ANOTHER_DATASET,
-                           "stopped": prompts.STOPPED}}
+                           "stopped": prompts.STOPPED, "chat_hint": prompts.CHAT_HINT}}
 
 
 def models(app, user, query):
@@ -178,7 +190,7 @@ def intro(app, user, body):
 
 
 def analyse(app, user, body):
-    found, shared = _analysed(body)
+    found, shared = _analysed(body, _session(body)["selection"])
     message = agent.summarise(found, _choice(body))
     found.pop("lines")
     return 200, {"analysis": found, "shared_file": shared, "message": message}
@@ -186,24 +198,18 @@ def analyse(app, user, body):
 
 def wait(app, user, body):
     return 200, agent.wait(app.catalog, _records(body), _choice(body),
-                           bool((body or {}).get("mock")), _history(body))
-
-
-def interpret(app, user, body):
-    text = (body or {}).get("text")
-    if not isinstance(text, str) or not text.strip():
-        raise AgentError(400, "text must say how long you can wait")
-    return 200, agent.interpret(app.catalog, _records(body), text.strip()[:500],
-                                _choice(body), bool((body or {}).get("mock")))
+                           bool((body or {}).get("mock")), _history(body), _session(body),
+                           bool((body or {}).get("quiet")))
 
 
 def plan(app, user, body):
-    found, shared = _analysed(body)
+    session = _session(body)
+    found, shared = _analysed(body, session["selection"])
     if not found["usable"]:
         raise AgentError(400, "that dataset has no conversations to train on")
     epochs, mock = _epochs(body), bool((body or {}).get("mock"))
-    trainings = planner.plan(app.catalog, user, found, epochs, mock, shared)
-    estimate = planner.estimate(app.catalog, found["records"], epochs, mock)
+    trainings = planner.plan(app.catalog, user, found, epochs, mock, shared, session)
+    estimate = planner.estimate(app.catalog, found["records"], epochs, mock, session=session)
     return 200, {"trainings": trainings, "estimate": estimate, "epochs": epochs,
                  "message": agent.confirm(trainings, estimate, mock)}
 
@@ -224,9 +230,12 @@ def chat(app, user, body):
     if not isinstance(message, str) or not message.strip():
         raise AgentError(400, "message must be what you want to ask")
     context = (body or {}).get("context")
-    return 200, {"message": agent.chat(message.strip()[:4000], str((body or {}).get("stage") or ""),
-                                       context if isinstance(context, dict) else None,
-                                       _choice(body), _history(body))}
+    session = _session(body)
+    dataset = dataset_of(body) if (body or {}).get("dataset") else None
+    return 200, agent.chat(app.catalog, user, message.strip()[:4000],
+                           str((body or {}).get("stage") or ""), session, dataset,
+                           context if isinstance(context, dict) else None,
+                           _choice(body), _history(body), demo_datasets)
 
 
 def debrief(app, user, body):
@@ -245,7 +254,6 @@ ROUTES = [
     ("POST", r"/agent/intro", intro, ("body",)),
     ("POST", r"/agent/analyse", analyse, ("body",)),
     ("POST", r"/agent/wait", wait, ("body",)),
-    ("POST", r"/agent/interpret", interpret, ("body",)),
     ("POST", r"/agent/plan", plan, ("body",)),
     ("POST", r"/agent/started", started, ("body",)),
     ("POST", r"/agent/chat", chat, ("body",)),

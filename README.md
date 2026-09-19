@@ -3010,7 +3010,8 @@ summary of the process and *Yes, let's start*; a dataset (pasted, uploaded, or
 one of the shared ones under `datasets/`), which it reads and summarises; how
 long they are happy to wait (three options with the time each takes *on this
 dataset*, or typed: "about an hour", "5 epochs"); then the plan read back and
-*Start training*. Questions can be typed at any point. On the right, what is
+*Start training*. At any point the chat box takes questions **and requests
+the guide carries out** (below). On the right, what is
 happening: where the process is, the dataset's numbers (answer lengths, topic
 words, samples), the plan, and during training each LoRA's progress and ETA,
 the loss curves, the worker's log and every API call the page makes -- redrawn
@@ -3027,8 +3028,11 @@ The Python behind it is `async_api_agent/`, mounted into the server as the
 | `prompts.py` | **every system prompt**, one per step behind a shared persona, and the wording each step falls back to when no model answers |
 | `providers.py` | one chat call, stdlib only: OpenAI-compatible (`/chat/completions`) or Anthropic (`/messages`) |
 | `analysis.py` | a dataset in any shape -- JSON Lines, a JSON array, prompt/answer pairs, CSV -- normalised to `{"messages": [...]}` lines and measured |
-| `planner.py` | the time estimate, a typed wait read as epochs, and the `POST /loras` bodies |
-| `agent.py` | each step: the facts, then the model's words for them, or the fallback's |
+| `planner.py` | the session (what the chat has set up), the time estimate, and the `POST /loras` bodies |
+| `selection.py` | which part of a dataset is trained on: first/last N, a range, a percent, a random sample, words to keep or drop, answer lengths, no duplicates |
+| `tools.py` | what the chat can *do*: each tool's parameters, the steps it may run in, and what it hands back to the page |
+| `commands.py` | the most common requests read without a model, as the same tool calls |
+| `agent.py` | each step: the facts, then the model's words for them, or the fallback's; the chat's tool loop |
 | `routes.py` | the `/agent/*` endpoints |
 
 **The agent proposes and the API does.** Nothing in `async_api_agent/`
@@ -3051,9 +3055,40 @@ here (steps against seconds, so loading the model is not read as a slow step),
 and is a stated guess until there are some. So **the page works with no model
 at all**: a provider that has no key, cannot be reached, or is set to
 `scripted` gets the step's fallback wording from `prompts.py`, with a note
-under the message saying why. A typed wait is read by the model if it can and
-by `planner.read_wait()` if not; a typed message that is not a wait goes to
-the guide as a question.
+under the message saying why.
+
+**The chat can act, not just answer.** Typed messages go to `/agent/chat`,
+where the model is given tools (`tools.py`, described to it in
+`prompts.TOOLS`) and a few rounds to use them:
+
+| Tool | What it does |
+|---|---|
+| `select_records`, `use_all_records` | train on part of the dataset: "only the first 20", "records 5 to 30", "half", "a random 25", "drop the ones about fever", "no duplicates", "answers under 40 words" -- or all of it again |
+| `show_records`, `dataset_facts` | look before choosing: "show me record 7", "the longest answers" |
+| `set_loras` | how many LoRAs and their ranks: "one LoRA at rank 32", "ranks 4, 8 and 16" -- up to `MAX_LORAS` (5, a search's five slots) |
+| `set_epochs`, `estimate_time` | how long: "10 epochs", "I can wait 20 minutes" |
+| `set_training_options` | learning rate, alpha, dropout, sequence length, batch, warmup, max steps, scheduler, optimiser, the LoRAs' name, the test prompt |
+| `set_practice_run` | a practice run on or off |
+| `list_demo_datasets`, `use_demo_dataset`, `choose_another_dataset` | switch dataset: "use the poem dataset" |
+| `list_my_loras`, `show_plan` | what exists, what is planned |
+| `start_training`, `stop_training` | only when asked |
+
+Everything a tool changes lives in the **session**: the part of the dataset in
+use, the ranks, epochs, options, name and test prompt. The page keeps it and
+sends it with every step, and `planner.session_of()` checks it with
+`train.py`'s own limits, so the plan the chat builds is one `POST /loras`
+takes. A selection is a few keys applied on the way, never a copy of the data
+-- the dataset's card on the right then describes the part in use, and part of
+a shared file is sent as its lines, since the whole file is not what it
+trained on. **A tool changes the plan, never the world**: starting, stopping
+and switching dataset come back as *actions* the page carries out with the
+same calls as its buttons, and a changed plan is always read back before a
+start. The stage decides what may be asked -- nothing changes while a training
+runs, nothing is chosen before there is a dataset -- and a tool asked at the
+wrong moment refuses with a reason the model passes on. Each tool run shows
+in the transcript as a small line (red when refused). With no model that can
+take tools, `commands.py` reads the common requests into the same calls, so
+"first 20, rank 32, 5 epochs" works on the scripted provider too.
 
 **Providers.** `lmstudio` (the default) is the judges' endpoint,
 `JUDGE_BASE_URL`, with the first model it lists unless one is named; `ollama`,
@@ -3075,7 +3110,8 @@ model's `<think>` block is stripped from an OpenAI-compatible reply.
 | `GET /agent` | the page (no key needed to load it) |
 | `GET /agent/config` | providers (and whether the server has each key), the default, the ranks, the wait options, the shared datasets described, and the page's own wording |
 | `GET /agent/models?provider=[&base_url=]` | the chat models a provider lists |
-| `POST /agent/intro`, `/analyse`, `/wait`, `/interpret`, `/plan`, `/started`, `/chat`, `/debrief` | one step of the conversation each; `agent: {provider, model, base_url}` picks who phrases it |
+| `POST /agent/intro`, `/analyse`, `/wait`, `/plan`, `/started`, `/debrief` | one step of the conversation each; `agent: {provider, model, base_url}` picks who phrases it, `session` what has been set up |
+| `POST /agent/chat` | a typed message: the reply, the tools run (`steps`), the new `session`, the dataset's facts again if the part in use changed, records asked for (`preview`), and the `actions` for the page |
 
 ---
 
@@ -3349,7 +3385,7 @@ reporting/    a sweep, written out as something to look at
 adapters/     making and checking the five LoRAs a sweep blends
 tools/        dev aids that are not part of the pipeline
 async_api/    the search as a web service: jobs, a worker, live inference
-async_api_agent/  the LoRA guide behind /agent: prompts, providers, a dataset's facts
+async_api_agent/  the LoRA guide behind /agent: prompts, providers, tools, a dataset's facts
 ```
 
 ### The drivers
@@ -3412,6 +3448,7 @@ async_api_agent/  the LoRA guide behind /agent: prompts, providers, a dataset's 
 | `async_api/agent-ui.html` | the LoRA guide page at `/agent`: a chat model walks a user from a dataset to trained LoRAs, with the progress drawn beside it |
 | `async_api_agent/prompts.py` | every system prompt the guide sends, and the wording it falls back to without a model |
 | `async_api_agent/settings.py` | which provider and model the guide talks through, and what it plans |
+| `async_api_agent/tools.py` | what the guide's chat can do: choose part of the dataset, change ranks, epochs and options, switch dataset, start and stop |
 
 ### The adapters, and the dev aids
 

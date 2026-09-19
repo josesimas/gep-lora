@@ -106,6 +106,12 @@ FEW_RECORDS = 30
 # five default slots are 16, 16, 8, 4 and 32 for that reason.
 LORA_RANKS = [8, 16]
 
+# The most LoRAs one plan may train, when the chat is asked for more ranks.
+# Five, because that is how many slots a search blends (LORA_SLOTS L1-L5):
+# one chat can train a whole set. Each is a full training of its own, one
+# after another on the worker, so this also caps what one sentence can queue.
+MAX_LORAS = 5
+
 # The name each LoRA gets: the dataset's stem and the rank, made free in the
 # user's catalogue by adding -2, -3 ... when taken.
 LORA_NAME = "{stem}-r{rank}"

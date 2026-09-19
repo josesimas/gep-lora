@@ -51,8 +51,9 @@ tools/        test.py, combination.py, compare_servers.py -- dev aids, not
 async_api/    server, worker, submit, registry, results, golive, inference,
               users, verify, evaluate, train -- the search as a web service. See
               "The async API" below. agent-ui.html is the LoRA guide page (/agent).
-async_api_agent/  settings, prompts, providers, analysis, planner, agent, routes --
-              the chat model behind /agent that walks a user to trained LoRAs
+async_api_agent/  settings, prompts, providers, analysis, selection, planner, tools,
+              commands, agent, routes -- the chat model behind /agent that walks a
+              user to trained LoRAs, and acts on what they ask in the chat
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -1093,6 +1094,18 @@ change to it. These rules hold it together:
   be repointed from the page, and then without its key. Its knobs are
   `async_api_agent/settings.py` (`GEP_AGENT_<NAME>` overrides), for the same reason
   the API's are not in `config/settings.py`.
+- **The chat acts through tools on a session, never on the world.** `/agent/chat`
+  runs `agent.chat()`: the model gets `tools.schemas()` and up to `MAX_ROUNDS` of
+  calls, each run by a `Toolbox` against the page's session (`planner.session_of()`:
+  selection, ranks, epochs, options, name, prompt, mock). Start, stop and switching
+  dataset are *actions* the page carries out with its buttons' own calls, and a plan
+  change is always read back (a `plan` action) before a start. A tool's parameters
+  are in `tools.SPECS` (with the stages it may run in), its description in
+  `prompts.TOOLS` and its one-line summary in `prompts.TOOL_DONE` -- a new tool
+  needs all three (a test checks). A selection is keys applied on the way
+  (`selection.py`), never a copy of the data. `commands.py` is the no-model path to
+  the same calls; keep it narrow -- an unrecognised request must produce no call,
+  not a guess.
 
 Its knobs live in `async_api/settings.py`, deliberately outside `config/settings.py`,
 whose `snapshot()` would store them in every sweep.

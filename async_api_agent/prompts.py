@@ -93,22 +93,6 @@ they can also type an answer such as "about an hour" or "5 epochs". Do not \
 recommend a choice unless FACTS.recommended names one; if it does, say why \
 in one short sentence."""
 
-WAIT_INTERPRET = """\
-You turn a person's answer to "how long are you happy to wait for your \
-LoRAs?" into a number of epochs. FACTS.seconds_per_epoch is how long one \
-epoch of all the LoRAs together takes, FACTS.overhead_seconds is the fixed \
-time before and after, and FACTS.min_epochs / FACTS.max_epochs are the \
-limits. FACTS.choices are the named options, in case they refer to one \
-("the quick one", "the middle").
-
-Reply with a JSON object and nothing else:
-{"epochs": <number, or null if the answer is not about time or epochs>,
- "reason": "<one short sentence saying how you read their answer>"}
-
-A time budget means: epochs = (budget in seconds - overhead_seconds) / \
-seconds_per_epoch, rounded down to a whole number, at least min_epochs. \
-A number of epochs means that number. Clamp to the limits."""
-
 START = """\
 The training has just been queued. FACTS.trainings lists the LoRAs (name, \
 rank) and FACTS.epochs, FACTS.estimate (a human-readable time) and \
@@ -120,17 +104,27 @@ is true, remind them this is a practice run. Tell them you will let them \
 know when it is done, and that they can ask you anything meanwhile."""
 
 CHAT = """\
-The person has typed a message in the middle of the process. \
-FACTS.stage is the step they are on, FACTS.step_instructions says what \
-that step asks of them, and FACTS.context holds what is known so far \
-(dataset summary, the plan, live training progress).
+The person has typed a message. FACTS.stage is the step they are on, \
+FACTS.step_instructions what that step asks of them, FACTS.session what they \
+have asked for so far (which part of the dataset, the ranks, the epochs, \
+training options, practice run), and FACTS.context what is known (the \
+dataset, the plan, live training progress).
 
-Answer their question helpfully and briefly from what you know and from \
-FACTS. If they ask about the process, LoRAs, ranks, epochs or loss, explain \
-simply. If they ask for something the page cannot do, say so kindly. If \
-they seem to be answering the current step in words, tell them how to give \
-that answer with the controls FACTS.step_instructions mentions. End with \
-one sentence bringing them back to the current step, unless the step is \
+You have tools that act on the plan. Use them whenever the person asks for \
+something a tool does -- "only train on the first 20", "drop the ones about \
+fever", "use rank 32", "10 epochs", "a lower learning rate", "show me record \
+7", "use the poem dataset", "start", "stop" -- rather than telling them to do \
+it themselves. Several tools may be needed for one request. Do not call a \
+tool that changes something unless they asked for that change. Call \
+start_training only when they clearly ask to start now; the plan is then read \
+back to them and started.
+
+A tool's result is the truth: report what it says changed, with its numbers, \
+in one to three short sentences. If you meant to set something and the result \
+does not show it set, call the tool again rather than saying it was done. If a tool refused, say why in plain words. \
+Never claim a change no tool confirmed. When no tool fits, just answer: \
+explain LoRAs, ranks, epochs or loss simply, or say kindly what the page \
+cannot do. End by bringing them back to the current step, unless the step is \
 "training" or "done"."""
 
 DEBRIEF = """\
@@ -155,7 +149,6 @@ STEPS = {
     "intro": INTRO,
     "analysis": ANALYSIS,
     "wait": WAIT_ASK,
-    "wait_interpret": WAIT_INTERPRET,
     "start": START,
     "chat": CHAT,
     "debrief": DEBRIEF,
@@ -163,14 +156,78 @@ STEPS = {
 
 
 def system(step):
-    """The whole system prompt for one step: the persona, then the step's own.
-
-    The interpreter of a wait is not the guide talking, so it gets its own
-    instructions alone -- the persona's "no JSON" would contradict it.
-    """
-    if step == "wait_interpret":
-        return WAIT_INTERPRET
+    """The whole system prompt for one step: the persona, then the step's own."""
     return PERSONA + "\n\nThe current step:\n" + STEPS[step]
+
+
+# ---------------------------------------------------------------------------
+# The tools the chat can use
+# ---------------------------------------------------------------------------
+#
+# What the model is told each tool does (tools.py holds the parameters), and
+# the line the page shows when one has run -- str.format over its result.
+
+TOOLS = {
+    "show_records": (
+        "Show some records of the part of the dataset in use, so you can talk about "
+        "them: from a record number, the longest or shortest answers, or those "
+        "mentioning a word. Changes nothing."),
+    "dataset_facts": (
+        "The numbers of the dataset in use: how many records of how many, the part "
+        "chosen, answer lengths, duplicates, problems. Changes nothing."),
+    "select_records": (
+        "Train on only part of the dataset. Give any of: first N, last N, a range of "
+        "record numbers (start/end, from 1), a percent from the top, a random sample "
+        "of N (with a seed), words a record must mention (contains) or must not "
+        "(excludes), answer length bounds, drop_duplicates. What you give is added "
+        "to the part already chosen; replace=true starts again from the whole "
+        "dataset. Refused if it would leave no records."),
+    "use_all_records": "Go back to training on the whole dataset.",
+    "set_loras": (
+        "Choose how many LoRAs to train and their ranks, as a list: [16] is one LoRA "
+        "of rank 16, [4, 8, 32] three. A rank is how much the adapter can hold."),
+    "set_epochs": (
+        "Set how long to train: a number of epochs (passes over the data), or a "
+        "time budget in minutes that is turned into the most epochs that fit. The "
+        "plan is then read back to the person."),
+    "estimate_time": "How long a number of epochs would take with the current plan. Changes nothing.",
+    "set_training_options": (
+        "Change training options for every LoRA in the plan: learning_rate, alpha, "
+        "dropout, max_seq, batch_size, grad_accum, warmup_steps, weight_decay, "
+        "max_steps, scheduler, optim; name (the start of the LoRAs' names); prompt "
+        "(the test question each finished LoRA answers). reset=true puts every "
+        "option back to its default first."),
+    "show_plan": "What is planned so far: the part of the data, ranks, epochs, options, time. Changes nothing.",
+    "set_practice_run": (
+        "Turn the practice run on (nothing is really trained: seconds, no GPU) or "
+        "off (a real training)."),
+    "list_demo_datasets": "The demo datasets on the server, with their sizes. Changes nothing.",
+    "use_demo_dataset": "Switch to one of the demo datasets, by its file name.",
+    "choose_another_dataset": "Go back to the step where the person gives a dataset.",
+    "list_my_loras": "The person's LoRAs already in the catalogue, with status and loss. Changes nothing.",
+    "start_training": "Start training now, with the plan as it stands. Only when the person asks.",
+    "stop_training": "Stop the training that is running.",
+}
+
+TOOL_DONE = {
+    "show_records": "showed {shown} record(s)",
+    "dataset_facts": "read the dataset's numbers",
+    "select_records": "training on {selection_text}",
+    "use_all_records": "training on {selection_text}",
+    "set_loras": "{count} LoRA(s), rank {ranks_text}",
+    "set_epochs": "{epochs:g} epoch(s) — {time}",
+    "estimate_time": "{epochs:g} epoch(s) would take {time}",
+    "set_training_options": "options: {options_text}",
+    "show_plan": "read the plan",
+    "set_practice_run": "practice run {state}",
+    "list_demo_datasets": "listed {count} demo dataset(s)",
+    "use_demo_dataset": "switching to {file}",
+    "choose_another_dataset": "back to choosing a dataset",
+    "list_my_loras": "listed {count} LoRA(s) of yours",
+    "start_training": "starting the training",
+    "stop_training": "stopping the training",
+}
+TOOL_FAILED = "{tool}: {error}"
 
 
 # ---------------------------------------------------------------------------
@@ -224,10 +281,6 @@ More passes usually means a closer imitation of your examples. Pick one of \
 the options below (the times are for all {loras} LoRAs together), or type \
 something like "about an hour" or "5 epochs"."""
 
-FALLBACK_WAIT_UNDERSTOOD = "I read that as **{epochs:g} epoch(s)** — {time} in all."
-FALLBACK_WAIT_UNCLEAR = ("Sorry, I couldn't read a time or a number of epochs in that. Try "
-                         "\"30 minutes\", \"2 hours\" or \"5 epochs\", or pick an option.")
-
 FALLBACK_CONFIRM = """\
 Here's the plan:
 {lines}
@@ -248,7 +301,13 @@ you know when it's finished."""
 FALLBACK_START_MOCK = " It's a practice run, so it will be quick."
 
 FALLBACK_CHAT = ("I can't answer free-form questions right now — no chat model is "
-                 "reachable. {instructions}")
+                 "reachable. I can still do simple things you ask, like \u201conly use the "
+                 "first 20 records\u201d, \u201crank 32\u201d or \u201c5 epochs\u201d. "
+                 "{instructions}")
+
+# What the fallback says after it has run the tools a request asked for.
+FALLBACK_TOOLS = "Done:\n{lines}"
+FALLBACK_TOOLS_FAILED = "I couldn't do that:\n{lines}"
 
 FALLBACK_DEBRIEF = """\
 Training is finished.
@@ -288,6 +347,8 @@ ASK_DATASET = ("Great! First I need some example conversations — the kind of a
                "want the LoRAs to learn to give.\n\n" + STEP_INSTRUCTIONS["dataset"])
 ANOTHER_DATASET = "No problem — give me another dataset. " + STEP_INSTRUCTIONS["dataset"]
 STOPPED = "I've asked the worker to stop the training. Whatever finished stays in your catalogue."
+CHAT_HINT = ("You can also ask me in words: \u201conly use the first 20\u201d, \u201cdrop the ones "
+             "about X\u201d, \u201cone LoRA at rank 32\u201d, \u201ca lower learning rate\u201d…")
 
 # The note shown under a message the fallback wrote, and why.
 FALLBACK_NOTE = "Written without a model: {reason}"

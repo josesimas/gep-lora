@@ -157,6 +157,13 @@
   .msg .note.warn { color: var(--warn); }
   .msg.event { align-self: center; font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
   .msg.event::before, .msg.event::after { content: ""; width: 24px; height: 1px; background: var(--line-2); }
+  .msg.event.tool { align-self: flex-start; color: var(--accent); background: var(--accent-soft); padding: 3px 10px;
+                    border-radius: 999px; font-size: 12px; max-width: 100%; }
+  .msg.event.tool::before, .msg.event.tool::after { display: none; }
+  .msg.event.tool.failed { color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, var(--panel)); }
+  .msg.event .gear { font-size: 13px; }
+  .selection-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; font-size: 13px; background: var(--accent-soft);
+                    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); color: var(--ink); }
   .typing { display: inline-flex; gap: 4px; padding: 4px 0; }
   .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); animation: bounce 1.2s infinite; }
   .typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
@@ -232,6 +239,8 @@
   .meter { height: 5px; border-radius: 5px; background: var(--code); overflow: hidden; }
   .meter i { display: block; height: 100%; background: var(--accent); border-radius: 5px; transition: width .6s ease; }
   .meter.big { height: 10px; margin: 4px 0 6px; }
+  .meter.done i { background: var(--ok); }
+  .meter.stopped i { background: var(--bad); }
   .meter.live i { background-image: linear-gradient(90deg, transparent, rgba(255, 255, 255, .35), transparent);
                   background-size: 60px 100%; background-repeat: no-repeat; animation: sheen 1.6s linear infinite; background-color: var(--accent); }
   @keyframes sheen { from { background-position: -60px 0; } to { background-position: calc(100% + 60px) 0; } }
@@ -338,7 +347,7 @@
     <div class="transcript" id="transcript" aria-live="polite"></div>
     <div class="action" id="action"></div>
     <form class="composer" id="composer">
-      <textarea id="say" rows="1" placeholder="Ask me anything, or answer in your own words…" aria-label="Message"></textarea>
+      <textarea id="say" rows="1" placeholder="Ask me anything, or tell me what to change…" aria-label="Message"></textarea>
       <button type="submit" class="primary" id="send">Send</button>
     </form>
   </section>
@@ -381,7 +390,11 @@ function fresh() {
   return { stage: "intro", transcript: [], dataset: null, analysis: null, sharedFile: null,
            choices: null, recommended: null, epochs: null, estimate: null, plan: null,
            loras: [], startedAt: null, finishedAt: null, stamps: {}, mock: null, agent: null,
-           debriefed: false };
+           debriefed: false,
+           // What the chat has set up (planner.session_of): the part of the
+           // dataset in use, ranks, epochs, options. The server checks it on
+           // every call; the page only keeps it.
+           session: {}, preview: null };
 }
 
 const $ = (id) => document.getElementById(id);
@@ -524,6 +537,13 @@ function marker(text) {
   save();
   drawTranscript();
 }
+// One tool the chat ran, as a line in the transcript and in the activity log.
+function toolMarker(done) {
+  S.transcript.push({ who: "event", tool: true, ok: done.ok, text: done.summary, at: Date.now() });
+  event(`tool ${done.tool}(${JSON.stringify(done.arguments)}) ${done.ok ? "ok" : "refused"}`);
+  save();
+  drawTranscript();
+}
 const words = (name) => (config && config.words && config.words[name]) || "";
 const plain = (text) => ({ text, by: "built-in wording", note: null });
 
@@ -537,7 +557,8 @@ let thinking = false;
 function drawTranscript() {
   const box = $("transcript");
   box.replaceChildren(...S.transcript.map((m) => {
-    if (m.who === "event") return el("div", { class: "msg event" }, m.text);
+    if (m.who === "event") return el("div", { class: "msg event" + (m.tool ? " tool" : "") + (m.tool && !m.ok ? " failed" : "") },
+      m.tool ? el("span", { class: "gear", "aria-hidden": "true" }, "\u2699") : null, m.text);
     const me = m.who === "me";
     return el("div", { class: "msg" + (me ? " me" : "") },
       el("div", { class: "who" }, me ? "You" : "Guide",
@@ -581,6 +602,8 @@ function agentChoice() {
            base_url: $("baseUrlRow").hidden ? undefined : ($("baseUrl").value.trim() || undefined) };
 }
 const mock = () => S.mock === null ? $("mock").checked : S.mock;
+// The session as the server is sent it: the page's practice-run setting wins.
+const session = () => Object.assign({}, S.session, { mock: mock() });
 
 function intro() {
   step(async () => {
@@ -625,53 +648,67 @@ function analyse() {
   userSays(dataset.file ? `Let's use the demo dataset **${dataset.file}**.`
     : dataset.name === "pasted" ? `Here's my dataset (${lines} pasted line${lines === 1 ? "" : "s"}).`
     : `Here's my file **${dataset.name}** (${lines} line${lines === 1 ? "" : "s"}).`);
-  step(async () => {
-    event("reading the dataset");
-    let reply;
-    try {
-      reply = await api("POST", "/agent/analyse", { agent: agentChoice(), dataset });
-    } catch (error) {
-      if (error.status === 400) { agentSays(plain(error.message + "\n\n" + words("instructions").dataset)); return; }
-      throw error;
-    }
-    S.dataset = dataset;
-    S.analysis = reply.analysis;
-    S.sharedFile = reply.shared_file;
-    agentSays(reply.message);
-    setStage(reply.analysis.usable ? "analysis" : "dataset");
-  });
+  step(() => readDataset(dataset));
+}
+
+// A dataset read in -- from the controls, or because the chat asked for a
+// demo one. A new dataset is used whole: the part chosen of the last one
+// means nothing here.
+async function readDataset(dataset) {
+  event("reading the dataset");
+  const whole = Object.assign({}, session(), { selection: {} });
+  let reply;
+  try {
+    reply = await api("POST", "/agent/analyse", { agent: agentChoice(), dataset, session: whole });
+  } catch (error) {
+    if (error.status === 400) { agentSays(plain(error.message + "\n\n" + words("instructions").dataset)); return; }
+    throw error;
+  }
+  S.session = Object.assign({}, S.session, { selection: {} });
+  S.dataset = dataset;
+  S.analysis = reply.analysis;
+  S.sharedFile = reply.shared_file;
+  S.plan = null; S.choices = null; S.preview = null;
+  agentSays(reply.message);
+  setStage(reply.analysis.usable ? "analysis" : "dataset");
 }
 
 function anotherDataset() {
   userSays("I'd like to choose another dataset.");
   agentSays(plain(words("another_dataset")));
-  S.analysis = null; S.dataset = null;
+  S.analysis = null; S.dataset = null; S.preview = null;
   setStage("dataset");
 }
 
 function askWait(again = false) {
   if (!again) userSays("Use this dataset.");
   S.mock = $("mock").checked;
-  step(async () => {
-    const reply = await api("POST", "/agent/wait", { agent: agentChoice(), records: S.analysis.records,
-                                                     mock: mock(), history: history() });
-    S.choices = reply.choices;
-    S.recommended = reply.recommended;
-    agentSays(reply.message);
-    setStage("wait");
-  });
+  step(() => fetchWait(false));
 }
 
-// A wait chosen, by button or in words: the plan comes back from the agent,
+// The wait's options, timed for the plan as it stands. Quietly, when the chat
+// changed the plan and the options on screen need their times again.
+async function fetchWait(quiet) {
+  const reply = await api("POST", "/agent/wait", { agent: agentChoice(), records: S.analysis.records,
+                                                   mock: mock(), history: history(), session: session(), quiet });
+  S.choices = reply.choices;
+  S.recommended = reply.recommended;
+  if (quiet) return;
+  agentSays(reply.message);
+  setStage("wait");
+}
+
+// A wait chosen, by button or in the chat: the plan comes back from the agent,
 // read back before anything starts.
 async function planFor(epochs) {
   if (!S.dataset || (!S.dataset.file && !S.dataset.text)) {
-    agentSays(plain("I no longer have your dataset in this browser -- please give it to me again."));
+    agentSays(plain("I no longer have your dataset in this browser — please give it to me again."));
     setStage("dataset");
     return;
   }
-  const reply = await api("POST", "/agent/plan", { dataset: S.dataset, epochs, mock: mock() });
+  const reply = await api("POST", "/agent/plan", { dataset: S.dataset, epochs, mock: mock(), session: session() });
   S.epochs = reply.epochs;
+  S.session = Object.assign({}, S.session, { epochs: reply.epochs });
   S.estimate = reply.estimate;
   S.plan = reply.trainings;
   agentSays(reply.message);
@@ -683,15 +720,6 @@ function chooseWait(choice) {
   step(() => planFor(choice.epochs));
 }
 
-async function interpretWait(text) {
-  const reply = await api("POST", "/agent/interpret", { agent: agentChoice(), records: S.analysis.records,
-                                                        text, mock: mock() });
-  if (!reply.epochs) return false;            // not an answer: a question, for the guide
-  agentSays(reply.message);
-  await planFor(reply.epochs);
-  return true;
-}
-
 function changeWait() {
   userSays("Let me pick a different wait.");
   S.plan = null;
@@ -700,45 +728,50 @@ function changeWait() {
 
 function startTraining() {
   userSays("Start training!");
-  step(async () => {
-    const queued = [];
-    for (const body of S.plan) {
-      event(`queueing ${body.name}`);
-      try {
-        const reply = await api("POST", "/loras", body);
-        queued.push({ id: reply.lora.id, name: reply.lora.name, rank: body.settings.rank,
-                      queue_position: reply.training.queue_position });
-      } catch (error) {
-        agentSays(plain(`I couldn't queue **${body.name}**: ${error.message}`));
-      }
+  step(queueTraining);
+}
+
+// The plan on screen, sent to the API's own POST /loras one LoRA at a time.
+async function queueTraining() {
+  const queued = [];
+  for (const body of S.plan) {
+    event(`queueing ${body.name}`);
+    try {
+      const reply = await api("POST", "/loras", body);
+      queued.push({ id: reply.lora.id, name: reply.lora.name, rank: body.settings.rank,
+                    queue_position: reply.training.queue_position });
+    } catch (error) {
+      agentSays(plain(`I couldn't queue **${body.name}**: ${error.message}`));
     }
-    if (!queued.length) { setStage("confirm"); return; }
-    S.loras = queued;
-    S.startedAt = Date.now();
-    S.finishedAt = null;
-    S.debriefed = false;
-    details = {}; logText = {}; queuedSince = null;
-    logFor = queued[0].id;
-    marker(`training queued · ${queued.length} LoRA${queued.length === 1 ? "" : "s"}`);
-    setStage("training");
-    const reply = await api("POST", "/agent/started", { agent: agentChoice(), trainings: queued, epochs: S.epochs,
-                                                        estimate: S.estimate, mock: mock(), history: history() });
-    agentSays(reply.message);
-    poll();
-  });
+  }
+  if (!queued.length) { setStage("confirm"); return; }
+  S.loras = queued;
+  S.startedAt = Date.now();
+  S.finishedAt = null;
+  S.debriefed = false;
+  details = {}; logText = {}; queuedSince = null;
+  logFor = queued[0].id;
+  marker(`training queued · ${queued.length} LoRA${queued.length === 1 ? "" : "s"}`);
+  setStage("training");
+  const reply = await api("POST", "/agent/started", { agent: agentChoice(), trainings: queued, epochs: S.epochs,
+                                                      estimate: S.estimate, mock: mock(), history: history() });
+  agentSays(reply.message);
+  poll();
 }
 
 function stopTraining() {
   userSays("Please stop the training.");
-  step(async () => {
-    for (const one of S.loras) {
-      const d = details[one.id];
-      if (d && FINAL.includes(d.status)) continue;
-      try { await api("POST", `/loras/${one.id}/cancel`); } catch (error) { event(`${one.name}: ${error.message}`); }
-    }
-    agentSays(plain(words("stopped")));
-    poll();
-  });
+  step(stopRun);
+}
+
+async function stopRun() {
+  for (const one of S.loras) {
+    const d = details[one.id];
+    if (d && FINAL.includes(d.status)) continue;
+    try { await api("POST", `/loras/${one.id}/cancel`); } catch (error) { event(`${one.name}: ${error.message}`); }
+  }
+  agentSays(plain(words("stopped")));
+  poll();
 }
 
 async function debrief() {
@@ -754,11 +787,19 @@ async function debrief() {
   });
 }
 
-function trainAgain() {
-  userSays("Let's train again with the same data.");
-  S.loras = []; S.plan = null; S.epochs = null; S.estimate = null; S.startedAt = null; S.finishedAt = null;
+// Forget the last training (not the dataset, nor what the chat set up).
+function resetRun() {
+  clearTimeout(pollTimer);
+  S.loras = []; S.plan = null; S.startedAt = null; S.finishedAt = null;
   S.stamps.training = null; S.stamps.done = null; S.debriefed = false;
   details = {}; logText = {};
+}
+
+function trainAgain() {
+  userSays("Let's train again with the same data.");
+  resetRun();
+  S.epochs = null; S.estimate = null;
+  S.session = Object.assign({}, S.session, { epochs: null });
   askWait(true);                               // the estimates again, for today's practice-run setting
 }
 
@@ -783,16 +824,52 @@ function startOver() {
   if (key && config) intro();
 }
 
-// Words typed into the composer: an answer to the current step where one fits,
-// otherwise a question for the guide.
+// Words typed into the composer go to the guide, which may act on them with
+// its tools: the reply says what changed, and what the page must now do.
 function send(text) {
   userSays(text);
   step(async () => {
-    if ((S.stage === "wait" || S.stage === "confirm") && S.analysis && await interpretWait(text)) return;
-    const reply = await api("POST", "/agent/chat", { agent: agentChoice(), message: text,
-                                                     stage: S.stage, context: chatContext(), history: history().slice(0, -1) });
-    agentSays(reply.message);
+    const reply = await api("POST", "/agent/chat", {
+      agent: agentChoice(), message: text, stage: S.stage, session: session(),
+      dataset: S.dataset || undefined, context: chatContext(), history: history().slice(0, -1) });
+    await applyChat(reply);
   });
+}
+
+// What a chat reply changed, carried out in order -- through the same calls
+// the buttons make, so the chat can do nothing a button could not.
+async function applyChat(reply) {
+  S.session = reply.session || S.session;
+  for (const done of reply.steps || []) toolMarker(done);
+  if (reply.analysis) S.analysis = reply.analysis;
+  if (reply.preview) S.preview = { records: reply.preview, at: Date.now() };
+  agentSays(reply.message);
+  for (const action of reply.actions || []) {
+    if (action.type === "mock") {
+      $("mock").checked = action.on;
+      remember("mock", action.on ? "1" : "0");
+      S.mock = action.on;
+      drawChip();
+    } else if (action.type === "dataset") {
+      datasetMode = "demo";
+      drawAction.demo = action.file;
+      await readDataset({ file: action.file });
+    } else if (action.type === "choose_dataset") {
+      resetRun();
+      S.analysis = null; S.dataset = null; S.choices = null; S.preview = null;
+      setStage("dataset");
+    } else if (action.type === "choices") {
+      await fetchWait(true);
+    } else if (action.type === "plan") {
+      if (S.stage === "done") resetRun();
+      await planFor(action.epochs);
+    } else if (action.type === "start") {
+      if (S.stage === "confirm" && S.plan) await queueTraining();
+    } else if (action.type === "stop") {
+      await stopRun();
+    }
+  }
+  save();
 }
 
 function chatContext() {
@@ -882,7 +959,8 @@ function drawAction() {
   else if (stage === "analysis") content = [ask("Happy with this dataset?"),
     el("div", { class: "buttons" },
       el("button", { class: "primary lg", onclick: () => askWait(), disabled: lock }, "Use this dataset"),
-      el("button", { class: "lg", onclick: anotherDataset, disabled: lock }, "Choose another"))];
+      el("button", { class: "lg", onclick: anotherDataset, disabled: lock }, "Choose another")),
+    el("p", { class: "help" }, words("chat_hint"))];
   else if (stage === "wait") content = [ask("How long can you wait?"),
     el("div", { class: "options" }, (S.choices || []).map((choice) =>
       el("button", { type: "button", class: "option choice", disabled: lock, onclick: () => chooseWait(choice) },
@@ -893,7 +971,8 @@ function drawAction() {
   else if (stage === "confirm") content = [ask("Start the training?"),
     el("div", { class: "buttons" },
       el("button", { class: "primary lg", onclick: startTraining, disabled: lock }, "Start training"),
-      el("button", { class: "lg", onclick: changeWait, disabled: lock }, "Change"))];
+      el("button", { class: "lg", onclick: changeWait, disabled: lock }, "Change")),
+    el("p", { class: "help" }, words("chat_hint"))];
   else if (stage === "training") {
     const { fraction } = timing();
     content = [ask("Training — nothing to do but watch"),
@@ -964,7 +1043,8 @@ function drawBoard() {
   const cards = [pipelineCard()];
   if (S.loras.length) cards.push(trainingCard());
   if (S.stage === "done" || S.loras.some((one) => (details[one.id] || {}).status === "ready")) cards.push(resultsCard());
-  if (S.plan || S.choices) cards.push(planCard());
+  if (S.preview) cards.push(previewCard());
+  if (S.plan || S.choices || changes().length) cards.push(planCard());
   if (S.analysis) cards.push(datasetCard());
   if (!S.analysis) cards.push(welcomeCard());
   cards.push(activityCard());
@@ -1021,8 +1101,10 @@ function welcomeCard() {
 
 function datasetCard() {
   const a = S.analysis, st = a.stats;
+  const part = a.selection && Object.keys(a.selection).length;
   const tiles = [
-    ["Conversations", a.records, `${a.format}${st.skipped ? ` · ${st.skipped} skipped` : ""}`],
+    ["Conversations", part ? `${a.records} of ${a.total_records}` : a.records,
+     `${part ? "the part chosen · " : ""}${a.format}${st.skipped ? ` · ${st.skipped} skipped` : ""}`],
     ["Question length", st.user_words.median + " words", `median · ${st.user_words.min}–${st.user_words.max}`],
     ["Answer length", st.assistant_words.median + " words", `median · ${st.assistant_words.min}–${st.assistant_words.max}`],
     ["Turns", st.turns.median, `median per conversation${st.multi_turn ? ` · ${st.multi_turn} multi-turn` : ""}`],
@@ -1030,6 +1112,8 @@ function datasetCard() {
     ["System prompts", st.system_prompts, "distinct"],
   ];
   return card("Your dataset", `${a.name || "pasted"} · ${(st.characters / 1024).toFixed(1)} KB normalised`,
+    part ? el("p", { class: "selection-note" }, "Training on ", el("b", {}, a.selection_text),
+      ". Everything below describes that part.") : null,
     el("div", { class: "tiles", style: "margin-top:0" }, tiles.map(([name, value, sub]) =>
       el("div", { class: "tile" }, el("span", {}, name), el("b", {}, value), el("small", { title: sub }, sub)))),
     a.problems.length ? el("div", { class: "note-box" }, el("ul", { class: "problems" }, a.problems.map((p) => el("li", {}, p)))) : null,
@@ -1046,8 +1130,35 @@ function datasetCard() {
                                                         el("td", { class: "clip" }, el("div", { title: s.assistant }, s.assistant))))))));
 }
 
+// What the chat changed from the defaults, as label/value pairs.
+function changes() {
+  const out = [], se = S.session || {};
+  if (se.selection && Object.keys(se.selection).length && S.analysis) out.push(["Data", S.analysis.selection_text]);
+  if (se.ranks && JSON.stringify(se.ranks) !== JSON.stringify(config.ranks)) out.push(["Ranks", se.ranks.join(", ")]);
+  for (const [name, value] of Object.entries(se.options || {})) out.push([name.replace(/_/g, " "), String(value)]);
+  if (se.name) out.push(["Name", se.name]);
+  if (se.prompt) out.push(["Test prompt", se.prompt]);
+  return out;
+}
+
+function previewCard() {
+  const shown = S.preview.records;
+  return card("Records you asked about", `${shown.length} shown · at ${clock(S.preview.at).slice(0, 5)}`,
+    el("div", { class: "scroll" }, el("table", {},
+      el("thead", {}, el("tr", {}, el("th", { class: "num" }, "#"), el("th", {}, "User"),
+        el("th", {}, "Assistant"), el("th", { class: "num" }, "Words"))),
+      el("tbody", {}, shown.map((r) => el("tr", {}, el("td", { class: "num" }, r.number),
+        el("td", { class: "clip" }, el("div", { title: r.user }, r.user)),
+        el("td", { class: "clip" }, el("div", { title: r.assistant }, r.assistant)),
+        el("td", { class: "num" }, r.answer_words)))))));
+}
+
 function planCard() {
   const rows = [];
+  const changed = changes();
+  if (changed.length) rows.push(el("h3", { style: "margin-bottom:8px" }, "What you changed in the chat"),
+    el("div", { class: "chips", style: "margin-bottom:14px" }, changed.map(([name, value]) =>
+      el("span", { class: "chip", title: value }, el("b", {}, name + ": "), value))));
   if (S.choices) {
     const longest = Math.max(...S.choices.map((c) => c.estimate.seconds), 1);
     rows.push(el("h3", { style: "margin-bottom:8px" }, "The wait, option by option"),
@@ -1082,7 +1193,8 @@ function trainingCard() {
     return el("tr", { class: "pick" + (logFor === one.id ? " picked" : ""), onclick: () => { logFor = one.id; poll(); drawBoard(); }, title: "Show its log" },
       el("td", {}, el("span", { class: "swatch", style: `background:${colour(i)}` }), el("b", {}, one.name), el("div", { class: "muted small" }, `rank ${one.rank}`)),
       el("td", {}, pill(d.status || "…"), d.status === "queued" && training.queue_position ? el("div", { class: "muted small" }, `queue #${training.queue_position}`) : null),
-      el("td", { style: "min-width:140px" }, el("div", { class: "meter" + (d.status === "training" ? " live" : "") },
+      el("td", { style: "min-width:140px" }, el("div", { class: "meter" + (d.status === "training" ? " live"
+          : d.status === "ready" ? " done" : ["failed", "cancelled"].includes(d.status) ? " stopped" : "") },
         el("i", { style: `width:${of ? Math.min(100, (step || 0) / of * 100) : FINAL.includes(d.status) && d.status === "ready" ? 100 : 0}%` })),
         el("div", { class: "muted small num" }, of ? `step ${step || 0} / ${of}${p.epoch ? ` · epoch ${fmt(p.epoch, 2)}` : ""}` : d.status === "queued" ? "waiting" : "")),
       el("td", { class: "num" }, fmt(loss)),

@@ -18,6 +18,14 @@ Three things the agent needs numbers for, and none of them is the model's:
                   with the dataset's own first question as the smoke test, so
                   the sample a finished LoRA gives is on its own subject.
 
+What each of them works from is the **session**: what the person has asked
+for so far in the chat -- which part of the dataset (selection.py), which
+ranks, how many epochs, any training option they changed, a name, a
+smoke-test prompt, a practice run. The page keeps it and sends it back with
+every step; `session_of()` checks it on the way in, with the limits train.py
+checks a POST /loras against, so a session the agent built is one the API
+will take.
+
 The plan is only proposed: the page sends it to the async API's POST /loras
 itself, which checks every body exactly as it checks the demo page's.
 """
@@ -30,15 +38,107 @@ import statistics
 from adapters import catalog as lora_catalog
 from async_api import settings as api_settings
 from async_api import train
+from async_api_agent import selection as picking
 from async_api_agent import settings
 
 # What a mocked training costs besides its steps: a python start, no model.
 MOCK_OVERHEAD_SECONDS = 3
 
 
+# The training options the chat may change, beside rank and epochs (which
+# have their own keys). Each is checked by train.py's own rules.
+OPTIONS = ("learning_rate", "alpha", "dropout", "max_seq", "batch_size", "grad_accum",
+           "warmup_steps", "weight_decay", "max_steps", "scheduler", "optim")
+
+# The ranks a plan may give its LoRAs. How many it may train is
+# settings.MAX_LORAS.
+RANKS = (1, 256)
+
+
+class SessionError(ValueError):
+    """A session value the plan cannot use, in words for the person."""
+
+
 def recipe():
     """create_lora.py's defaults as the API would train them."""
     return train.defaults()
+
+
+def check_ranks(ranks):
+    if isinstance(ranks, int) and not isinstance(ranks, bool):
+        ranks = [ranks]
+    if not isinstance(ranks, list) or not ranks:
+        raise SessionError("ranks must be a list of 1 to %d whole numbers" % settings.MAX_LORAS)
+    if len(ranks) > settings.MAX_LORAS:
+        raise SessionError("at most %d LoRAs can be trained at once" % settings.MAX_LORAS)
+    out = []
+    for rank in ranks:
+        whole = (not isinstance(rank, bool) and isinstance(rank, (int, float))
+                 and rank == int(rank))
+        if not whole or not RANKS[0] <= rank <= RANKS[1]:
+            raise SessionError("a rank must be a whole number from %d to %d" % RANKS)
+        out.append(int(rank))
+    return out
+
+
+def check_options(options):
+    """Training options, checked by train.py's own rules. -> dict."""
+    if not isinstance(options, dict):
+        raise SessionError("options must be an object")
+    unknown = sorted(set(options) - set(OPTIONS))
+    if unknown:
+        raise SessionError("unknown option(s): %s; there are: %s"
+                           % (", ".join(unknown), ", ".join(OPTIONS)))
+    out = {}
+    for key, value in options.items():
+        if value is None:
+            continue
+        try:
+            if key in train.CHOICES:
+                if value not in train.CHOICES[key]:
+                    raise train.TrainError("%s must be one of %s"
+                                           % (key, ", ".join(train.CHOICES[key])))
+                out[key] = value
+            else:
+                out[key] = train._number(key, value)
+        except train.TrainError as error:
+            raise SessionError(str(error))
+    return out
+
+
+def check_name(name):
+    if name is None:
+        return None
+    stem = stem_of(str(name))
+    if not train.NAME.match(stem):
+        raise SessionError("a name must be letters, digits, '.', '_' or '-'")
+    return stem
+
+
+def session_of(raw):
+    """What the page sent as its session, checked. -> the full session."""
+    raw = raw if isinstance(raw, dict) else {}
+    try:
+        chosen = picking.clean(raw.get("selection"))
+    except picking.SelectionError as error:
+        raise SessionError(str(error))
+    epochs = raw.get("epochs")
+    if epochs is not None:
+        number = not isinstance(epochs, bool) and isinstance(epochs, (int, float))
+        if not number or not settings.MIN_EPOCHS <= epochs <= settings.MAX_EPOCHS:
+            raise SessionError("epochs must be between %s and %s"
+                               % (settings.MIN_EPOCHS, settings.MAX_EPOCHS))
+        epochs = float(epochs)
+    prompt = raw.get("prompt")
+    if prompt is not None and (not isinstance(prompt, str) or not prompt.strip()):
+        raise SessionError("the test prompt must be some text")
+    return {"selection": chosen,
+            "ranks": check_ranks(raw["ranks"]) if raw.get("ranks") else list(settings.LORA_RANKS),
+            "epochs": epochs,
+            "options": check_options(raw.get("options") or {}),
+            "name": check_name(raw.get("name")),
+            "prompt": " ".join(prompt.split())[:300] if prompt else None,
+            "mock": bool(raw.get("mock"))}
 
 
 def steps_per_epoch(records, options=None):
@@ -86,14 +186,18 @@ def human(seconds):
     return "about %d h %02d min" % (hours, minutes) if minutes else "about %d hours" % hours
 
 
-def estimate(catalog, records, epochs, mock=False, base_model=None):
-    """How long `epochs` epochs of `records` records take, all LoRAs together."""
-    options = recipe()
+def estimate(catalog, records, epochs, mock=False, base_model=None, session=None):
+    """How long `epochs` epochs of `records` records take, all LoRAs together
+    -- the session's LoRAs, under its options."""
+    session = session or session_of(None)
+    options = dict(recipe(), **session["options"])
     base_model = base_model or options["base_model"]
     per_epoch = steps_per_epoch(records, options)
     steps = max(1, int(math.ceil(per_epoch * epochs)))
+    if options.get("max_steps"):
+        steps = min(steps, options["max_steps"])
     per_step, overhead, source = speed(catalog, base_model, mock)
-    loras = len(settings.LORA_RANKS)
+    loras = len(session["ranks"])
     per_lora = overhead + steps * per_step
     return {"epochs": epochs, "loras": loras, "steps_per_epoch": per_epoch,
             "steps": steps, "seconds_per_step": round(per_step, 3),
@@ -104,11 +208,21 @@ def estimate(catalog, records, epochs, mock=False, base_model=None):
             "batch": options["batch_size"] * options["grad_accum"]}
 
 
-def choices(catalog, records, mock=False):
+def choices(catalog, records, mock=False, session=None):
     """settings.WAIT_CHOICES, each with its estimate on this dataset."""
-    return [dict(choice, estimate=estimate(catalog, records, choice["epochs"], mock),
-                 time=estimate(catalog, records, choice["epochs"], mock)["time"])
-            for choice in settings.WAIT_CHOICES]
+    out = []
+    for choice in settings.WAIT_CHOICES:
+        found = estimate(catalog, records, choice["epochs"], mock, session=session)
+        out.append(dict(choice, estimate=found, time=found["time"]))
+    return out
+
+
+def epochs_for(catalog, records, minutes, mock=False, session=None):
+    """The most epochs that fit in `minutes`, all LoRAs together."""
+    one = estimate(catalog, records, 1, mock, session=session)
+    budget = minutes * 60.0 - one["overhead_seconds"] * one["loras"]
+    return clamp(max(settings.MIN_EPOCHS,
+                     math.floor(max(0.0, budget) / max(one["seconds_per_epoch"], 1e-6))))
 
 
 def clamp(epochs):
@@ -183,21 +297,26 @@ def free_name(catalog, user, wanted, taken):
     return candidate
 
 
-def plan(catalog, user, analysis, epochs, mock=False, shared_file=None):
+def plan(catalog, user, analysis, epochs, mock=False, shared_file=None, session=None):
     """The POST /loras bodies that train the agent's LoRAs. -> [body].
 
-    The dataset goes as {"file": name} when it is a shared file sent as it is
-    -- so the catalogue records where it came from -- and as the normalised
-    lines otherwise.
+    One per rank in the session, with its options, name and test prompt. The
+    dataset goes as {"file": name} when it is a shared file sent whole and as
+    it is -- so the catalogue records where it came from -- and as the
+    normalised lines of the part chosen otherwise.
     """
+    session = session or session_of(None)
     first = analysis["samples"][0]["user"] if analysis.get("samples") else None
-    as_file = shared_file and analysis.get("format") == "jsonl" and not analysis["stats"]["skipped"]
+    prompt = session["prompt"] or (" ".join(first.split())[:300] if first else None)
+    as_file = (shared_file and analysis.get("format") == "jsonl"
+               and not analysis["stats"]["skipped"] and not analysis.get("selection"))
     dataset = {"file": shared_file} if as_file else "\n".join(analysis["lines"])
-    stem, taken, bodies = stem_of(analysis.get("name")), set(), []
-    for rank in settings.LORA_RANKS:
+    stem = session["name"] or stem_of(analysis.get("name"))
+    taken, bodies = set(), []
+    for rank in session["ranks"]:
         name = free_name(catalog, user, settings.LORA_NAME.format(stem=stem, rank=rank), taken)
-        wanted = {"epochs": float(epochs), "rank": int(rank)}
-        if first:
-            wanted["prompt"] = " ".join(first.split())[:300]
+        wanted = dict(session["options"], epochs=float(epochs), rank=int(rank))
+        if prompt:
+            wanted["prompt"] = prompt
         bodies.append({"name": name, "dataset": dataset, "settings": wanted, "mock": bool(mock)})
     return bodies

@@ -5,8 +5,9 @@ The agent's facts about a dataset come from here, never from the model: the
 model is shown these numbers and a few samples, and asked to put them into
 words. `analyse()` is the one entry point:
 
-    analyse(text, name=None) -> {usable, format, records, lines, stats,
-                                 samples, problems, histogram, keywords}
+    analyse(text, name=None, selection=None)
+        -> {usable, format, records, total_records, selection, selection_text,
+            lines, stats, samples, problems, histogram, keywords}
 
 It accepts every shape a person is likely to have to hand, and normalises all
 of them into what a LoRA trains on -- one JSON object per line with a
@@ -19,7 +20,9 @@ of them into what a LoRA trains on -- one JSON object per line with a
   * CSV (or TSV) with a question column and an answer column -- by name when
     the header says which, else the first two
 
-`lines` is the normalised dataset, ready to go to POST /loras as it is.
+`lines` is the normalised dataset -- the part of it `selection` keeps
+(selection.py), all of it by default -- ready to go to POST /loras as it is;
+every number describes that part, and `total_records` says of how many.
 Records that cannot become a conversation with an assistant turn are counted
 and skipped rather than failing the whole dataset, and `problems` says so.
 """
@@ -30,6 +33,7 @@ import json
 import re
 import statistics
 
+from async_api_agent import selection as picking
 from async_api_agent import settings
 
 # Column and field names that mean "what the user said" and "the answer".
@@ -215,9 +219,13 @@ def _clip(text, limit):
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
-def analyse(text, name=None):
-    """Read, normalise and measure one dataset. -> the facts (see the module)."""
+def analyse(text, name=None, selection=None):
+    """Read, normalise and measure one dataset -- the part of it `selection`
+    keeps (selection.py), when there is one. -> the facts (see the module)."""
     records, skipped, fmt = parse(text)
+    total = len(records)
+    chosen = picking.clean(selection)
+    records = picking.apply(records, chosen)
     user_words = [_words(_turn(r, "user")) for r in records]
     assistant_words = [_words(_turn(r, "assistant")) for r in records]
     turns = [len(r["messages"]) for r in records]
@@ -230,7 +238,10 @@ def analyse(text, name=None):
     lines = [json.dumps(record, ensure_ascii=False) for record in records]
 
     problems = []
-    if not records:
+    if not records and total:
+        problems.append("The part of it chosen (%s) holds no records; ask for another part, "
+                        "or for all of it." % picking.describe(chosen, 0, total))
+    elif not records:
         problems.append("None of its %d record(s) is a conversation with an answer to learn%s."
                         % (len(skipped), " (%s)" % skipped[0] if skipped else ""))
     elif skipped:
@@ -251,6 +262,9 @@ def analyse(text, name=None):
         "name": name,
         "format": fmt,
         "records": len(records),
+        "total_records": total,
+        "selection": chosen,
+        "selection_text": picking.describe(chosen, len(records), total),
         "lines": lines,
         "stats": {
             "records": len(records),
