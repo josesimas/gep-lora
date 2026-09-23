@@ -27,14 +27,6 @@ loras/*
 !loras/*.md
 
 
-
-datasets/finetuning_medical_testing.csv
-datasets/finetuning_medical_training.csv
-datasets/finetuning_medical_validation.csv
-datasets/medical_testing_lora_dataset.json
-datasets/medical_training_lora_dataset.json
-datasets/medical_validation_lora_dataset.json
-
 *.bat
 
 # The async API: its registry and every job folder
