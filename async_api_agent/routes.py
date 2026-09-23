@@ -22,7 +22,9 @@ App and the user, like an App method, and returns (status, payload).
                                                                  tools changed
     POST /agent/debrief             {agent, loras: [id], mock, history}
 
-`agent` is the page's choice of model -- {"provider", "model", "base_url"} --
+`agent` is the page's choice of model -- {"provider", "model", "base_url",
+"conversation"}, the last an id per conversation for the providers that route
+by one --
 `dataset` is {"text", "name"} for pasted or uploaded data, or {"file"} for
 one of the shared datasets, and `session` is what the chat has set up so far
 (planner.session_of): the part of the dataset in use, the ranks, the epochs,

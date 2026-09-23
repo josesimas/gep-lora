@@ -9,12 +9,18 @@ any Python 3, and a provider is two HTTP shapes, not an SDK each.
                  speak it
     "anthropic"  POST {base_url}/messages, GET {base_url}/models, with the
                  x-api-key and anthropic-version headers
+    "responses"  POST {base_url}/responses, OpenAI's Responses API -- only as
+                 a gateway's per-model wire (OpenCode Go's Grok and GPT)
     "scripted"   no call at all; the agent's fallback wording answers
 
-`resolve()` turns what the page asked for ({provider, model, base_url}) into
-everything a call needs, `chat()` makes one, `converse()` makes one that may
-call tools (the chat box's, tools.py), and `list_models()` is what the page's
-model box offers. Anything that goes wrong is a ProviderError whose
+A provider's `kind` is its wire unless its `wires` name the model: OpenCode Go
+is one key and one URL in front of all three formats, chosen by model id
+(`wire()`), and its models are listed the `kind` way.
+
+`resolve()` turns what the page asked for ({provider, model, base_url,
+conversation}) into everything a call needs, `chat()` makes one, `converse()`
+makes one that may call tools (the chat box's, tools.py), and `list_models()`
+is what the page's model box offers. Anything that goes wrong is a ProviderError whose
 text says what and where, which the agent turns into a fallback and a note.
 """
 
@@ -23,11 +29,21 @@ import os
 import re
 import urllib.error
 import urllib.request
+import uuid
 from urllib.parse import urlparse
 
 from async_api_agent import settings
 
 ANTHROPIC_VERSION = "2023-06-01"
+
+# Sent with every request. Cloudflare turns urllib's own "Python-urllib/3.x"
+# away with a 403 (error 1010) in front of OpenCode Go, and may in front of
+# any hosted provider.
+USER_AGENT = "gep-lora-agent/1.0"
+
+# What a conversation id from the page may be: a UUID, or the page's
+# fallback -- nothing a header could be made to carry more than an id in.
+_CONVERSATION = re.compile(r"[A-Za-z0-9_-]{8,64}")
 
 # A reasoning model served over an OpenAI-compatible endpoint (a Qwen3 in LM
 # Studio, say) may put its thinking in the reply itself.
@@ -73,8 +89,11 @@ def describe():
 
 def resolve(choice=None):
     """What the page asked for, or the defaults. -> {name, kind, label,
-    base_url, api_key, model, temperature}. The model may still be None for a
-    local server; chat() asks it then."""
+    base_url, api_key, model, temperature, wires, session}. The model may still
+    be None for a local server; chat() asks it then. `session` is the header a
+    provider wants the conversation's id in, and the id: the page's own, else
+    one made up for this request, so every round of one chat carries the
+    same."""
     choice = choice if isinstance(choice, dict) else {}
     name = choice.get("provider") or settings.PROVIDER
     entry = _entry(name)
@@ -101,16 +120,25 @@ def resolve(choice=None):
             and not api_key:
         raise ProviderError("%s needs an API key: set %s in the environment the API "
                             "server runs in" % (entry["label"], entry["key_env"]))
+    session = None
+    if entry.get("session_header"):
+        conversation = str(choice.get("conversation") or "")
+        # A header value: the page's id if it looks like one, never raw text.
+        if not _CONVERSATION.fullmatch(conversation):
+            conversation = uuid.uuid4().hex
+        session = (entry["session_header"], conversation)
     return {"name": name, "kind": entry["kind"], "label": entry["label"],
             "base_url": base_url, "api_key": api_key, "model": model,
-            "temperature": bool(entry.get("temperature"))}
+            "temperature": bool(entry.get("temperature")), "wires": entry.get("wires") or {},
+            "session": session}
 
 
 def _request(url, payload=None, headers=None, timeout=None):
     """-> the JSON reply. Raises ProviderError naming the endpoint."""
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, method="POST" if data else "GET",
-                                     headers=dict({"Content-Type": "application/json"},
+                                     headers=dict({"Content-Type": "application/json",
+                                                   "User-Agent": USER_AGENT},
                                                   **(headers or {})))
     try:
         with urllib.request.urlopen(request, timeout=timeout or settings.TIMEOUT) as reply:
@@ -131,10 +159,31 @@ def _request(url, payload=None, headers=None, timeout=None):
         raise ProviderError("%s did not answer in JSON" % url)
 
 
-def _headers(resolved):
-    if resolved["kind"] == "anthropic":
-        return {"x-api-key": resolved["api_key"], "anthropic-version": ANTHROPIC_VERSION}
-    return {"Authorization": "Bearer " + resolved["api_key"]} if resolved["api_key"] else {}
+def wire(resolved, model):
+    """The format a call to `model` goes in: the first of the provider's
+    `wires` whose prefixes the model id starts with, else its `kind`."""
+    lowered = (model or "").lower()
+    for name, prefixes in resolved.get("wires", {}).items():
+        if any(lowered.startswith(prefix.lower()) for prefix in prefixes):
+            return name
+    return resolved["kind"]
+
+
+def _headers(resolved, wire_name=None):
+    wire_name = wire_name or resolved["kind"]
+    bearer = {"Authorization": "Bearer " + resolved["api_key"]} if resolved["api_key"] else {}
+    if wire_name == "anthropic":
+        headers = {"x-api-key": resolved["api_key"], "anthropic-version": ANTHROPIC_VERSION}
+        # A gateway speaking Anthropic's format for someone else's model may
+        # read its own bearer rather than x-api-key; Anthropic gets its own two.
+        if resolved["kind"] != "anthropic":
+            headers.update(bearer)
+    else:
+        headers = bearer
+    if resolved.get("session"):
+        header, conversation = resolved["session"]
+        headers[header] = conversation
+    return headers
 
 
 def list_models(resolved, timeout=None):
@@ -188,10 +237,7 @@ def chat(resolved, system, messages):
     if not turns:
         raise ProviderError("nothing to send")
     model = model_for(resolved)
-    if resolved["kind"] == "anthropic":
-        reply = _anthropic_post(resolved, model, system, turns)
-    else:
-        reply = _openai_post(resolved, model, system, turns)
+    reply = _POSTS[wire(resolved, model)](resolved, model, system, turns)
     if not reply["text"]:
         raise ProviderError("%s replied with nothing (a reasoning model out of tokens?)" % model)
     return reply["text"], model
@@ -216,17 +262,21 @@ def converse(resolved, system, history, exchange, tools):
     if not turns:
         raise ProviderError("nothing to send")
     model = model_for(resolved)
-    if resolved["kind"] == "anthropic":
+    wire_name = wire(resolved, model)
+    if wire_name == "anthropic":
         messages = turns + _anthropic_rest(exchange[1:])
         spec = [{"name": name, "description": about, "input_schema": schema}
                 for name, about, schema in tools]
-        reply = _anthropic_post(resolved, model, system, messages, spec)
+    elif wire_name == "responses":
+        messages = turns + _responses_rest(exchange[1:])
+        spec = [{"type": "function", "name": name, "description": about, "parameters": schema}
+                for name, about, schema in tools]
     else:
         messages = turns + _openai_rest(exchange[1:])
         spec = [{"type": "function",
                  "function": {"name": name, "description": about, "parameters": schema}}
                 for name, about, schema in tools]
-        reply = _openai_post(resolved, model, system, messages, spec)
+    reply = _POSTS[wire_name](resolved, model, system, messages, spec)
     reply["model"] = model
     return reply
 
@@ -263,6 +313,25 @@ def _anthropic_rest(exchange):
     return out
 
 
+def _responses_rest(exchange):
+    """The Responses API's shape: a function_call item per call and a
+    function_call_output per result. The calls go back without their item
+    ids, and the reasoning items not at all -- an id names a reasoning item
+    the gateway need not have kept, and a call sent without it is refused."""
+    out = []
+    for turn in exchange:
+        if turn["role"] == "assistant":
+            if turn.get("content"):
+                out.append({"role": "assistant", "content": turn["content"]})
+            out.extend({"type": "function_call", "call_id": call["id"], "name": call["name"],
+                        "arguments": json.dumps(call["arguments"])}
+                       for call in turn.get("calls") or [])
+        elif turn["role"] == "tool":
+            out.append({"type": "function_call_output", "call_id": turn["id"],
+                        "output": turn["content"]})
+    return out
+
+
 def _openai_post(resolved, model, system, turns, tools=None):
     payload = {"model": model, "messages": [{"role": "system", "content": system}] + turns}
     # OpenAI's own reasoning models take max_completion_tokens and refuse
@@ -273,7 +342,8 @@ def _openai_post(resolved, model, system, turns, tools=None):
         payload["temperature"] = settings.TEMPERATURE
     if tools:
         payload["tools"] = tools
-    reply = _request(resolved["base_url"] + "/chat/completions", payload, _headers(resolved))
+    reply = _request(resolved["base_url"] + "/chat/completions", payload,
+                     _headers(resolved, "openai"))
     try:
         message = reply["choices"][0]["message"]
         text = message.get("content") or ""
@@ -297,18 +367,20 @@ def _anthropic_post(resolved, model, system, messages, tools=None):
                "system": system, "messages": messages}
     if tools:
         payload["tools"] = tools
-    if settings.ANTHROPIC_EFFORT:
+    # Effort is Claude's own; another maker's model behind the same format
+    # would only refuse it and cost a retry.
+    if settings.ANTHROPIC_EFFORT and resolved["kind"] == "anthropic":
         payload["output_config"] = {"effort": settings.ANTHROPIC_EFFORT}
     url = resolved["base_url"] + "/messages"
     try:
-        reply = _request(url, payload, _headers(resolved))
+        reply = _request(url, payload, _headers(resolved, "anthropic"))
     except ProviderError as error:
         # An older model (Haiku 4.5) refuses effort; the reply is worth more
         # than the setting.
         if "output_config" not in payload or "400" not in str(error):
             raise
         payload.pop("output_config")
-        reply = _request(url, payload, _headers(resolved))
+        reply = _request(url, payload, _headers(resolved, "anthropic"))
     if reply.get("stop_reason") == "refusal":
         raise ProviderError("%s declined to answer" % model)
     blocks = [block for block in reply.get("content") or [] if isinstance(block, dict)]
@@ -318,3 +390,37 @@ def _anthropic_post(resolved, model, system, messages, tools=None):
               "arguments": block.get("input") or {}}
              for block in blocks if block.get("type") == "tool_use"]
     return {"text": text.strip(), "calls": calls, "raw": blocks}
+
+
+def _responses_post(resolved, model, system, messages, tools=None):
+    # No temperature: the reasoning models this wire carries refuse it.
+    payload = {"model": model, "instructions": system, "input": messages,
+               "max_output_tokens": settings.MAX_TOKENS}
+    if tools:
+        payload["tools"] = tools
+    reply = _request(resolved["base_url"] + "/responses", payload,
+                     _headers(resolved, "responses"))
+    output = reply.get("output") if isinstance(reply, dict) else None
+    if not isinstance(output, list):
+        raise ProviderError("%s sent a reply with no output in it" % resolved["base_url"])
+    items = [item for item in output if isinstance(item, dict)]
+    parts = [part for item in items if item.get("type") == "message"
+             for part in item.get("content") or [] if isinstance(part, dict)]
+    # Reasoning items come first; only the message's text is the reply.
+    text = "".join(part.get("text", "") for part in parts if part.get("type") == "output_text")
+    if not text and any(part.get("type") == "refusal" for part in parts):
+        raise ProviderError("%s declined to answer" % model)
+    calls = []
+    for number, item in enumerate((one for one in items if one.get("type") == "function_call"), 1):
+        raw = item.get("arguments") or "{}"
+        try:
+            arguments = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        except (ValueError, TypeError):
+            arguments = {"__unreadable__": str(raw)[:200]}
+        calls.append({"id": item.get("call_id") or item.get("id") or "call_%d" % number,
+                      "name": item.get("name") or "", "arguments": arguments})
+    return {"text": _THINKING.sub("", text).strip(), "calls": calls, "raw": items}
+
+
+# One per wire: (resolved, model, system, messages, tools=None) -> {text, calls, raw}.
+_POSTS = {"openai": _openai_post, "anthropic": _anthropic_post, "responses": _responses_post}

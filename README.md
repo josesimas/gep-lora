@@ -3092,13 +3092,22 @@ take tools, `commands.py` reads the common requests into the same calls, so
 
 **Providers.** `lmstudio` (the default) is the judges' endpoint,
 `JUDGE_BASE_URL`, with the first model it lists unless one is named; `ollama`,
-`openai`, `anthropic`, `gemini`, `mistral` and `openrouter` are the others,
-and `scripted` asks nobody. The page's *model* chip switches provider and
+`openai`, `anthropic`, `gemini`, `mistral`, `openrouter` and `opencode-go` are
+the others, and `scripted` asks nobody. OpenCode Go is one key and one URL in
+front of three wire formats, so its entry carries `wires` -- model-id prefixes
+per format: MiniMax and Qwen go to `/messages` (Anthropic's shape, without
+Claude's effort knob), Grok, GPT and Muse to `/responses` (OpenAI's Responses
+API), everything else to `/chat/completions`. A family added on another
+endpoint needs its prefix there. Go also refuses a request that does not name
+its conversation, so the page gives each conversation an id (new on *Start
+over*), sends it as `agent.conversation`, and a provider with a
+`session_header` gets it in that header (`x-opencode-session`); every request
+carries a `User-Agent` of its own, since Cloudflare turns urllib's away. The page's *model* chip switches provider and
 model for its own conversation and lists what the provider serves
 (`GET /agent/models`); `GEP_AGENT_PROVIDER` / `GEP_AGENT_MODEL` set the
 default for everyone. **Keys are environment variables of the server** --
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`,
-`OPENROUTER_API_KEY`, `$JUDGE_API_KEY` for LM Studio -- never settings, never
+`OPENROUTER_API_KEY`, `OPENCODE_API_KEY`, `$JUDGE_API_KEY` for LM Studio -- never settings, never
 sent to the browser. Only a local provider may be pointed at another URL from
 the page, and then without its key, so no page can send a key anywhere. A
 Claude model is asked without `temperature` (Opus 5 and Sonnet 5 refuse it),

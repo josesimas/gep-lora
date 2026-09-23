@@ -31,6 +31,9 @@ MODEL = None
 # "openai" is POST {base_url}/chat/completions (and GET {base_url}/models),
 # "anthropic" is POST {base_url}/messages with Anthropic's headers, and
 # "scripted" asks nobody -- the fallback wording from prompts.py, always.
+# A gateway serving models in more than one format adds `wires`: {wire:
+# [model-id prefix]}, where a wire is "openai", "anthropic" or "responses"
+# (POST {base_url}/responses, OpenAI's Responses API).
 #
 # `base_url` None means the judges' endpoint, config/settings.py's
 # JUDGE_BASE_URL, so the agent talks to the same LM Studio the judges grade on.
@@ -61,6 +64,19 @@ PROVIDERS = {
     "openrouter": {"label": "OpenRouter", "kind": "openai",
                    "base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY",
                    "model": "openrouter/auto", "local": False, "temperature": True},
+    # One key, one URL, three wire formats: OpenCode Go serves each model in
+    # the shape its maker speaks, so `wires` picks the format by model-id
+    # prefix and `kind` is what every model not named there speaks. The prefixes
+    # follow https://opencode.ai/docs/go/ -- a new family on another endpoint
+    # needs a line here. It also refuses (400) a request without a stable id
+    # per conversation, so `session_header` names the header the page's
+    # conversation id goes in.
+    "opencode-go": {"label": "OpenCode Go", "kind": "openai",
+                    "base_url": "https://opencode.ai/zen/go/v1", "key_env": "OPENCODE_API_KEY",
+                    "model": "kimi-k3", "local": False, "temperature": True,
+                    "wires": {"anthropic": ["minimax-", "qwen"],
+                              "responses": ["grok-", "gpt-", "muse-"]},
+                    "session_header": "x-opencode-session"},
     "scripted": {"label": "No model (built-in wording)", "kind": "scripted",
                  "base_url": None, "key_env": None, "model": "scripted",
                  "local": True, "temperature": False},

@@ -9,13 +9,14 @@ What async_api_agent owns, and so what is tested here:
   * turning "how long can you wait" into epochs without a model, and the
     plan that trains them: names free in the user's catalogue, the dataset's
     own first question as the smoke test;
-  * the two wire formats, against a stand-in server: what is sent, what is
-    read back, and that a key never goes anywhere a page names;
+  * the three wire formats, against a stand-in server: what is sent, what is
+    read back, which one a gateway's model is asked in, and that a key never
+    goes anywhere a page names;
   * the fallback: no key, no endpoint or no model still answers every step;
   * the chat's tools: part of a dataset chosen (selection.py), plain
     requests read without a model (commands.py), what each tool may do at
     each step and what it hands the page (tools.py), and the tool-call round
-    trip in both wire formats;
+    trip in every wire format;
   * the endpoints, with a real worker behind them: the page's whole path from
     a shared dataset to trained LoRAs and a debrief of them, and a chat that
     narrows the dataset and changes the plan on the way.
@@ -229,6 +230,76 @@ class ProviderTests(JobsTestCase):
         self.assertNotIn("temperature", first)
         self.assertIn("output_config", first)
         self.assertNotIn("output_config", second)     # retried without what it refused
+
+    def test_opencode_go_picks_the_wire_by_the_model(self):
+        Stand_in.replies = [
+            (200, {"choices": [{"message": {"content": "From Kimi."}}]}),
+            (200, {"stop_reason": "end_turn", "content": [{"type": "text", "text": "From MiniMax."}]}),
+            (200, {"output": [{"type": "reasoning", "id": "rs_1", "summary": []},
+                              {"type": "message", "role": "assistant", "content": [
+                                  {"type": "output_text", "text": "From Grok."}]}]})]
+        texts = []
+        with mock.patch.dict(settings.PROVIDERS["opencode-go"], base_url=self.url), \
+                mock.patch.dict(os.environ, {"OPENCODE_API_KEY": "oc"}):
+            for model in ("kimi-k3", "minimax-m3", "grok-4.6"):
+                resolved = providers.resolve({"provider": "opencode-go", "model": model,
+                                              "conversation": "conv-1234abcd"})
+                texts.append(providers.chat(resolved, "SYSTEM",
+                                            [{"role": "user", "content": "hey"}])[0])
+        self.assertEqual(texts, ["From Kimi.", "From MiniMax.", "From Grok."])
+        (_, kimi, kimi_headers, _), (_, minimax, minimax_headers, minimax_body), \
+            (_, grok, grok_headers, grok_body) = Stand_in.seen
+        # Every wire carries the page's conversation id, which OpenCode Go routes by.
+        self.assertEqual({headers["x-opencode-session"]
+                          for headers in (kimi_headers, minimax_headers, grok_headers)},
+                         {"conv-1234abcd"})
+        self.assertEqual((kimi, minimax, grok),
+                         ("/v1/chat/completions", "/v1/messages", "/v1/responses"))
+        self.assertEqual(kimi_headers["authorization"], "Bearer oc")
+        self.assertEqual(kimi_headers["user-agent"], providers.USER_AGENT)   # not urllib's
+        self.assertEqual((minimax_headers["x-api-key"], minimax_headers["authorization"]),
+                         ("oc", "Bearer oc"))
+        self.assertNotIn("output_config", minimax_body)    # Claude's own knob
+        self.assertEqual((grok_body["instructions"], grok_body["input"]),
+                         ("SYSTEM", [{"role": "user", "content": "hey"}]))
+        self.assertNotIn("temperature", grok_body)
+
+    def test_a_conversation_id_is_only_sent_as_an_id_and_only_where_wanted(self):
+        with mock.patch.dict(os.environ, {"OPENCODE_API_KEY": "oc"}):
+            unsafe = providers.resolve({"provider": "opencode-go",
+                                        "conversation": "abc\r\nX-Evil: 1"})["session"]
+            missing = providers.resolve({"provider": "opencode-go"})["session"]
+        for header, value in (unsafe, missing):
+            self.assertEqual(header, "x-opencode-session")
+            self.assertRegex(value, "^[0-9a-f]{32}$")       # made up, not the page's text
+        self.assertIsNone(providers.resolve({"provider": "lmstudio",
+                                             "conversation": "conv-1234abcd"})["session"])
+
+    def test_a_tool_round_trip_in_the_responses_shape(self):
+        Stand_in.replies = [
+            (200, {"output": [{"type": "reasoning", "id": "rs_1", "summary": []},
+                              {"type": "function_call", "id": "fc_1", "call_id": "c1",
+                               "name": "select_records", "arguments": '{"first": 2}'}]}),
+            (200, {"output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "The first 2 it is."}]}]})]
+        with mock.patch.dict(settings.PROVIDERS["opencode-go"], base_url=self.url), \
+                mock.patch.dict(os.environ, {"OPENCODE_API_KEY": "oc"}):
+            reply = agent.chat(self.registry.catalog, self.user, "only the first 2", "analysis",
+                               {}, (jsonl(RECORDS), "x", None), None,
+                               {"provider": "opencode-go", "model": "gpt-5.6-luna",
+                                "conversation": "conv-1234abcd"}, [])
+        self.assertEqual(reply["message"]["text"], "The first 2 it is.")
+        self.assertEqual(reply["session"]["selection"], {"first": 2})
+        first, second = Stand_in.seen[0][3], Stand_in.seen[1][3]
+        self.assertEqual([seen[2]["x-opencode-session"] for seen in Stand_in.seen],
+                         ["conv-1234abcd"] * 2)                # one id for every round
+        self.assertEqual(first["tools"][0].keys(), {"type", "name", "description", "parameters"})
+        call, result = second["input"][-2:]
+        # The call goes back without its item id, and the reasoning not at all.
+        self.assertEqual(call, {"type": "function_call", "call_id": "c1",
+                                "name": "select_records", "arguments": '{"first": 2}'})
+        self.assertEqual((result["type"], result["call_id"]), ("function_call_output", "c1"))
+        self.assertEqual(json.loads(result["output"])["kept"], 2)
 
     def test_every_step_answers_without_a_model(self):
         dead = {"provider": "lmstudio", "base_url": "http://127.0.0.1:9/v1"}

@@ -386,8 +386,17 @@ let queuedSince = null;             // when the first LoRA was seen still queued
 let pendingFile = null;             // an upload read, not yet analysed
 let datasetMode = "paste";
 
+// One id per conversation, sent with every call: a provider that routes and
+// caches by conversation (OpenCode Go's x-opencode-session) is told which one.
+// randomUUID needs a secure context; a page served over plain http on the LAN
+// is not one.
+function conversationId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
+}
+
 function fresh() {
-  return { stage: "intro", transcript: [], dataset: null, analysis: null, sharedFile: null,
+  return { conversation: conversationId(), stage: "intro", transcript: [], dataset: null, analysis: null, sharedFile: null,
            choices: null, recommended: null, epochs: null, estimate: null, plan: null,
            loras: [], startedAt: null, finishedAt: null, stamps: {}, mock: null, agent: null,
            debriefed: false,
@@ -599,7 +608,8 @@ function setStage(stage) {
 
 function agentChoice() {
   return { provider: $("provider").value, model: $("model").value.trim() || undefined,
-           base_url: $("baseUrlRow").hidden ? undefined : ($("baseUrl").value.trim() || undefined) };
+           base_url: $("baseUrlRow").hidden ? undefined : ($("baseUrl").value.trim() || undefined),
+           conversation: S.conversation };
 }
 const mock = () => S.mock === null ? $("mock").checked : S.mock;
 // The session as the server is sent it: the page's practice-run setting wins.
@@ -805,9 +815,9 @@ function trainAgain() {
 
 function newDataset() {
   userSays("Let's start with a new dataset.");
-  const transcript = S.transcript;
+  const transcript = S.transcript, conversation = S.conversation;
   S = fresh();
-  S.transcript = transcript;
+  S.transcript = transcript; S.conversation = conversation;      // the same conversation, a new dataset
   S.stamps.intro = Date.now();
   details = {}; logText = {}; pendingFile = null;
   marker("new dataset");
