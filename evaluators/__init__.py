@@ -26,6 +26,8 @@ a stored sweep can say how:
                              blend's reply and the dataset's, and nothing else
     llm_judge_baseline.py    the same, but shown what the base model itself
                              said, and asked how much the blend improved on it
+    jev_judge_reference.py   llm_judge_reference's question, graded by Jev
+                             (typesafe.ai) instead of an LLM judge
     similarity.py            token overlap with the dataset's answer, no model
     heuristic.py             local checkable properties, no model
     panel.py                 several judge models, aggregated
@@ -97,6 +99,7 @@ from evaluators import llm_judge                # noqa: F401,E402
 from evaluators import llm_judge_reference      # noqa: F401,E402
 from evaluators import llm_judge_answers         # noqa: F401,E402
 from evaluators import llm_judge_baseline        # noqa: F401,E402
+from evaluators import jev_judge_reference      # noqa: F401,E402
 from evaluators import similarity               # noqa: F401,E402
 from evaluators import heuristic                # noqa: F401,E402
 from evaluators import panel                    # noqa: F401,E402

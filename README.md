@@ -849,6 +849,7 @@ python start_run.py --evaluators     # what is registered, and which one is curr
 | `llm_judge_reference` | the same judge, shown the dataset's own answer to that question as well | a judge, a dataset with assistant turns |
 | `llm_judge_answers` | the same two answers, **without the question**: the dataset's answer and the blend's | a judge, a dataset with assistant turns |
 | `llm_judge_baseline` | the same judge, shown what the **base model** answered, scoring the improvement | a judge, one cached run of the base model |
+| `jev_judge_reference` | `llm_judge_reference`'s question, graded by **Jev** (typesafe.ai) instead of a judge model | a Jev API key, a dataset with assistant turns |
 | `similarity` | token or character overlap with the dataset's answer | a dataset with assistant turns |
 | `heuristic` | local checks: length, repetition, a required and a forbidden pattern | nothing |
 | `panel` | several judge models, aggregated | a judge per member |
@@ -857,10 +858,12 @@ python start_run.py --evaluators     # what is registered, and which one is curr
 "A judge" is a model, and `JUDGE_BACKEND` says where it runs: an
 OpenAI-compatible **endpoint**, or one loaded **here with unsloth**, the way the
 generated scripts load the model they blend. See
-[Where the judge runs](#where-the-judge-runs) — the five evaluators above are
-indifferent to it.
+[Where the judge runs](#where-the-judge-runs) — the four `llm_judge*`
+evaluators and `panel` are indifferent to it. `jev_judge_reference` is the one
+exception: it never touches `JUDGE_BACKEND` at all, because Jev is not a judge
+*model* — see below.
 
-All six produce the same thing — a `quality` in 0..1 and a short `reason` on
+All seven produce the same thing — a `quality` in 0..1 and a short `reason` on
 each exchange — so every step downstream is unchanged. `0.0` is worst, `1.0` is
 best; that is the number a fitness function selects on.
 
@@ -1024,6 +1027,40 @@ settings.
 A prompt with no reference is graded on merit instead of being dropped: a
 shrunken eval set for one individual would make its fitness incomparable with
 the rest.
+
+#### `jev_judge_reference` — the same question, graded by Jev instead of a judge
+
+`llm_judge_reference`'s question — does the answer match the dataset's own
+answer in manner, substance and coherence — asked of
+[Jev](https://typesafe.ai), typesafe.ai's "System One" model, instead of an
+LLM. Jev is not a chat model asked to write a paragraph and have a score
+extracted from it: it takes a `state` and a typed `question` and returns a
+constrained decision — here, a rating against five described levels, as a
+probability distribution plus a confidence — so there is no free-text judge
+reply to parse, and no explanation in the judge's own words.
+
+The five levels are `llm_judge_reference`'s own rubric anchors (`useless` /
+`poor` / `mixed` / `good` / `excellent` → `0.0` / `0.3` / `0.5` / `0.7` /
+`1.0`), so a sweep graded by the two evaluators means the same thing by a
+`0.7`. The `quality` recorded is the probability-weighted mean of those
+anchors, not Jev's own `score` field, whose indexing the API does not pin
+down — see
+[`evaluators/jev_judge_reference.py`](evaluators/jev_judge_reference.py). An
+item with no reference **fails that exchange**, the way `llm_judge_answers`
+does, rather than falling back to a merit-only judge: there is no
+merit-only Jev evaluator to fall back to.
+
+Its own settings, all in `settings.py`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `JEV_BASE_URL` | `None` — the public API | the TypeSafe evaluation endpoint |
+| `JEV_MODEL` | `"jev-latest"` | which Jev release grades |
+| `JEV_TIMEOUT` / `JEV_RETRIES` / `JEV_RETRY_WAIT` | 30 / 2 / 3 | one call's patience |
+
+The API key is read from the `TYPESAFE_API_KEY` environment variable, never
+from `settings.py`, for the same reason `JUDGE_API_KEY` is: a sweep writes its
+settings into the database, and a bearer token has no business there.
 
 #### `llm_judge_answers` — the two answers, and not the question
 
@@ -1324,7 +1361,12 @@ reach `score()` as `prepared.conf`, which is the sweep's *stored* settings, neve
 belongs in `evaluators/common.py`. An evaluator that asks a model should ask it
 through `common.ask_judge()` and build its block with `common.judge_settings()`,
 which is what makes it work on both backends for free, and should be registered
-with `needs_judge=True` so the abandon rule applies to it.
+with `needs_judge=True` so the abandon rule applies to it. `jev_judge_reference`
+is the one exception: Jev is not a `JUDGE_BACKEND` model, so it keeps its own
+transport and settings and registers with `via_judge_backend=False` as well —
+do the same for an evaluator that asks a judge of its own rather than one named
+by `JUDGE_BACKEND`/`JUDGE_MODEL`, so `wants_the_card()` and `--evaluators`
+don't claim it runs through an endpoint or local model it never touches.
 
 ### 6. `search/calculate_fitness.py` → `individuals.fitness`, `fitness_history`
 
@@ -3437,7 +3479,7 @@ async_api_agent/  the LoRA guide behind /agent: prompts, providers, tools, a dat
 
 | Path | What it is |
 |---|---|
-| `evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_answers.py`, `llm_judge_baseline.py`, `similarity.py`, `heuristic.py`, `panel.py` |
+| `evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_answers.py`, `llm_judge_baseline.py`, `jev_judge_reference.py`, `similarity.py`, `heuristic.py`, `panel.py` |
 | `evaluators/common.py` | what they share: the registry, the judge transport, the reference answers, the tokeniser |
 | `evaluators/local_model.py` | the other half of the judge transport: the judge loaded here with unsloth, for `JUDGE_BACKEND = "unsloth"` |
 

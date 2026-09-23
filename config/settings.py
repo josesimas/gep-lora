@@ -565,6 +565,34 @@ BASELINE_TEMPLATE = None
 BASELINE_TIMEOUT = 1800
 
 
+# --- the "jev_judge_reference" evaluator ------------------------------------
+#
+# llm_judge_reference's question -- does the answer match the dataset's own
+# answer in manner and substance -- graded by Jev (typesafe.ai's "System One"
+# model) instead of an LLM. Jev is not read from JUDGE_BACKEND/JUDGE_BASE_URL:
+# it is a different service with a different request shape (a typed decision,
+# not a chat completion), so it gets its own settings. The API key is
+# deliberately not one of them, for the same reason JUDGE_API_KEY isn't: it is
+# read from the TYPESAFE_API_KEY environment variable by
+# evaluators/jev_judge_reference.py instead.
+
+# The TypeSafe evaluation endpoint's host. None uses the public API.
+JEV_BASE_URL = None
+
+# Which Jev release grades. "jev-latest" tracks TypeSafe's current stable
+# release; a versioned id (e.g. "jev-1.13.0") pins a sweep to one build.
+JEV_MODEL = "jev-latest"
+
+# Seconds to wait for one grading call, how many times to retry a call that
+# fails for a transient reason (dropped connection, rate limit, the service
+# overloaded), and how long to wait between tries. Jev is small and fast next
+# to a judge model -- TypeSafe's own numbers are on the order of 100ms a call --
+# so this is far shorter than JUDGE_TIMEOUT.
+JEV_TIMEOUT = 30
+JEV_RETRIES = 2
+JEV_RETRY_WAIT = 3
+
+
 # --- the "similarity" evaluator --------------------------------------------
 
 # How an answer is compared with the dataset's answer:

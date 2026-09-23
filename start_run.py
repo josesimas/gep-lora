@@ -347,7 +347,8 @@ def wants_the_card(conf):
     try:
         if evaluators.backend_of(conf) != evaluators.UNSLOTH:
             return False
-        return evaluators.get(conf.get("EVALUATOR")).asks_judge(conf)
+        evaluator = evaluators.get(conf.get("EVALUATOR"))
+        return evaluator.asks_judge(conf) and evaluator.via_judge_backend
     except SystemExit:
         return True
 
@@ -1366,16 +1367,27 @@ def main(argv=None):
         backend = evaluators.backend_of(config.snapshot())
         # Counted off the registry rather than written out, so adding an
         # evaluator that asks a model does not leave this line saying "four".
-        judging = sum(1 for name, _description in evaluators.available()
-                      if evaluators.get(name).needs_judge)
+        # Split on via_judge_backend, since not every evaluator that asks a
+        # model asks it through JUDGE_BACKEND -- jev_judge_reference speaks to
+        # Jev directly, and claiming it ran through whatever endpoint or local
+        # model JUDGE_BACKEND names would be the wrong judge entirely.
+        via_backend = [name for name, _description in evaluators.available()
+                       if evaluators.get(name).needs_judge
+                       and evaluators.get(name).via_judge_backend]
+        own_transport = [name for name, _description in evaluators.available()
+                         if evaluators.get(name).needs_judge
+                         and not evaluators.get(name).via_judge_backend]
         print("\n  The %d judging evaluators ask their judge through "
               "JUDGE_BACKEND = %r:\n  %s"
-              % (judging, backend,
+              % (len(via_backend), backend,
                  "loaded here with unsloth, %s"
                  % (config.JUDGE_MODEL or "and JUDGE_MODEL must name one")
                  if backend == evaluators.UNSLOTH else
                  "%s at %s" % (config.JUDGE_MODEL or "whatever it has loaded",
                                config.JUDGE_BASE_URL)))
+        if own_transport:
+            print("\n  %s ask%s a judge of their own, not through JUDGE_BACKEND."
+                  % (", ".join(own_transport), "" if len(own_transport) > 1 else "s"))
         return 0
 
     if args.steps:

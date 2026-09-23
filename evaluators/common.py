@@ -107,11 +107,13 @@ class Evaluator:
     """
 
     __slots__ = ("name", "description", "prepare", "score", "wants_reference",
-                 "needs_judge", "wants_baseline", "judges", "check")
+                 "needs_judge", "wants_baseline", "judges", "check",
+                 "via_judge_backend")
 
     def __init__(self, name, description, prepare, score,
                  wants_reference=False, needs_judge=False,
-                 wants_baseline=False, judges=None, check=None):
+                 wants_baseline=False, judges=None, check=None,
+                 via_judge_backend=True):
         self.name = name
         self.description = description
         self.prepare = prepare
@@ -134,6 +136,13 @@ class Evaluator:
         # typo is refused before a population is drawn rather than after the
         # process step. None means there is nothing to check that cheaply.
         self.check = check
+        # Whether "asks a model" means through JUDGE_BACKEND -- true for every
+        # evaluator that calls ask_judge(), false for one that speaks to a judge
+        # of its own (jev_judge_reference, to Jev). Only needs_judge evaluators
+        # ever set this false; a local scorer's transport is moot. What
+        # wants_the_card() and the --evaluators summary read to avoid claiming a
+        # judge that never touches JUDGE_BACKEND runs through it.
+        self.via_judge_backend = via_judge_backend
 
     def asks_judge(self, conf):
         """Whether scoring under these settings asks a model. -> bool.
