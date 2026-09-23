@@ -302,11 +302,12 @@ class EndpointTests(ServerTestCase):
         folder = lora_catalog.absolute(self.app.catalog.by_name("demo", "alice")["folder"])
         slots = dict(self.slots, L3=folder)
         # The mocked template reads only the rank, so it takes a mocked LoRA...
-        status, reply = self.call("POST", "/jobs", self.submission(LORA_SLOTS=slots))
+        status, reply = self.call("POST", "/jobs", self.submission(
+            LORA_SLOTS=slots, BASE_MODEL="unsloth/base"))
         self.assertEqual(status, 201, reply)
         # ...and a template that loads the weights does not.
         status, reply = self.call("POST", "/jobs", self.submission(
-            LORA_SLOTS=slots, TEMPLATE="template_code.py"))
+            LORA_SLOTS=slots, BASE_MODEL="unsloth/base", TEMPLATE="template_code.py"))
         self.assertEqual(status, 400)
         self.assertIn("no adapter weights", reply["error"])
 

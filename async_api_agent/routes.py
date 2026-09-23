@@ -22,6 +22,15 @@ App and the user, like an App method, and returns (status, payload).
                                                                  tools changed
     POST /agent/debrief             {agent, loras: [id], mock, history}
 
+  combining them (blending.py)
+    POST /agent/blend/intro         {agent, session, prefer?: [id], history, quiet?}
+                                                              -> the user's ready LoRAs,
+                                                                 the pick, the search
+    POST /agent/blend/plan          {session, dataset?, mock, prefer?}
+                                                              -> the POST /jobs body, read back
+    POST /agent/blend/started       {agent, job: {id, queue_position}, plan, history}
+    POST /agent/blend/debrief       {agent, job: id, history} -> what the search found
+
 `agent` is the page's choice of model -- {"provider", "model", "base_url",
 "conversation"}, the last an id per conversation for the providers that route
 by one --
@@ -30,6 +39,11 @@ one of the shared datasets, and `session` is what the chat has set up so far
 (planner.session_of): the part of the dataset in use, the ranks, the epochs,
 the options. None of these trains anything: the page sends the plan to
 POST /loras itself, and carries out the actions a chat reply hands back.
+
+The blend half is the same bargain: /agent/blend/plan returns a POST /jobs
+body naming the user's own LoRAs by catalogue id, the page submits it, and
+watches GET /jobs/{id}/status; /agent/blend/debrief reads only a job of the
+user's own (another user's is a 404, as on /jobs/{id}).
 """
 
 import os
@@ -37,6 +51,7 @@ import os
 from async_api import settings as api_settings
 from async_api_agent import agent
 from async_api_agent import analysis
+from async_api_agent import blending
 from async_api_agent import planner
 from async_api_agent import prompts
 from async_api_agent import providers
@@ -169,10 +184,20 @@ def config(app, user):
                  "mock": bool(settings.MOCK), "few_records": settings.FEW_RECORDS,
                  "datasets": demo_datasets(),
                  # The page's own lines, so every word the agent says is prompts.py's.
+                 "blend": {"generations": settings.BLEND_GENERATIONS,
+                           "population": settings.BLEND_POPULATION,
+                           "questions": settings.BLEND_QUESTIONS,
+                           "max_generations": settings.MAX_BLEND_GENERATIONS,
+                           "min_population": settings.MIN_BLEND_POPULATION,
+                           "max_population": settings.MAX_BLEND_POPULATION,
+                           "max_questions": settings.MAX_BLEND_QUESTIONS,
+                           "slots": len(blending.SLOTS)},
                  "words": {"instructions": prompts.STEP_INSTRUCTIONS,
                            "not_yet": prompts.NOT_YET, "ask_dataset": prompts.ASK_DATASET,
                            "another_dataset": prompts.ANOTHER_DATASET,
-                           "stopped": prompts.STOPPED, "chat_hint": prompts.CHAT_HINT}}
+                           "stopped": prompts.STOPPED, "blend_stopped": prompts.BLEND_STOPPED,
+                           "chat_hint": prompts.CHAT_HINT,
+                           "blend_hint": prompts.BLEND_HINT}}
 
 
 def models(app, user, query):
@@ -188,7 +213,10 @@ def models(app, user, query):
 
 
 def intro(app, user, body):
-    return 200, agent.intro(_choice(body), bool((body or {}).get("mock")))
+    ready = len(blending.mine(app.catalog, user))
+    out = agent.intro(_choice(body), bool((body or {}).get("mock")), ready)
+    out["ready_loras"] = ready
+    return 200, out
 
 
 def analyse(app, user, body):
@@ -248,6 +276,56 @@ def debrief(app, user, body):
                               bool((body or {}).get("mock")))
 
 
+# --- combining the LoRAs ------------------------------------------------------
+
+
+def _prefer(body):
+    """The LoRA ids the page would like picked -- the ones it just trained."""
+    ids = (body or {}).get("prefer")
+    return [one for one in ids if isinstance(one, int) and not isinstance(one, bool)] \
+        if isinstance(ids, list) else []
+
+
+def blend_intro(app, user, body):
+    return 200, agent.blend_intro(app.catalog, user, _session(body), _choice(body),
+                                  _history(body), _prefer(body),
+                                  bool((body or {}).get("quiet")))
+
+
+def blend_plan(app, user, body):
+    session = _session(body)
+    session["mock"] = session["mock"] or bool((body or {}).get("mock"))
+    dataset = dataset_of(body) if (body or {}).get("dataset") else None
+    try:
+        found = blending.plan(app.catalog, app.registry, user, session, session["mock"],
+                              dataset, _prefer(body))
+    except blending.BlendError as error:
+        raise AgentError(400, str(error))
+    found["message"] = agent.blend_confirm(found)
+    found["blend"] = dict(session["blend"], loras=[one["id"] for one in found["loras"]])
+    return 200, found
+
+
+def blend_started(app, user, body):
+    job = (body or {}).get("job")
+    plan = (body or {}).get("plan")
+    if not isinstance(job, dict) or not isinstance(plan, dict):
+        raise AgentError(400, "job must be {id, queue_position} and plan what /agent/blend/plan "
+                              "returned")
+    return 200, {"message": agent.blend_started(job, plan, _choice(body), _history(body))}
+
+
+def blend_debrief(app, user, body):
+    job_id = (body or {}).get("job")
+    if not isinstance(job_id, int) or isinstance(job_id, bool):
+        raise AgentError(400, "job must be the search's job id")
+    job = app.registry.job(job_id, user["id"])
+    if job is None:
+        raise AgentError(404, "no job %d" % job_id)
+    return 200, agent.blend_debrief(app.registry, app.catalog, user, job, _choice(body),
+                                    _history(body))
+
+
 # (method, path pattern, handler, extras) -- the shape of server.ROUTES, with
 # a function where the server's own routes name an App method.
 ROUTES = [
@@ -260,4 +338,8 @@ ROUTES = [
     ("POST", r"/agent/started", started, ("body",)),
     ("POST", r"/agent/chat", chat, ("body",)),
     ("POST", r"/agent/debrief", debrief, ("body",)),
+    ("POST", r"/agent/blend/intro", blend_intro, ("body",)),
+    ("POST", r"/agent/blend/plan", blend_plan, ("body",)),
+    ("POST", r"/agent/blend/started", blend_started, ("body",)),
+    ("POST", r"/agent/blend/debrief", blend_debrief, ("body",)),
 ]

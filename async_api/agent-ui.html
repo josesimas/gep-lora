@@ -215,7 +215,7 @@
   @keyframes arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
   /* The pipeline: where the process is, drawn as connected steps. */
-  .pipeline { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0; }
+  .pipeline { display: grid; grid-template-columns: repeat(var(--stages, 6), minmax(0, 1fr)); gap: 0; }
   .stage { position: relative; padding: 2px 6px 0 0; min-width: 0; }
   .stage .dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700;
                 background: var(--code); color: var(--faint); border: 2px solid var(--panel); position: relative; z-index: 1; }
@@ -291,6 +291,13 @@
   .result:last-child { border-bottom: 0; }
   .result-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
   .result-head .num { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .option.blocked { opacity: .5; }
+  .knobs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+  .knobs label { font-size: 11px; }
+  .formula { font: 13px/1.6 var(--mono); background: var(--code); border-radius: 8px; padding: 10px 12px;
+             overflow-wrap: anywhere; margin: 0 0 10px; }
+  .slot-tag { display: inline-block; min-width: 26px; text-align: center; font: 600 11px var(--mono); padding: 1px 6px;
+              border-radius: 5px; background: var(--accent-soft); color: var(--accent); margin-right: 6px; }
 </style>
 </head>
 <body>
@@ -303,7 +310,7 @@
       <circle cx="7" cy="17" r="2" fill="var(--accent-ink)"/>
       <circle cx="19" cy="17" r="2" fill="var(--accent-ink)"/>
     </svg>
-    <div><b>LoRA guide</b><span>train LoRAs with an assistant</span></div>
+    <div><b>LoRA guide</b><span>train LoRAs and blend them, with an assistant</span></div>
   </div>
   <div class="spacer"></div>
   <span id="health" class="health" title="The async API server"></span>
@@ -369,9 +376,13 @@
 
 const STAGES = [
   ["intro", "Welcome"], ["dataset", "Dataset"], ["analysis", "Review"],
-  ["wait", "How long"], ["training", "Training"], ["done", "Done"]];
-const STAGE_OF = { confirm: "wait" };
+  ["wait", "How long"], ["training", "Training"], ["done", "Trained"],
+  ["blend", "Blend"], ["blending", "Search"], ["blended", "Best blend"]];
+const STAGE_OF = { confirm: "wait", blend_confirm: "blend" };
 const FINAL = ["ready", "failed", "cancelled", "missing"];
+// A job that will not change again on its own (registry.FINISHED).
+const JOB_FINAL = ["done", "failed", "cancelled", "stopped", "deleted"];
+const BLEND_STAGES = ["blend", "blend_confirm", "blending", "blended"];
 
 let key = "";
 let config = null;
@@ -385,6 +396,9 @@ let logText = {};                   // LoRA id -> its log lines
 let queuedSince = null;             // when the first LoRA was seen still queued
 let pendingFile = null;             // an upload read, not yet analysed
 let datasetMode = "paste";
+let blendTimer = null;              // the search's poll
+let jobDetail = null;               // the last GET /jobs/{id}: its fitness history
+let jobLog = [];                    // the search's console
 
 // One id per conversation, sent with every call: a provider that routes and
 // caches by conversation (OpenCode Go's x-opencode-session) is told which one.
@@ -399,11 +413,20 @@ function fresh() {
   return { conversation: conversationId(), stage: "intro", transcript: [], dataset: null, analysis: null, sharedFile: null,
            choices: null, recommended: null, epochs: null, estimate: null, plan: null,
            loras: [], startedAt: null, finishedAt: null, stamps: {}, mock: null, agent: null,
-           debriefed: false,
+           debriefed: false, readyLoras: 0,
            // What the chat has set up (planner.session_of): the part of the
-           // dataset in use, ranks, epochs, options. The server checks it on
-           // every call; the page only keeps it.
-           session: {}, preview: null };
+           // dataset in use, ranks, epochs, options, and `blend` -- which of
+           // the user's LoRAs a search combines, and its size. The server
+           // checks it on every call; the page only keeps it.
+           session: {}, preview: null,
+           // The second half: the user's ready LoRAs, the search's plan (the
+           // POST /jobs body, read back), the job it became and what it found.
+           blend: freshBlend() };
+}
+
+function freshBlend() {
+  return { available: [], estimate: null, plan: null, job: null, status: null, result: null,
+           startedAt: null, finishedAt: null, debriefed: false };
 }
 
 const $ = (id) => document.getElementById(id);
@@ -481,7 +504,11 @@ async function api(method, path, body) {
   entry.status = response.status; entry.ms = performance.now() - started;
   drawActivity();
   if (!response.ok) {
-    const error = new Error((data && data.error) || response.status + " " + response.statusText);
+    // The page is read from disk on every request, the routes only when the
+    // server starts: a server older than the page is missing endpoints.
+    const stale = response.status === 404 && data && /^no such endpoint/.test(data.error || "");
+    const error = new Error(stale ? `${data.error} — the API server is older than this page. Restart it (run_api_server.bat, or python -m async_api.server) and try again.`
+                                  : (data && data.error) || response.status + " " + response.statusText);
     error.status = response.status;
     throw error;
   }
@@ -619,6 +646,7 @@ function intro() {
   step(async () => {
     S.stamps.intro = Date.now();
     const reply = await api("POST", "/agent/intro", { agent: agentChoice(), mock: $("mock").checked });
+    S.readyLoras = reply.ready_loras || 0;
     agentSays(reply.message);
     setStage("intro");
   });
@@ -792,6 +820,8 @@ async function debrief() {
     drawBoard();
     const reply = await api("POST", "/agent/debrief", { agent: agentChoice(), loras: S.loras.map((one) => one.id),
                                                         mock: mock(), history: history() });
+    // The LoRAs just trained are the ones to offer for blending, not an older pick.
+    S.session = Object.assign({}, S.session, { blend: Object.assign({}, S.session.blend || {}, { loras: [] }) });
     agentSays(reply.message);
     setStage("done");
   });
@@ -826,7 +856,8 @@ function newDataset() {
 }
 
 function startOver() {
-  clearTimeout(pollTimer);
+  clearTimeout(pollTimer); clearTimeout(blendTimer);
+  jobDetail = null; jobLog = [];
   S = fresh();
   details = {}; logText = {}; pendingFile = null; datasetMode = "paste";
   save();
@@ -877,6 +908,15 @@ async function applyChat(reply) {
       if (S.stage === "confirm" && S.plan) await queueTraining();
     } else if (action.type === "stop") {
       await stopRun();
+    } else if (action.type === "blend") {
+      if (S.stage === "blended") resetBlend();
+      await enterBlend(true);
+    } else if (action.type === "blend_plan") {
+      await planBlend();
+    } else if (action.type === "start_blend") {
+      if (S.stage === "blend_confirm" && S.blend.plan) await queueBlend();
+    } else if (action.type === "stop_blend") {
+      await stopBlend();
     }
   }
   save();
@@ -893,7 +933,183 @@ function chatContext() {
     return { name: one.name, status: d.status, step: p.step ?? d.steps, of: p.of ?? d.max_steps,
              loss: p.loss ?? d.final_loss };
   });
+  const B = S.blend;
+  if (BLEND_STAGES.includes(S.stage)) {
+    context.my_loras = B.available.map((one) => ({ id: one.id, name: one.name, rank: one.rank, base_model: one.base_model }));
+    if (B.plan) context.search_plan = { loras: B.plan.loras.map((one) => one.name), places: B.plan.slots,
+                                        questions: B.plan.questions, testing: B.plan.testing, source: B.plan.source,
+                                        estimate: B.plan.estimate.time, mock: B.plan.mock };
+    if (B.job) context.search = { job: B.job.id, label: B.job.label, status: B.status && B.status.job.status,
+                                  progress: B.status && B.status.progress, best: B.result && B.result.best };
+  }
   return context;
+}
+
+// --- the second half: combining the LoRAs ------------------------------------------------
+
+function goBlend() {
+  userSays("Let's blend my LoRAs.");
+  if (S.stage === "blended") resetBlend();
+  step(() => enterBlend(false));
+}
+
+// The blend step: the user's ready LoRAs and the pick. Quietly when the chat
+// sent the page here and has already said why.
+async function enterBlend(quiet) {
+  const prefer = S.loras.filter((one) => (details[one.id] || {}).status === "ready").map((one) => one.id);
+  const reply = await api("POST", "/agent/blend/intro", { agent: agentChoice(), session: session(), prefer,
+                                                          history: history(), quiet });
+  S.blend.available = reply.available;
+  S.blend.estimate = reply.estimate;
+  S.session = Object.assign({}, S.session, { blend: reply.blend });
+  S.blend.plan = null;
+  if (reply.message) agentSays(reply.message);
+  setStage("blend");
+}
+
+const blendOf = () => Object.assign({ loras: [], generations: config.blend.generations,
+                                      population: config.blend.population, questions: config.blend.questions },
+                                    S.session.blend || {});
+function setBlend(change) {
+  S.session = Object.assign({}, S.session, { blend: Object.assign(blendOf(), change) });
+  S.blend.plan = null;
+  save();
+  drawAction(); drawBoard();
+}
+
+function toggleLora(id, on) {
+  const loras = blendOf().loras.filter((one) => one !== id);
+  if (on) loras.push(id);
+  setBlend({ loras });
+}
+
+function planBlendNow() {
+  const names = blendOf().loras.map((id) => (S.blend.available.find((one) => one.id === id) || {}).name).filter(Boolean);
+  userSays(names.length ? `Plan a search over ${names.join(", ")}.` : "Plan the search.");
+  step(planBlend);
+}
+
+// The search, planned by the agent: the POST /jobs body, read back before it starts.
+async function planBlend() {
+  const prefer = S.loras.map((one) => one.id);
+  let reply;
+  try {
+    reply = await api("POST", "/agent/blend/plan", { session: session(), mock: mock(), prefer,
+                                                     dataset: S.dataset && (S.dataset.file || S.dataset.text) ? S.dataset : undefined });
+  } catch (error) {
+    if (error.status === 400) { agentSays(plain(error.message)); setStage("blend"); return; }
+    throw error;
+  }
+  S.blend.plan = reply;
+  S.session = Object.assign({}, S.session, { blend: reply.blend });
+  agentSays(reply.message);
+  setStage("blend_confirm");
+}
+
+function changeBlend() {
+  userSays("Let me change the search.");
+  S.blend.plan = null;
+  setStage("blend");
+}
+
+function startBlend() {
+  userSays("Start the search!");
+  step(queueBlend);
+}
+
+// The plan on screen, sent to the API's own POST /jobs.
+async function queueBlend() {
+  const plan = S.blend.plan;
+  event(`queueing the search ${plan.label}`);
+  let reply;
+  try {
+    reply = await api("POST", "/jobs", plan.job);
+  } catch (error) {
+    agentSays(plain(`I couldn't queue the search: ${error.message}`));
+    setStage("blend");
+    return;
+  }
+  Object.assign(S.blend, { job: { id: reply.job.id, label: reply.job.label, queue_position: reply.job.queue_position },
+                           status: { job: reply.job, progress: null }, result: null,
+                           startedAt: Date.now(), finishedAt: null, debriefed: false });
+  jobDetail = null; jobLog = [];
+  marker(`search queued · job ${reply.job.id}`);
+  setStage("blending");
+  const said = await api("POST", "/agent/blend/started", { agent: agentChoice(), job: S.blend.job, plan,
+                                                           history: history() });
+  agentSays(said.message);
+  pollBlend();
+}
+
+function stopBlendNow() {
+  userSays("Please stop the search.");
+  step(stopBlend);
+}
+
+async function stopBlend() {
+  if (!S.blend.job) return;
+  try { await api("POST", `/jobs/${S.blend.job.id}/cancel`); } catch (error) { event(`search: ${error.message}`); }
+  agentSays(plain(words("blend_stopped")));
+  pollBlend();
+}
+
+async function pollBlend() {
+  clearTimeout(blendTimer);
+  const job = S.blend.job;
+  if (!job) return;
+  let status;
+  try {
+    status = await api("GET", `/jobs/${job.id}/status`);
+  } catch (error) {
+    if (error.status === 404) { S.blend.status = { job: { status: "deleted" }, progress: null }; drawBoard(); return; }
+    blendTimer = setTimeout(pollBlend, 4000);
+    return;
+  }
+  const before = S.blend.status && S.blend.status.progress;
+  const was = S.blend.status && S.blend.status.job.status;
+  S.blend.status = status;
+  if (was && was !== status.job.status) event(`search: ${was} → ${status.job.status}`);
+  const scored = (status.progress || {}).generations_scored;
+  if (!jobDetail || !before || before.generations_scored !== scored || JOB_FINAL.includes(status.job.status)) {
+    try { jobDetail = (await api("GET", `/jobs/${job.id}`)).results; } catch (_) { /* not yet */ }
+  }
+  try { jobLog = (await api("GET", `/jobs/${job.id}/log?lines=120`)).lines; } catch (_) { /* gone */ }
+  save();
+  drawBoard();
+  if (S.stage === "blending") drawAction();
+  if (JOB_FINAL.includes(status.job.status)) {
+    if (!S.blend.debriefed) { if (busy) blendTimer = setTimeout(pollBlend, 1000); else blendDebrief(); }
+    return;
+  }
+  blendTimer = setTimeout(pollBlend, 2000);
+}
+
+async function blendDebrief() {
+  S.blend.debriefed = true;
+  S.blend.finishedAt = S.blend.finishedAt || Date.now();
+  marker("search finished");
+  await step(async () => {
+    const reply = await api("POST", "/agent/blend/debrief", { agent: agentChoice(), job: S.blend.job.id,
+                                                              history: history() });
+    S.blend.result = reply.result;
+    agentSays(reply.message);
+    setStage("blended");
+  });
+}
+
+// Forget the last search (not the LoRAs chosen, nor its size).
+function resetBlend() {
+  clearTimeout(blendTimer);
+  const available = S.blend.available, estimate = S.blend.estimate;
+  S.blend = Object.assign(freshBlend(), { available, estimate });
+  S.stamps.blending = null; S.stamps.blended = null;
+  jobDetail = null; jobLog = [];
+}
+
+function blendAgain() {
+  userSays("Let's run another search.");
+  resetBlend();
+  setStage("blend");
 }
 
 // --- watching the training ------------------------------------------------------------------
@@ -964,6 +1180,7 @@ function drawAction() {
   else if (stage === "intro") content = [ask("Ready to start?"),
     el("div", { class: "buttons" },
       el("button", { class: "primary lg", onclick: yes, disabled: lock }, "Yes, let's start"),
+      S.readyLoras ? el("button", { class: "lg", onclick: goBlend, disabled: lock }, "Blend my LoRAs") : null,
       el("button", { class: "lg", onclick: notYet, disabled: lock }, "Not yet"))];
   else if (stage === "dataset") content = datasetControls(lock, ask);
   else if (stage === "analysis") content = [ask("Happy with this dataset?"),
@@ -991,10 +1208,60 @@ function drawAction() {
         el("button", { class: "danger", onclick: stopTraining, disabled: lock }, "Stop training"))];
   } else if (stage === "done") content = [ask("What next?"),
     el("div", { class: "buttons" },
-      el("button", { class: "primary lg", type: "button", onclick: () => window.open("/demo", "_blank", "noopener") }, "Open the console"),
+      el("button", { class: "primary lg", onclick: goBlend, disabled: lock }, "Blend them"),
       el("button", { class: "lg", onclick: trainAgain, disabled: lock }, "Train again"),
       el("button", { class: "lg ghost", onclick: newDataset, disabled: lock }, "New dataset"))];
+  else if (stage === "blend") content = blendControls(lock, ask);
+  else if (stage === "blend_confirm") content = [ask("Start the search?"),
+    el("div", { class: "buttons" },
+      el("button", { class: "primary lg", onclick: startBlend, disabled: lock }, "Start the search"),
+      el("button", { class: "lg", onclick: changeBlend, disabled: lock }, "Change")),
+    el("p", { class: "help" }, words("blend_hint"))];
+  else if (stage === "blending") {
+    const p = (S.blend.status || {}).progress || {};
+    const fraction = p.generations_expected ? (p.generations_scored || 0) / p.generations_expected : 0;
+    content = [ask("Searching — nothing to do but watch"),
+      el("div", { class: "meter big live" }, el("i", { style: `width:${Math.max(2, fraction * 100)}%` })),
+      el("div", { class: "buttons" },
+        el("button", { class: "danger", onclick: stopBlendNow, disabled: lock }, "Stop the search"))];
+  } else if (stage === "blended") content = [ask("What next?"),
+    el("div", { class: "buttons" },
+      el("button", { class: "primary lg", type: "button", onclick: () => window.open("/demo", "_blank", "noopener") }, "Open the console"),
+      el("button", { class: "lg", onclick: blendAgain, disabled: lock }, "Search again"),
+      el("button", { class: "lg ghost", onclick: newDataset, disabled: lock }, "Train more LoRAs"))];
   box.replaceChildren(...content);
+}
+
+// The blend step's controls: the user's ready LoRAs to tick (one base model,
+// at most five), and the search's size.
+function blendControls(lock, ask) {
+  const b = blendOf(), limits = config.blend;
+  const picked = S.blend.available.filter((one) => b.loras.includes(one.id));
+  const model = picked.length ? picked[0].base_model : null;
+  const list = S.blend.available.length ? S.blend.available.map((one) => {
+    const on = b.loras.includes(one.id);
+    const blocked = !on && ((model && one.base_model !== model) || b.loras.length >= limits.slots);
+    return el("label", { class: "option" + (blocked ? " blocked" : ""),
+                         title: blocked ? (model && one.base_model !== model ? "trained on another base model" : "a blend has five places") : one.dataset || "" },
+      el("input", { type: "checkbox", checked: on, disabled: lock || blocked, onchange: (e) => toggleLora(one.id, e.target.checked) }),
+      el("b", {}, one.name, one.practice_run ? el("span", { class: "tag mock", style: "margin-left:6px" }, "mock") : null),
+      el("span", { class: "side" }, `rank ${one.rank ?? "?"}`),
+      el("span", { class: "sub" }, `${one.base_model || "?"}${typeof one.final_loss === "number" ? ` · loss ${fmt(one.final_loss)}` : ""}${one.records ? ` · ${one.records} conversations` : ""}`));
+  }) : [el("p", { class: "muted" }, "You have no ready LoRAs yet — train some first.")];
+  const knob = (name, label, min, max) => el("div", {},
+    el("label", { for: "k_" + name }, label),
+    el("input", { id: "k_" + name, type: "number", min, max, step: 1, value: b[name], disabled: lock,
+                  onchange: (e) => { const v = Math.round(Number(e.target.value)); if (v >= min && v <= max) setBlend({ [name]: v }); else e.target.value = b[name]; } }));
+  return [ask("Which LoRAs shall I blend?"),
+    el("div", { class: "options" }, list),
+    el("div", { class: "knobs" },
+      knob("generations", "Rounds after the first", 1, limits.max_generations),
+      knob("population", "Blends each round", limits.min_population, limits.max_population),
+      knob("questions", "Questions judged on", 1, limits.max_questions)),
+    el("div", { class: "buttons" },
+      el("button", { class: "primary lg", onclick: planBlendNow, disabled: lock || !b.loras.length }, "Plan the search"),
+      el("button", { class: "lg ghost", onclick: newDataset, disabled: lock }, "Train more LoRAs")),
+    el("p", { class: "help" }, words("blend_hint"))];
 }
 
 function datasetControls(lock, ask) {
@@ -1051,12 +1318,17 @@ function drawBoard() {
   if (!key) return $("board").replaceChildren(card("Nothing yet", null, el("div", { class: "empty-state" },
     el("b", {}, "Waiting for your API key"), el("p", {}, "Paste it on the left to begin."))));
   const cards = [pipelineCard()];
+  if (BLEND_STAGES.includes(S.stage)) {
+    if (S.blend.job) cards.push(searchCard());
+    if (S.blend.result) cards.push(bestBlendCard());
+    cards.push(blendPlanCard());
+  }
   if (S.loras.length) cards.push(trainingCard());
   if (S.stage === "done" || S.loras.some((one) => (details[one.id] || {}).status === "ready")) cards.push(resultsCard());
   if (S.preview) cards.push(previewCard());
   if (S.plan || S.choices || changes().length) cards.push(planCard());
   if (S.analysis) cards.push(datasetCard());
-  if (!S.analysis) cards.push(welcomeCard());
+  if (!S.analysis && !BLEND_STAGES.includes(S.stage)) cards.push(welcomeCard());
   cards.push(activityCard());
   // Keep the log's scroll position when it is redrawn every second and a half.
   const log = document.querySelector("pre.log");
@@ -1074,13 +1346,14 @@ function card(title, side, ...body) {
 function pipelineCard() {
   const now = STAGE_OF[S.stage] || S.stage;
   const index = STAGES.findIndex(([id]) => id === now);
-  const pipeline = el("div", { class: "pipeline" }, STAGES.map(([id, label], i) => {
-    const state = i < index || (id === "done" && S.stage === "done") ? "done" : i === index ? "now" : "";
+  const pipeline = el("div", { class: "pipeline", style: `--stages:${STAGES.length}` }, STAGES.map(([id, label], i) => {
+    const state = i < index || (["done", "blended"].includes(id) && S.stage === id) ? "done" : i === index ? "now" : "";
     const stamp = S.stamps[id];
     return el("div", { class: "stage " + state },
       el("div", { class: "dot" }, state === "done" ? "✓" : String(i + 1)),
       el("b", {}, label), el("span", {}, stamp ? clock(stamp).slice(0, 5) : state === "now" ? "now" : " "));
   }));
+  if (BLEND_STAGES.includes(S.stage)) return card("Where we are", S.mock || $("mock").checked ? "practice run" : null, pipeline, blendTiles());
   const t = timing();
   const est = S.estimate;
   const statuses = S.loras.map((one) => (details[one.id] || {}).status);
@@ -1096,6 +1369,92 @@ function pipelineCard() {
   return card("Where we are", S.mock || $("mock").checked ? "practice run" : null, pipeline,
     el("div", { class: "tiles" }, tiles.map(([name, value, sub]) =>
       el("div", { class: "tile" }, el("span", {}, name), el("b", { title: String(value) }, value), el("small", { title: sub }, sub)))));
+}
+
+function tilesOf(rows) {
+  return el("div", { class: "tiles" }, rows.map(([name, value, sub]) =>
+    el("div", { class: "tile" }, el("span", {}, name), el("b", { title: String(value) }, value), el("small", { title: sub }, sub))));
+}
+
+function blendTiles() {
+  const B = S.blend, b = blendOf(), p = (B.status || {}).progress || {};
+  const est = B.plan ? B.plan.estimate : B.estimate;
+  const now = B.finishedAt || Date.now();
+  const history = (jobDetail && jobDetail.fitness_history) || [];
+  const bestNow = history.length ? Math.max(...history.map((h) => h.best || 0)) : null;
+  return tilesOf([
+    ["LoRAs", b.loras.length || "–", B.plan ? `${B.plan.loras.map((one) => one.name).join(", ")}` : "ticked on the left"],
+    ["Search", `${1 + b.generations} × ${b.population}`, "rounds × blends"],
+    ["Questions", B.plan ? B.plan.questions : b.questions, B.plan ? `from ${B.plan.source}` : "each blend is judged on"],
+    ["Estimate", est ? duration(est.seconds) : "–", est ? est.source : "after the plan"],
+    ["Elapsed", B.startedAt ? duration((now - B.startedAt) / 1000) : "–", B.job ? `job ${B.job.id}` : "not started"],
+    ["Rounds", p.generations_expected ? `${p.generations_scored || 0}/${p.generations_expected}` : "–",
+     B.status ? B.status.job.status : "scored / planned"],
+    ["Best score", bestNow === null ? "–" : fmt(bestNow), B.plan && B.plan.mock ? "practice run: random" : "0 to 1, from the judge"],
+  ]);
+}
+
+// What the search will blend: each LoRA, the places it takes, and the search's size.
+function blendPlanCard() {
+  const B = S.blend, b = blendOf();
+  const rows = B.plan ? B.plan.loras : B.available.filter((one) => b.loras.includes(one.id));
+  if (!rows.length) return card("The search", null, el("p", { class: "muted" }, "Tick at least one of your LoRAs on the left."));
+  const places = {};
+  if (B.plan) for (const [slot, name] of Object.entries(B.plan.slots)) (places[name] = places[name] || []).push(slot);
+  else ["L1", "L2", "L3", "L4", "L5"].forEach((slot, i) => { const one = rows[i % rows.length]; (places[one.name] = places[one.name] || []).push(slot); });
+  return card("The search", B.plan ? `${B.plan.label} · ${B.plan.estimate.time}` : "not planned yet",
+    el("div", { class: "scroll" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["LoRA", "Places", "Rank", "Base model", "Loss"].map((h, i) => el("th", { class: i === 2 || i === 4 ? "num" : "" }, h)))),
+      el("tbody", {}, rows.map((one, i) => el("tr", {},
+        el("td", {}, el("span", { class: "swatch", style: `background:${colour(i)}` }), one.name, one.practice_run ? el("span", { class: "tag mock", style: "margin-left:6px" }, "mock") : null),
+        el("td", {}, (places[one.name] || []).map((slot) => el("span", { class: "slot-tag" }, slot))),
+        el("td", { class: "num" }, one.rank ?? "–"), el("td", {}, one.base_model || "–"),
+        el("td", { class: "num" }, fmt(one.final_loss))))))),
+    el("p", { class: "help" }, "A blend has five places (L1–L5); with fewer LoRAs some take more than one. " +
+      "Each blend stacks, merges or mixes them at strengths the search picks; rank decides which of those can run." +
+      (B.plan ? ` Judged on ${B.plan.questions} question(s) from ${B.plan.source}` +
+        (B.plan.testing ? `; the best then tested on ${B.plan.testing} it never saw.` : ".") : "")));
+}
+
+function searchCard() {
+  const B = S.blend, st = B.status || { job: {}, progress: null }, p = st.progress || {};
+  const history = (jobDetail && jobDetail.fitness_history) || [];
+  const fraction = p.generations_expected ? (p.generations_scored || 0) / p.generations_expected : 0;
+  const stuck = st.job.status === "queued" && B.startedAt && Date.now() - B.startedAt > 20000;
+  const last = p.last_step;
+  return card("Search", `job ${B.job.id} · ${B.job.label || ""}`,
+    el("div", { class: "result-head" }, pill(st.job.status || "…"),
+      st.job.queue_position ? el("span", { class: "muted small" }, `queue #${st.job.queue_position}`) : null,
+      last ? el("span", { class: "muted small" }, `last step: ${last.step}${last.generation ? " · round " + last.generation : ""}`) : null,
+      el("span", { class: "num" }, `${p.generations_scored || 0} of ${p.generations_expected || "?"} rounds scored`)),
+    el("div", { class: "meter big" + (JOB_FINAL.includes(st.job.status) ? (st.job.status === "done" ? " done" : " stopped") : " live") },
+      el("i", { style: `width:${Math.max(1, fraction * 100)}%` })),
+    stuck ? el("div", { class: "note-box" }, "Still queued. The worker runs searches one after another — if none is running, start one: ",
+      el("code", {}, "run_api_worker.bat"), " (or ", el("code", {}, "python -m async_api.worker"), ").") : null,
+    st.job.error ? el("div", { class: "note-box" }, st.job.error) : null,
+    el("div", { class: "grid2", style: "margin-top:16px" },
+      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Score per round — best and mean"),
+        history.length ? fitnessChart(history) : el("div", { class: "empty-state", style: "padding:40px 10px" }, "Waiting for the first round to be scored…"),
+        el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:var(--c1)" }), "best"),
+          el("span", {}, el("i", { style: "background:var(--c2)" }), "mean"))),
+      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Log"),
+        el("pre", { class: "log" }, jobLog.length ? jobLog.join("\n") : "(nothing logged yet — the worker writes here once it starts the search)"))));
+}
+
+function bestBlendCard() {
+  const r = S.blend.result, best = r.best;
+  if (!best) return card("Best blend", r.status, el("p", { class: "muted" }, r.error || "No blend scored."));
+  const tiles = [["Score", fmt(best.fitness), r.evaluator || "the judge"],
+                 ["Tested", best.tested_quality === null || best.tested_quality === undefined ? "–" : fmt(best.tested_quality), "on questions it never saw"],
+                 ["Rounds", r.generations, `${r.population} blends each`],
+                 ["Blocked", r.blocked, "blends that could not be built"]];
+  return card("Best blend", r.mock ? "practice run — the scores are random" : `individual #${best.number}`,
+    el("p", { class: "formula" }, best.formula),
+    el("div", { class: "muted small" }, "stack = side by side · merge = folded into one · mix = averaged · ×n = the strength each LoRA was given"),
+    tilesOf(tiles),
+    el("div", { class: "muted small", style: "margin-top:8px" }, el("code", {}, best.chromosome)),
+    el("div", { class: "chips", style: "margin-top:8px" }, Object.entries(r.slots || {}).map(([slot, name]) =>
+      el("span", { class: "chip" }, el("b", {}, slot + " "), name))));
 }
 
 function welcomeCard() {
@@ -1360,6 +1719,27 @@ function lossChart(series) {
   return svg;
 }
 
+function fitnessChart(history) {
+  const W = 560, H = 220, L = 36, R = 12, T = 10, B = 26;
+  const { svg, add } = drawing(W, H);
+  const n = history.length;
+  const x = (i) => L + (n > 1 ? i / (n - 1) : 0.5) * (W - L - R);
+  const y = (v) => T + (1 - Math.max(0, Math.min(1, v || 0))) * (H - T - B);
+  for (const k of [0, 0.25, 0.5, 0.75, 1]) {
+    add("line", { x1: L, x2: W - R, y1: y(k), y2: y(k), stroke: "var(--line)", "stroke-dasharray": k ? "3 4" : "" });
+    add("text", { x: L - 6, y: y(k) + 3, "text-anchor": "end" }, k.toFixed(2));
+  }
+  for (const [key, colourName] of [["mean", "var(--c2)"], ["best", "var(--c1)"]]) {
+    add("polyline", { fill: "none", stroke: colourName, "stroke-width": 2, "stroke-linejoin": "round",
+                      points: history.map((h, i) => `${x(i)},${y(h[key])}`).join(" ") });
+    history.forEach((h, i) => add("circle", { cx: x(i), cy: y(h[key]), r: 3, fill: colourName })
+      .append(hint(`round ${h.generation} · ${key} ${fmt(h[key])}`)));
+  }
+  add("text", { x: L, y: H - 8 }, "round " + history[0].generation);
+  add("text", { x: W - R, y: H - 8, "text-anchor": "end" }, "round " + history[n - 1].generation);
+  return svg;
+}
+
 // --- the model the guide talks through ------------------------------------------------------
 
 function fillProviders() {
@@ -1472,8 +1852,11 @@ async function useKey(value) {
   if (saved && saved.transcript && saved.transcript.length) {
     S = Object.assign(fresh(), saved);
     drawTranscript(); drawAction(); drawBoard();
+    S.blend = Object.assign(freshBlend(), S.blend || {});
     if (S.loras.length && S.stage === "training") { marker("reconnected — watching the training again"); poll(); }
     else if (S.loras.length) poll();
+    if (S.blend.job && S.stage === "blending") { marker("reconnected — watching the search again"); pollBlend(); }
+    else if (S.blend.job) pollBlend();
   } else {
     drawBoard();
     intro();
@@ -1503,10 +1886,13 @@ $("mock").addEventListener("change", () => {
   drawChip(); drawBoard();
 });
 $("restart").addEventListener("click", () => { if (!busy) startOver(); });
-$("changeKey").addEventListener("click", () => { clearTimeout(pollTimer); keyGate(); });
+$("changeKey").addEventListener("click", () => { clearTimeout(pollTimer); clearTimeout(blendTimer); keyGate(); });
 
 // The clock on the right keeps moving between polls.
-tickTimer = setInterval(() => { if (S.startedAt && !S.finishedAt) { drawBoard(); if (S.stage === "training") drawAction(); } }, 1000);
+tickTimer = setInterval(() => {
+  if (S.startedAt && !S.finishedAt && S.stage === "training") { drawBoard(); drawAction(); }
+  else if (S.blend.startedAt && !S.blend.finishedAt && S.stage === "blending") drawBoard();
+}, 1000);
 refreshHealth();
 setInterval(refreshHealth, 10000);
 const stored = recallKey();

@@ -132,7 +132,13 @@ def session_of(raw):
     prompt = raw.get("prompt")
     if prompt is not None and (not isinstance(prompt, str) or not prompt.strip()):
         raise SessionError("the test prompt must be some text")
+    from async_api_agent import blending          # it plans from this module's facts
+    try:
+        blend = blending.blend_of(raw.get("blend"))
+    except blending.BlendError as error:
+        raise SessionError(str(error))
     return {"selection": chosen,
+            "blend": blend,
             "ranks": check_ranks(raw["ranks"]) if raw.get("ranks") else list(settings.LORA_RANKS),
             "epochs": epochs,
             "options": check_options(raw.get("options") or {}),

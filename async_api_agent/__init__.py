@@ -1,5 +1,5 @@
-"""async_api_agent - an AI agent that walks a user through training LoRAs,
-served by the async API beside the demo page.
+"""async_api_agent - an AI agent that walks a user through training LoRAs and
+then combining them, served by the async API beside the demo page.
 
     settings.py    the knobs: which model talks, where, and what the agent plans
     prompts.py     every system prompt the agent sends, every tool's description,
@@ -12,6 +12,9 @@ served by the async API beside the demo page.
     selection.py   which part of the dataset is trained on
     planner.py     the session (what the chat has set up), "how long can you
                    wait" -> epochs, an estimate, and the POST /loras bodies
+    blending.py    the second half: the user's own LoRAs combined -- which,
+                   the search's size, where its questions come from, the
+                   POST /jobs body, and what the search found
     tools.py       what the chat can do: the tools the model is given
     commands.py    the common requests read without a model, as tool calls
     agent.py       the conversation: each step's facts, phrased by the model,
@@ -22,6 +25,8 @@ The agent **proposes and the API does**: nothing here trains, queues or stores
 anything. The page (async_api/agent-ui.html) takes the plan it is handed and
 sends it to the async API's own POST /loras, then watches the LoRAs through
 GET /loras/{id} and its log -- the same endpoints the demo page uses. The
+blend is the same: a POST /jobs body naming the user's own LoRAs, sent by the
+page and watched through GET /jobs/{id}/status. The
 chat's tools change the plan -- the session the page keeps -- and hand back
 actions (start, stop, another dataset) that the page carries out with those
 same calls.

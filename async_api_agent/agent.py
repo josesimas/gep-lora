@@ -21,6 +21,11 @@ first 20, rank 32" works either way. What the tools changed goes back to the
 page as a session and a list of actions, which the page carries out through
 the API.
 
+The second half -- combining the LoRAs -- has steps of its own (blend_intro,
+blend_confirm, blend_started, blend_debrief) built the same way, from
+blending.py's facts: which of the user's own LoRAs, the search's size, and
+what the search found.
+
 Nothing here keeps state between calls. The page holds the conversation and
 the session and sends back what a step needs; the dataset is re-read rather
 than remembered, which costs milliseconds and means a server restart loses
@@ -30,6 +35,7 @@ nothing.
 import json
 
 from adapters import catalog as lora_catalog
+from async_api_agent import blending
 from async_api_agent import commands
 from async_api_agent import planner
 from async_api_agent import prompts
@@ -79,14 +85,17 @@ def say(step, facts, fallback, choice=None, history=None, message=None):
 # --- the steps ---------------------------------------------------------------
 
 
-def intro(choice=None, mock=False):
+def intro(choice=None, mock=False, ready=0):
+    """The welcome. `ready` is how many ready LoRAs the user already has, so
+    one who trained before can go straight to blending them."""
     options = planner.recipe()
     facts = {"steps": prompts.PROCESS, "loras": len(settings.LORA_RANKS),
              "ranks": settings.LORA_RANKS, "base_model": options["base_model"],
-             "mock": bool(mock)}
+             "mock": bool(mock), "ready_loras": ready}
     fallback = prompts.FALLBACK_INTRO.format(
         steps=_numbered(prompts.PROCESS), loras=len(settings.LORA_RANKS),
-        base_model=options["base_model"], mock=prompts.FALLBACK_INTRO_MOCK if mock else "")
+        base_model=options["base_model"], mock=prompts.FALLBACK_INTRO_MOCK if mock else "",
+        ready=prompts.FALLBACK_INTRO_READY.format(count=ready) if ready else "")
     return {"message": say("intro", facts, fallback, choice), "facts": facts}
 
 
@@ -236,7 +245,8 @@ def chat(catalog, user, message, stage, session=None, dataset=None, context=None
         spoken = {"text": _summary(box), "by": "built-in wording", "fallback": True, "note": note}
         return dict(box.outcome(), message=spoken)
     demos = [one["file"] for one in (shared_datasets() if shared_datasets else [])]
-    for name, arguments in commands.parse(message, stage, demos):
+    names = [row["name"] for row in blending.mine(catalog, user)]
+    for name, arguments in commands.parse(message, stage, demos, names):
         box.run(name, arguments)
     if box.steps:
         spoken = {"text": _summary(box), "by": "built-in wording", "fallback": True, "note": note}
@@ -276,3 +286,111 @@ def debrief(catalog, user, lora_ids, choice=None, history=None, mock=False):
         lines=_bullets(lines) if lines else "- (no LoRAs to report on)",
         mock=prompts.FALLBACK_DEBRIEF_MOCK if mock else "")
     return {"message": say("debrief", facts, fallback, choice, history), "loras": loras}
+
+
+# --- the second half: combining the LoRAs ------------------------------------
+
+
+def _search(blend, mock):
+    found = blending.estimate(blend["population"], blend["generations"], mock)
+    return ({"generations": blend["generations"], "population": blend["population"],
+             "questions": blend["questions"]}, found)
+
+
+def blend_intro(catalog, user, session, choice=None, history=None, prefer=(), quiet=False):
+    """The blend step's opening: the user's own ready LoRAs, the ones picked,
+    and the search as it stands. `quiet` gives the facts alone, for a page
+    that came here because the chat asked and has already been answered.
+
+    -> {message, available, loras, blend}: `blend` is the session's blend
+    part with the pick written into it, so what the page shows is what it
+    will plan."""
+    available = blending.mine(catalog, user)
+    try:
+        rows = blending.chosen(catalog, user, session["blend"], prefer)
+    except blending.BlendError:
+        rows = blending.default_pick(catalog, user, prefer)
+    blend = dict(session["blend"], loras=[row["id"] for row in rows])
+    mock = session["mock"] or any(row["mock"] for row in rows)
+    search, found = _search(blend, mock)
+    out = {"available": [blending.describe(row) for row in available],
+           "loras": [blending.describe(row) for row in rows], "blend": blend,
+           "estimate": found, "message": None}
+    if quiet:
+        return out
+    facts = {"loras": [{"name": row["name"], "rank": row["rank"],
+                        "base_model": row["base_model"]} for row in rows],
+             "available": len(available), "search": search,
+             "estimate": found["time"], "mock": mock}
+    if not rows:
+        fallback = prompts.FALLBACK_BLEND_NONE
+    else:
+        fallback = prompts.FALLBACK_BLEND.format(
+            questions=blend["questions"],
+            picked=", ".join("**%s** (rank %s)" % (row["name"], row["rank"]) for row in rows),
+            repeat=prompts.FALLBACK_BLEND_REPEAT if len(rows) < len(blending.SLOTS) else "",
+            generations=1 + blend["generations"], population=blend["population"],
+            time=found["time"], source=found["source"])
+    out["message"] = say("blend", facts, fallback, choice, history)
+    return out
+
+
+def blend_confirm(plan):
+    """The search read back before it starts: exact numbers, so no model."""
+    places = {}
+    for slot, name in sorted(plan["slots"].items()):
+        places.setdefault(name, []).append(slot)
+    lines = ["**%s** — rank %s, in %s" % (one["name"], one["rank"],
+                                          ", ".join(places.get(one["name"], [])))
+             for one in plan["loras"]]
+    found = plan["estimate"]
+    text = prompts.FALLBACK_BLEND_CONFIRM.format(
+        lines=_bullets(lines), generations=found["generations"],
+        population=found["population"], questions=plan["questions"], source=plan["source"],
+        testing=(prompts.FALLBACK_BLEND_CONFIRM_TESTING.format(testing=plan["testing"])
+                 if plan["testing"] else ""),
+        time=found["time"], estimate_source=found["source"],
+        mock=prompts.FALLBACK_BLEND_CONFIRM_MOCK if plan["mock"] else "")
+    return {"text": text, "by": "built-in wording", "fallback": False, "note": None}
+
+
+def blend_started(job, plan, choice=None, history=None):
+    """What the agent says once the page has queued the search."""
+    found = plan.get("estimate") or {}
+    facts = {"label": plan.get("label"), "loras": [one.get("name") for one in plan.get("loras", [])],
+             "estimate": found.get("time"), "mock": bool(plan.get("mock")),
+             "queue": ("position %d in the worker's queue" % job["queue_position"])
+             if job.get("queue_position") else "the worker starts it next"}
+    fallback = prompts.FALLBACK_BLEND_START.format(
+        label=plan.get("label") or "your search", rounds=found.get("generations") or "?",
+        time=found.get("time") or "a while",
+        mock=prompts.FALLBACK_BLEND_START_MOCK if plan.get("mock") else "")
+    return say("blend_start", facts, fallback, choice, history)
+
+
+def _trend(history):
+    scores = [one["best"] for one in history if isinstance(one.get("best"), (int, float))]
+    if len(scores) < 2:
+        return ""
+    if scores[-1] > scores[0]:
+        return "The best score rose from %.2f in the first round to %.2f." % (scores[0], scores[-1])
+    return "The best score stayed at about %.2f across the rounds." % scores[-1]
+
+
+def blend_debrief(registry, catalog, user, job, choice=None, history=None):
+    """How the search went, from the user's own job."""
+    facts = blending.outcome(registry, job, user, catalog)
+    best = facts.get("best")
+    if best is None:
+        fallback = prompts.FALLBACK_BLEND_DEBRIEF_NONE.format(
+            status=facts["status"], error=": " + facts["error"] if facts.get("error") else "")
+    else:
+        tested = best.get("tested_quality")
+        fallback = prompts.FALLBACK_BLEND_DEBRIEF.format(
+            status=facts["status"], formula=best["formula"],
+            fitness="%.3f" % (best["fitness"] or 0.0),
+            tested=(", and **%.3f** on questions it never saw" % tested
+                    if isinstance(tested, (int, float)) else ""),
+            trend=_trend(facts.get("history") or []),
+            mock=prompts.FALLBACK_BLEND_DEBRIEF_MOCK if facts.get("mock") else "")
+    return {"message": say("blend_debrief", facts, fallback, choice, history), "result": facts}

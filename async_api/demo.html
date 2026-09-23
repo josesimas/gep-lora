@@ -1037,11 +1037,11 @@ const testingPass = () => $("testingMode").value !== "none" && $("runTest").chec
 // config/settings.py and nothing else.
 
 // The base models there are LoRAs for, and the LoRAs, come from the catalogue
-// (GET /loras). An adapter only fits the model it was trained on, so choosing a
-// model also chooses its LORA_SLOTS: the server's own when it is the server's
-// model, else the largest family of that model's LoRAs (a family is one
-// adapter folder name across loras/Lora001..Lora005 -- a set trained together).
-// Each slot can then be pointed at any LoRA of that model.
+// (GET /loras) -- the user's own, and a job may name no others. An adapter only
+// fits the model it was trained on, so choosing a model also chooses its
+// LORA_SLOTS: the largest family of the user's LoRAs on that model (a family is
+// one adapter folder name -- a set trained together), repeated round the five
+// slots when there are fewer. Each slot can then be pointed at any of them.
 const SLOTS = ["L1", "L2", "L3", "L4", "L5"];
 let catalogue = [];         // GET /loras
 
@@ -1058,8 +1058,6 @@ function baseModelChoices() {
 
 // -> {L1: folder, ...} for a base model: see above.
 function slotsFor(model) {
-  const server = form.defaults.LORA_SLOTS || {};
-  if (model === form.defaults.BASE_MODEL) return Object.assign({}, server);
   const pool = readyLoras(model);
   if (!pool.length) return null;
   const families = new Map();
@@ -1100,7 +1098,7 @@ const FIELDS = [
   { group: "Model", name: "BASE_MODEL", label: "Base model", type: "choice", wide: true, describe: true,
     options: baseModelChoices },
   { group: "Model", name: "LORA_SLOTS", label: "LoRA slots", type: "slots", wide: true,
-    help: "The five adapters the search blends, from the LoRAs of the chosen base model. Their ranks decide which LIN nodes can run." },
+    help: "The five adapters the search blends: your own LoRAs of the chosen base model, one may fill several slots. Their ranks decide which LIN nodes can run." },
   { group: "Model", name: "CHAT_TEMPLATE", label: "Chat template", type: "text",
     nullable: "blank = the model's own" },
   { group: "Model", name: "LORA_SERVER_COUNT", label: "Lora servers", type: "int", min: 1,
@@ -1296,7 +1294,6 @@ function setSlots(slots) {
       const known = catalogue.find((one) => one.folder === want);
       options.unshift(el("option", { value: want }, known
         ? `${known.name} · r${known.rank} (${known.base_model})`
-        : Object.values(form.defaults.LORA_SLOTS || {}).includes(want) ? `${want} (the server's default)`
         : `${want} (not one of your LoRAs)`));
     }
     if (!options.length) options.push(el("option", { value: "" }, "no LoRAs for this model — train one"));
@@ -2643,8 +2640,7 @@ function loraItem(one) {
     el("div", { class: "job-best" },
       el("b", {}, one.rank !== null ? "r" + one.rank : "r?"),
       el("span", { class: "muted" }, loss !== null && loss !== undefined ? `loss ${fmt(loss)}` : ""),
-      one.mock ? el("span", { class: "tag mock" }, "mock") : null,
-      ...(one.default_slots || []).map((slot) => el("span", { class: "tag slot", title: "the server's default search puts it in " + slot }, slot))),
+      one.mock ? el("span", { class: "tag mock" }, "mock") : null),
     flying && p.of ? el("div", { class: "meter" }, el("i", { style: `width: ${Math.min(1, (p.step || 0) / p.of) * 100}%` })) : null);
 }
 
@@ -2731,9 +2727,9 @@ async function drawLora() {
     ["loss", fmt(loss), null],
     ["records", lora.records ?? "–", null],
     ["time", typeof time === "number" ? seconds(time) : "–", null],
-    [flying && training ? "queue" : "default search", flying && training
+    [flying && training ? "queue" : "origin", flying && training
       ? (training.queue_position ? `#${training.queue_position}` : training.status)
-      : (lora.default_slots.length ? lora.default_slots.join(", ") : "not in it"), null],
+      : (lora.trained_here ? "trained here" : lora.origin), null],
   ];
   $("ldTiles").replaceChildren(...tiles.map(([name, value, fraction]) => el("div", { class: "tile" },
     el("span", {}, name), el("b", { title: String(value) }, value),

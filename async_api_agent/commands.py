@@ -10,6 +10,13 @@ which the same Toolbox then runs under the same checks.
     parse("only use the first 20 and drop duplicates", "analysis", names)
     -> [("select_records", {"first": 20, "drop_duplicates": True})]
 
+    parse("blend poem-r8 and poem-r16, 5 generations", "blend", [], ["poem-r8", ...])
+    -> [("choose_blend_loras", {"loras": ["poem-r8", "poem-r16"]}),
+        ("set_blend_search", {"generations": 5})]
+
+Once the person is combining LoRAs, only the blend's requests are read: "5
+epochs" means nothing to a search, and would only be refused.
+
 It is deliberately narrow: a request it does not recognise returns no calls,
 and the agent says what it can do instead of guessing.
 """
@@ -111,10 +118,79 @@ def _options(said):
     return out
 
 
-def parse(message, stage, demo_files=()):
-    """The tool calls a plain request asks for. -> [(name, arguments)]."""
-    said = _clean(message)
+# The stages in which the person is combining LoRAs, not training them.
+BLEND_STAGES = ("blend", "blend_confirm", "blending", "blended")
+
+_START = (r"\b(?:start|begin|kick off|launch|run) (?:the )?(?:training|search|blend(?:ing)?)\b|"
+          r"\bstart (?:it |them )?now\b|\bgo ahead\b|\blet'?s go\b|^ (?:start|go|begin) ?[.!]? $")
+
+
+def _named(said, names):
+    """The user's LoRA names a request mentions, in the order it mentions them."""
+    found = []
+    for name in names:
+        at = re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(name.lower()), said)
+        if at:
+            found.append((at.start(), name))
+    return [name for _, name in sorted(found)]
+
+
+def _blend(said, stage, demo_files, names):
+    """The blend's calls a plain request asks for. -> [(name, arguments)]."""
     calls = []
+    if stage == "blending":
+        if re.search(r"\b(?:stop|cancel|abort|halt)\b", said):
+            calls.append(("stop_blend", {}))
+        return calls
+    if re.search(r"\b(?:my|existing) loras\b|\bloras (?:do )?i have\b|\bwhich loras\b", said) \
+            and not re.search(r"\b(?:blend|combine|use|only)\b", said):
+        calls.append(("list_my_loras", {}))
+    mentioned = _named(said, names)
+    if mentioned:
+        add = bool(re.search(r"\b(?:also|add|as well|too)\b", said))
+        calls.append(("choose_blend_loras", dict({"loras": mentioned}, **({"add": True} if add else {}))))
+    search = {}
+    for key, pattern in (("generations", r"(\d+) ?(?:generations?|rounds?)\b"),
+                         ("population", r"(?:(\d+) ?(?:blends|individuals)(?: each| per| a)?\b|"
+                                        r"population (?:of |to |= ?)?(\d+))"),
+                         ("questions", r"(\d+) ?questions?\b")):
+        found = re.search(pattern, said)
+        if found:
+            search[key] = int(next(group for group in found.groups() if group))
+    if search:
+        calls.append(("set_blend_search", search))
+    found = re.search(r"\b(?:questions?|judge\w*|score\w*)\b.*\b(?:from|on|with) (?:the )?([\w.-]+)"
+                      r"(?: demo)? (?:dataset|data|file)\b", said)
+    if found:
+        match = [name for name in demo_files if found.group(1) in name.lower()]
+        if len(match) == 1:
+            calls.append(("set_blend_questions", {"file": match[0]}))
+    if re.search(r"\b(?:another|different|new|other) dataset\b|\btrain (?:more|new|another)\b", said) \
+            and not calls:
+        calls.append(("choose_another_dataset", {}))
+    if re.search(r"\b(?:turn on|enable|use|do|make it|just) (?:a )?practice(?: run)?\b|"
+                 r"practice run on\b", said):
+        calls.append(("set_practice_run", {"on": True}))
+    if re.search(_START, said):
+        calls.append(("start_blend", {}))
+    return calls
+
+
+def parse(message, stage, demo_files=(), lora_names=()):
+    """The tool calls a plain request asks for. -> [(name, arguments)].
+
+    `lora_names` are the person's own ready LoRAs, so naming one ("blend
+    poem-r8 and poem-r16") chooses it without a model."""
+    said = _clean(message)
+    if stage in BLEND_STAGES:
+        return _blend(said, stage, demo_files, lora_names)
+    calls = []
+    if stage != "training" and re.search(
+            r"\b(?:blend|combine|merge|mix)\w* (?:them|my loras|the loras|loras|these|those|it)\b|"
+            r"\b(?:search|blend) (?:over |across )?(?:my |the )?loras\b", said):
+        return [("open_blending", {})] + [call for call in _blend(said, "blend", demo_files,
+                                                                    lora_names)
+                                          if call[0] not in ("start_blend",)]
     if stage == "training" and re.search(r"\b(?:stop|cancel|abort|halt)\b", said):
         return [("stop_training", {})]
     if re.search(r"\b(?:which|what|list|show)\b.*\b(?:demo )?datasets\b", said):
@@ -186,8 +262,6 @@ def parse(message, stage, demo_files=()):
             calls.append(("set_epochs", {"epochs": epochs}))
 
     # Only an unmistakable "start": the word alone also begins "start from record 5".
-    if stage != "training" and re.search(
-            r"\b(?:start|begin|kick off|launch|run) (?:the )?training\b|\bstart (?:it |them )?now\b|"
-            r"\bgo ahead\b|\blet'?s go\b|^ (?:start|go|begin) ?[.!]? $", said):
+    if stage != "training" and re.search(_START, said) and not re.search(r"\b(?:search|blend)", said):
         calls.append(("start_training", {}))
     return calls

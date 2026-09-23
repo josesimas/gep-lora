@@ -159,6 +159,39 @@ OVERHEAD_SECONDS = 60
 # seconds -- the plumbing check the demo page's Mock box is.
 MOCK = False
 
+# --- what the agent blends ---------------------------------------------------
+#
+# The second half of the guide: the user's LoRAs combined by a search (a job
+# on POST /jobs). Its defaults are small on purpose -- a first search is for
+# seeing what a blend does, and the chat can make it bigger.
+
+# Generations after the first (a search is 1 + this), individuals in each, and
+# how many questions every blend is judged on.
+BLEND_GENERATIONS = 3
+BLEND_POPULATION = 8
+BLEND_QUESTIONS = 10
+
+# The limits the chat is held to. A population under four leaves selection
+# nothing to cull beside the copies it adds (SELECTION_COUNT is 2).
+MAX_BLEND_GENERATIONS = 20
+MIN_BLEND_POPULATION = 4
+MAX_BLEND_POPULATION = 40
+MAX_BLEND_QUESTIONS = 100
+
+# How many of the questions left over after the judged ones go to the testing
+# pass: questions the search never saw, asked of its best blends at the end.
+BLEND_TEST_QUESTIONS = 10
+
+# The estimate: seconds one blend takes to build and answer, and to start a
+# search (the lora servers loading the base model). A guess until measured;
+# the page says so.
+SECONDS_PER_INDIVIDUAL = 40
+MOCK_SECONDS_PER_INDIVIDUAL = 0.5
+BLEND_OVERHEAD_SECONDS = 60
+
+# The job's label when the chat names none: the first LoRA's stem.
+BLEND_LABEL = "{stem}-blend"
+
 
 def _override():
     for name, value in list(globals().items()):

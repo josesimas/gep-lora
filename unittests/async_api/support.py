@@ -2,7 +2,8 @@
 support.py - Fixtures for the async API tests.
 
 A throwaway JOBS_DIR, five fake adapter folders (an adapter_config.json each,
-which is all the mocked template and the rank rule read), and a small dataset
+which is all the mocked template and the rank rule read) catalogued as the
+test user's own -- a job may blend no others -- and a small dataset
 -- so a job can be submitted, run through main.py and put live on a machine
 with nothing else installed.
 """
@@ -13,6 +14,7 @@ import shutil
 import tempfile
 import unittest
 
+from adapters import catalog as lora_catalog
 from async_api import registry as reg
 from async_api import settings as api_settings
 
@@ -59,8 +61,19 @@ class JobsTestCase(unittest.TestCase):
             setattr(api_settings, name, value)
         shutil.rmtree(self.folder, ignore_errors=True)
 
+    def own_slots(self):
+        """Catalogue the fake adapters as the test user's own -- a job may blend
+        no others. Only when a test submits one, so a test of the LoRA
+        endpoints starts from a catalogue with nothing of the user's in it."""
+        catalog = self.registry.catalog
+        for slot, where in self.slots.items():
+            if catalog.by_folder(where) is None:
+                catalog.add("slot-" + slot, where, lora_catalog.READY, "scanned",
+                            owner=self.user["name"], rank=RANKS[slot])
+
     def submission(self, **settings):
         """A small mocked job: one generation beyond the first, four individuals."""
+        self.own_slots()
         conf = {"TEMPLATE": "template_code_mocked.py", "GENERATIONS": 1, "COUNT": 4,
                 "TRAINING_COUNT": 3, "LORA_SLOTS": self.slots, "SEED": 7}
         conf.update(settings)

@@ -12,7 +12,9 @@ A submission is JSON:
 
     {
       "label":    "overnight",                       optional
-      "settings": {"GENERATIONS": 3, "COUNT": 10},   overrides of config/settings.py
+      "settings": {"GENERATIONS": 3, "COUNT": 10,    overrides of config/settings.py
+                   "LORA_SLOTS": {"L1": 12, "L2": "poem-r16", ...}},
+                                                     required: your LoRAs, see own_slots()
       "datasets": {
         "training": [{"messages": [...]}, ...],      required
         "testing":  "one JSON record per line\\n...", or a string of lines
@@ -38,9 +40,11 @@ import json
 import os
 import shutil
 
+from adapters import catalog as lora_catalog
 from async_api import settings
 from blends import generate_runs
 from config import settings as config
+from search.generate_population import UNARY_OPS as SLOTS
 import start_run
 from storage import add_dataset
 from storage import store
@@ -61,20 +65,28 @@ def _checked(call, *args):
         raise SubmissionError(str(error))
 
 
-def settings_for(overrides):
-    """config/settings.py's values with `overrides` applied, checked. -> conf."""
+def check_names(overrides):
+    """The settings a submission names: an object, of settings that exist and
+    that a submission may change. -> the overrides, as a dict."""
     if overrides is None:
         overrides = {}
     if not isinstance(overrides, dict):
         raise SubmissionError("settings must be an object of NAME: value")
-    conf = config.snapshot()
-    unknown = sorted(name for name in overrides if name not in conf)
+    known = config.snapshot()
+    unknown = sorted(name for name in overrides if name not in known)
     if unknown:
         raise SubmissionError("unknown setting(s): %s" % ", ".join(unknown))
     locked = sorted(name for name in overrides if name in settings.LOCKED_SETTINGS)
     if locked:
         raise SubmissionError("setting(s) a submission may not change: %s"
                               % ", ".join(locked))
+    return dict(overrides)
+
+
+def settings_for(overrides):
+    """config/settings.py's values with `overrides` applied, checked. -> conf."""
+    overrides = check_names(overrides)
+    conf = config.snapshot()
     conf.update(overrides)
 
     _checked(start_run.freeze, conf)
@@ -105,23 +117,62 @@ def settings_for(overrides):
     return conf
 
 
-def check_slot_owners(catalog, conf, user):
-    """Refuse a slot that names another user's LoRA.
+def own_lora(catalog, user, key):
+    """The user's catalogue row that `key` names -- an id, a name, or the
+    folder -- or None. Another user's row is None exactly as a missing one is,
+    so a slot can never be used to learn what somebody else has."""
+    if isinstance(key, bool) or key is None:
+        return None
+    if isinstance(key, int):
+        row = catalog.get(key)
+    elif isinstance(key, str) and key.strip():
+        key = key.strip()
+        row = catalog.by_name(key, user["name"])
+        if row is None and not os.path.isabs(key) and ("/" in key or "\\" in key):
+            row = catalog.by_folder(lora_catalog.absolute(key))
+        elif row is None and os.path.isabs(key):
+            row = catalog.by_folder(key)
+    else:
+        return None
+    if row is None or row["owner"] != user["name"]:
+        return None
+    return row
 
-    The API shows a user their own LoRAs only, and a path typed into
-    LORA_SLOTS must not be a way round that. Two kinds of folder stay open to
-    everyone: one the catalogue gives to nobody, and the server's own default
-    slots -- config/settings.py's LORA_SLOTS is what every default search runs
-    on, whoever's catalogue rows those folders are.
+
+def own_slots(catalog, user, value):
+    """A submission's LORA_SLOTS, every slot one of the user's own LoRAs.
+    -> ({slot: folder}, {slot: catalogue row}).
+
+    A job blends its owner's LoRAs and nobody else's. There is no default:
+    config/settings.py's LORA_SLOTS is the command line's set, and a search
+    submitted here that named none would run on adapters that are not the
+    user's. So every one of L1-L5 must be given -- by catalogue id, by name or
+    by folder, the same LoRA as often as wanted -- and each must be a row the
+    user owns that is ready. Decided before anything reads the disk, so a path
+    that is not theirs is refused the same way whether it exists or not.
     """
-    defaults = {os.path.normcase(where)
-                for where in generate_runs.lora_slots(config.LORA_SLOTS).values()}
-    for slot, where in sorted(generate_runs.lora_slots(conf.get("LORA_SLOTS")).items()):
-        if not os.path.isdir(where) or os.path.normcase(where) in defaults:
-            continue
-        row = catalog.by_folder(where)
-        if row is not None and row["owner"] not in (None, user["name"]):
-            raise SubmissionError("slot %s: no LoRA of yours at %s" % (slot, where))
+    if not isinstance(value, dict) or sorted(value) != sorted(SLOTS):
+        raise SubmissionError(
+            "LORA_SLOTS must name one of your LoRAs for each of %s -- by id, name or "
+            "folder; the same LoRA may fill several slots" % ", ".join(SLOTS))
+    folders, rows = {}, {}
+    for slot in SLOTS:
+        row = own_lora(catalog, user, value[slot])
+        if row is None:
+            raise SubmissionError("slot %s: no LoRA of yours called %r" % (slot, value[slot]))
+        if row["status"] != lora_catalog.READY:
+            raise SubmissionError("slot %s: %s is %s, not ready" % (slot, row["name"], row["status"]))
+        folders[slot], rows[slot] = row["folder"], row
+    return folders, rows
+
+
+def check_base_model(conf, rows):
+    """An adapter only attaches to the model it was trained on."""
+    for slot, row in sorted(rows.items()):
+        if row["base_model"] and row["base_model"] != conf.get("BASE_MODEL"):
+            raise SubmissionError(
+                "slot %s: %s was trained on %s, and this job's BASE_MODEL is %s"
+                % (slot, row["name"], row["base_model"], conf.get("BASE_MODEL")))
 
 
 def form():
@@ -136,6 +187,9 @@ def form():
     from evaluators import composite
 
     conf = config.snapshot()
+    # The server's own slots are the command line's, never a submission's:
+    # a job names its owner's LoRAs (own_slots), so there is no default to offer.
+    conf["LORA_SLOTS"] = {}
     templates = [name for name in generate_runs.templates_available()
                  if not name.startswith("template_baseline")]
     return {
@@ -259,8 +313,11 @@ def submit(registry, user, payload):
     label = payload.get("label")
     if label is not None and not isinstance(label, str):
         raise SubmissionError("label must be a string")
-    conf = settings_for(payload.get("settings"))
-    check_slot_owners(registry.catalog, conf, user)
+    overrides = check_names(payload.get("settings"))
+    overrides["LORA_SLOTS"], rows = own_slots(registry.catalog, user,
+                                              overrides.get("LORA_SLOTS"))
+    conf = settings_for(overrides)
+    check_base_model(conf, rows)
     options = options_for(payload.get("options"))
 
     job = registry.reserve_job(user["id"], label, options)

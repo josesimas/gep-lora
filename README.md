@@ -2943,9 +2943,18 @@ python -m adapters.catalog scan | list [--owner ze] | show <id or name> | forget
 LoRA is a 404 on every `/loras` endpoint, exactly as another user's job is;
 names are unique per owner rather than across the catalogue, so choosing one can
 never reveal another user's; each user's trainings go to their own
-`loras/trained/user<N>/`; and a job may not name another user's LoRA as a slot
-by path (a 400) -- except the server's own default `LORA_SLOTS`, which is what
-every default search runs on.
+`loras/trained/user<N>/`; and **a job blends its owner's LoRAs and nobody
+else's**. A submission must give all five of `LORA_SLOTS` (L1-L5), each one of
+the user's own *ready* catalogue rows -- named by id, by name or by folder, the
+same LoRA in as many slots as wanted -- and each trained on the job's
+`BASE_MODEL` (`submit.own_slots()`, `check_base_model()`). There is no
+default: `config/settings.py`'s `LORA_SLOTS` (the `loras/Lora00N` set) is the
+command line's, and `GET /settings` offers `{}` for it. A folder the user was
+not given -- another user's, one nobody owns, the command line's own set -- is
+refused in the same words as one that does not exist, and before anything
+reads the disk, so a slot cannot be used to learn what is on the server. The
+server can still hand a `Lora00N` folder to someone with `catalog own`; it is
+then theirs like any other.
 
 **Training one is queued work, like a job.** `POST /loras` takes a name, a
 dataset (the same shapes a job's does, but every record must be a conversation
@@ -3043,7 +3052,7 @@ took 53s to its first token (24.5s of it the model load), the next 0.3s.
 `/infer` streams chunked `text/plain`, or server-sent events
 (`data: {"text": ...}`, then `event: done`) with `Accept: text/event-stream`.
 
-### The LoRA guide — an agent that trains LoRAs for you
+### The LoRA guide — an agent that trains LoRAs, then blends them
 
 **http://127.0.0.1:8780/agent** is a second page on the same server, for
 someone who has never trained a model. The screen is split in two. On the
@@ -3052,8 +3061,9 @@ summary of the process and *Yes, let's start*; a dataset (pasted, uploaded, or
 one of the shared ones under `datasets/`), which it reads and summarises; how
 long they are happy to wait (three options with the time each takes *on this
 dataset*, or typed: "about an hour", "5 epochs"); then the plan read back and
-*Start training*. At any point the chat box takes questions **and requests
-the guide carries out** (below). On the right, what is
+*Start training*; and once the LoRAs are trained, *Blend them* -- the second
+half, below. At any point the chat box takes questions **and requests the
+guide carries out** (below). On the right, what is
 happening: where the process is, the dataset's numbers (answer lengths, topic
 words, samples), the plan, and during training each LoRA's progress and ETA,
 the loss curves, the worker's log and every API call the page makes -- redrawn
@@ -3071,6 +3081,7 @@ The Python behind it is `async_api_agent/`, mounted into the server as the
 | `providers.py` | one chat call, stdlib only: OpenAI-compatible (`/chat/completions`) or Anthropic (`/messages`) |
 | `analysis.py` | a dataset in any shape -- JSON Lines, a JSON array, prompt/answer pairs, CSV -- normalised to `{"messages": [...]}` lines and measured |
 | `planner.py` | the session (what the chat has set up), the time estimate, and the `POST /loras` bodies |
+| `blending.py` | the second half: which of the user's own LoRAs a search combines, its size, where its questions come from, the `POST /jobs` body, and what the search found |
 | `selection.py` | which part of a dataset is trained on: first/last N, a range, a percent, a random sample, words to keep or drop, answer lengths, no duplicates |
 | `tools.py` | what the chat can *do*: each tool's parameters, the steps it may run in, and what it hands back to the page |
 | `commands.py` | the most common requests read without a model, as the same tool calls |
@@ -3114,6 +3125,10 @@ where the model is given tools (`tools.py`, described to it in
 | `list_demo_datasets`, `use_demo_dataset`, `choose_another_dataset` | switch dataset: "use the poem dataset" |
 | `list_my_loras`, `show_plan` | what exists, what is planned |
 | `start_training`, `stop_training` | only when asked |
+| `open_blending` | on to combining the LoRAs: "blend them" |
+| `choose_blend_loras` | which of the user's own ready LoRAs a search blends: "only poem-r8 and poem-r16" |
+| `set_blend_search`, `set_blend_questions` | its size -- "5 rounds", "12 blends each", "judge on 20 questions" -- and where the questions come from |
+| `show_blend_plan`, `start_blend`, `stop_blend` | what is planned; start and stop, only when asked |
 
 Everything a tool changes lives in the **session**: the part of the dataset in
 use, the ranks, epochs, options, name and test prompt. The page keeps it and
@@ -3163,6 +3178,40 @@ model's `<think>` block is stripped from an OpenAI-compatible reply.
 | `GET /agent/models?provider=[&base_url=]` | the chat models a provider lists |
 | `POST /agent/intro`, `/analyse`, `/wait`, `/plan`, `/started`, `/debrief` | one step of the conversation each; `agent: {provider, model, base_url}` picks who phrases it, `session` what has been set up |
 | `POST /agent/chat` | a typed message: the reply, the tools run (`steps`), the new `session`, the dataset's facts again if the part in use changed, records asked for (`preview`), and the `actions` for the page |
+| `POST /agent/blend/intro` | the user's ready LoRAs, the ones picked (`prefer`: the ones just trained), the search's size and estimate |
+| `POST /agent/blend/plan` | the `POST /jobs` body that blends them, read back with exact numbers |
+| `POST /agent/blend/started`, `/agent/blend/debrief` | what the guide says once the search is queued, and what it found -- the latter reads only a job of the user's own |
+
+**The second half: blending them.** A search needs adapters, and the first
+half has just made some, so the guide carries on: *Blend them* (or "blend
+them" in the chat, or *Blend my LoRAs* on the welcome for someone who already
+has some) lists the user's own ready LoRAs, ticks the ones just trained, and
+offers the search's size -- rounds after the first (`BLEND_GENERATIONS`, 3),
+blends in each (`BLEND_POPULATION`, 8) and questions every blend is judged on
+(`BLEND_QUESTIONS`, 10). `/agent/blend/plan` turns that into a `POST /jobs`
+body the page submits as it is, then watches through `GET /jobs/{id}/status`,
+its log and `GET /jobs/{id}` (the best and mean score of each round, drawn),
+and `/agent/blend/debrief` says what was found: the best blend **in words**
+(`stack(poem-r16 ×0.18, merge(poem-r8 ×0.65, ...))` -- `CAT`, `SVD`, `LIN` and
+the individual's drawn weights, with the user's LoRA names in place of the
+slots), its score, its score on questions the search never saw, and whether
+the rounds improved. The console then puts it live.
+
+Four rules shape that body. **Only the user's LoRAs**: every id is looked up
+among their catalogue rows (`blending.own()`), the body names the slots by id,
+and `submit.own_slots()` checks them again on the way in -- the `Lora00N`
+folders are never used. **Five places, one model**: the grammar blends L1-L5,
+so fewer LoRAs go round again (two LoRAs are L1=A, L2=B, L3=A, ...), and all
+of them must share a base model and chat template, which the job then runs
+under. **A practice LoRA makes a practice search**: a mocked LoRA has no
+weights, so any chosen one (or *Practice run*) sets `TEMPLATE` to the mocked
+template -- scores are random, and the guide says so. **The questions are
+somebody's answers**: the source the chat chose (a shared dataset, or a LoRA's
+training data), else the dataset of this conversation, else the copy of its
+data the first chosen LoRA kept; the first `questions` records are the
+training split and up to `BLEND_TEST_QUESTIONS` more the testing pass. The
+estimate is a stated guess (`SECONDS_PER_INDIVIDUAL`), since nothing measures
+a search's pace yet.
 
 ---
 

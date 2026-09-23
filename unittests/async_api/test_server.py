@@ -160,6 +160,27 @@ class RefusalTests(ServerTestCase):
                              ("DELETE", "/jobs/%d"), ("POST", "/jobs/%d/live")):
             self.assertEqual(self.call(method, path % job_id, key=bob)[0], 404, path)
 
+    def test_a_refused_body_does_not_spill_into_the_next_request(self):
+        # One kept-alive connection, as a browser uses: a request answered
+        # before its body is read (no such endpoint, a bad key, a wrong
+        # method) must not leave that body to be read as the next request.
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=30)
+        try:
+            body = json.dumps({"history": [{"content": "x" * 5000}]})
+            for method, path, key, status in (("POST", "/agent/no-such-step", self.key, 404),
+                                              ("POST", "/agent/intro", "gep_wrong", 401),
+                                              ("DELETE", "/agent/intro", self.key, 405),
+                                              ("POST", "/agent/intro", self.key, 200)):
+                conn.request(method, path, body=body,
+                             headers={"Authorization": "Bearer " + key,
+                                      "Content-Type": "application/json"})
+                reply = conn.getresponse()
+                reply.read()
+                self.assertEqual(reply.status, status, (method, path))
+        finally:
+            conn.close()
+
     def test_a_bad_submission_is_a_400(self):
         status, reply = self.call("POST", "/jobs", {"settings": {"NOPE": 1}})
         self.assertEqual(status, 400)

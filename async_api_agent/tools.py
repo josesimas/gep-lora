@@ -12,17 +12,19 @@ what the page must do afterwards.
 Three rules keep it honest:
 
   * **A tool changes the plan, never the world.** Starting and stopping a
-    training, and switching datasets, are *actions* handed back to the page,
-    which does them through the API's own endpoints -- POST /loras, its
-    cancel, /agent/analyse -- exactly as its buttons do. Nothing here queues
-    or trains.
+    training or a search, and switching datasets, are *actions* handed back
+    to the page, which does them through the API's own endpoints -- POST
+    /loras, POST /jobs, their cancels, /agent/analyse -- exactly as its
+    buttons do. Nothing here queues, trains or blends.
   * **The stage decides what may be asked.** The plan cannot change while a
     training runs; a dataset has to be there before part of it is chosen;
     a training can be started only once its length is known. A tool asked at
     the wrong moment refuses with a reason the model can pass on.
   * **Every value is checked by the rule that will check it later** --
     selection.clean(), planner.check_ranks()/check_options(), train.py's
-    limits -- so a plan the chat built is one POST /loras accepts.
+    limits, blending.py's -- so a plan the chat built is one POST /loras (or
+    POST /jobs) accepts. A LoRA to blend is looked up among the person's own
+    and nobody else's.
 
 The descriptions the model reads are prompts.TOOLS; this module holds only
 their parameters. With no model, commands.py turns plain requests into the
@@ -32,19 +34,30 @@ same calls.
 import copy
 
 from async_api_agent import analysis
+from async_api_agent import blending
 from async_api_agent import planner
 from async_api_agent import prompts
 from async_api_agent import selection as picking
 from async_api_agent import settings
 
-# The page's stages, in order.
-STAGES = ("intro", "dataset", "analysis", "wait", "confirm", "training", "done")
+# The page's stages, in order: training LoRAs, then blending them.
+STAGES = ("intro", "dataset", "analysis", "wait", "confirm", "training", "done",
+          "blend", "blend_confirm", "blending", "blended")
 
-# Stages in which the plan may change (not while a training runs).
+# Stages in which the training plan may change (not while a training runs,
+# nor once the person has moved on to blending).
 PLANNING = ("intro", "dataset", "analysis", "wait", "confirm", "done")
 
 # Stages in which a training may be started from the chat.
 STARTABLE = ("analysis", "wait", "confirm", "done")
+
+# Stages in which what a search blends may change, and it may be started.
+BLEND_PLANNING = ("intro", "done", "blend", "blend_confirm", "blended")
+BLEND_STAGES = ("blend", "blend_confirm", "blending", "blended")
+
+# Nothing may change while one of these runs.
+RUNNING = {"training": "a training is running; stop it or wait for it first",
+           "blending": "a search is running; stop it or wait for it first"}
 
 _INT = {"type": "integer"}
 _NUM = {"type": "number"}
@@ -92,11 +105,36 @@ SPECS = {
     "set_practice_run": ({"on": {"type": "boolean"}}, ["on"], False, PLANNING, True),
     "list_demo_datasets": ({}, [], False, STAGES, False),
     "use_demo_dataset": ({"file": {"type": "string"}}, ["file"], False, PLANNING, False),
-    "choose_another_dataset": ({}, [], False, PLANNING, False),
+    "choose_another_dataset": ({}, [], False, PLANNING + ("blend", "blend_confirm", "blended"),
+                               False),
     "list_my_loras": ({}, [], False, STAGES, False),
     "start_training": ({}, [], True, STARTABLE, False),
     "stop_training": ({}, [], False, ("training",), False),
+    "open_blending": ({}, [], False, PLANNING + ("blended",), False),
+    "choose_blend_loras": ({
+        "loras": dict(_WORDS, description="LoRA ids or names, e.g. [3, \"poem-r16\"]"),
+        "add": {"type": "boolean", "description": "add to the LoRAs already chosen"},
+    }, ["loras"], False, BLEND_PLANNING, True),
+    "set_blend_search": ({
+        "generations": dict(_INT, description="rounds after the first"),
+        "population": dict(_INT, description="blends in each round"),
+        "questions": dict(_INT, description="questions every blend is judged on"),
+        "label": {"type": "string", "description": "the search's name"},
+    }, [], False, BLEND_PLANNING, True),
+    "set_blend_questions": ({
+        "file": {"type": "string", "description": "a demo dataset's file name"},
+        "lora": {"type": "string", "description": "a LoRA of theirs, by id or name"},
+        "conversation": {"type": "boolean",
+                         "description": "the dataset given in this conversation"},
+    }, [], False, BLEND_PLANNING, True),
+    "show_blend_plan": ({}, [], False, STAGES, False),
+    "start_blend": ({}, [], False, BLEND_PLANNING, False),
+    "stop_blend": ({}, [], False, ("blending",), False),
 }
+
+
+# The tools that change what a search blends rather than what is trained.
+BLEND_TOOLS = ("choose_blend_loras", "set_blend_search", "set_blend_questions")
 
 
 class ToolError(ValueError):
@@ -129,6 +167,7 @@ class Toolbox:
         self.steps = []
         self.preview = None
         self.plan_changed = False
+        self.blend_changed = False
         self._records = None
 
     # --- what the tools read ---
@@ -157,15 +196,13 @@ class Toolbox:
                 raise ToolError("there is no tool called %s" % name)
             _, _, needs_data, stages, changes = SPECS[name]
             if self.stage not in stages:
-                raise ToolError(
-                    "a training is running; stop it or wait for it first"
-                    if self.stage == "training" else
-                    "that cannot be done at this step (%s)" % self.stage)
+                raise ToolError(RUNNING.get(self.stage) or
+                                "that cannot be done at this step (%s)" % self.stage)
             if needs_data and not self.dataset:
                 raise ToolError("there is no dataset yet; give one first")
             result = getattr(self, "_" + name)(**arguments)
         except (ToolError, picking.SelectionError, planner.SessionError,
-                analysis.DatasetError) as error:
+                analysis.DatasetError, blending.BlendError) as error:
             result = {"error": str(error)}
         except TypeError as error:            # an argument the tool does not take
             result = {"error": "bad arguments: %s" % error}
@@ -173,7 +210,10 @@ class Toolbox:
             summary = prompts.TOOL_FAILED.format(tool=name, error=result["error"])
         else:
             if SPECS[name][4]:
-                self.plan_changed = True
+                if name in BLEND_TOOLS:
+                    self.blend_changed = True
+                else:
+                    self.plan_changed = True
             summary = prompts.TOOL_DONE[name].format(**result)
         self.steps.append({"tool": name, "arguments": arguments,
                            "ok": "error" not in result, "summary": summary})
@@ -184,6 +224,8 @@ class Toolbox:
         the dataset's facts again when the part in use changed."""
         actions = list(self.actions)
         kinds = {one["type"] for one in actions}
+        if self.blend_changed or kinds & {"start_blend", "blend"}:
+            return self._blend_outcome(actions, kinds)
         # The plan is read back again whenever it changed, and always before a
         # start -- a training starts from bodies the person has just been shown.
         replan = "start" in kinds or (self.plan_changed and
@@ -199,6 +241,19 @@ class Toolbox:
             found.pop("lines")
             out["analysis"] = found
         return out
+
+    def _blend_outcome(self, actions, kinds):
+        """The page's orders when the chat was about blending: to the blend
+        step first if it is not there, and the search read back whenever what
+        it blends changed, and always before it starts."""
+        if self.stage not in BLEND_STAGES and "blend" not in kinds:
+            actions.insert(0, {"type": "blend"})
+        if "start_blend" in kinds or (self.blend_changed and self.stage in BLEND_PLANNING):
+            at = next((index for index, one in enumerate(actions)
+                       if one["type"] == "start_blend"), len(actions))
+            actions.insert(at, {"type": "blend_plan"})
+        return {"session": self.session, "actions": actions, "steps": self.steps,
+                "preview": self.preview, "analysis": None}
 
     # --- the tools ---
 
@@ -334,9 +389,11 @@ class Toolbox:
 
     def _list_my_loras(self):
         rows = self.catalog.all(owner=self.user["name"])
-        loras = [{"name": row["name"], "status": row["status"], "rank": row["rank"],
-                  "final_loss": row["final_loss"], "base_model": row["base_model"],
-                  "practice_run": bool(row["mock"])} for row in rows[:50]]
+        loras = [{"id": row["id"], "name": row["name"], "status": row["status"],
+                  "rank": row["rank"], "final_loss": row["final_loss"],
+                  "base_model": row["base_model"], "practice_run": bool(row["mock"]),
+                  "can_blend": row["status"] == blending.lora_catalog.READY}
+                 for row in rows[:50]]
         return {"count": len(rows), "loras": loras}
 
     def _start_training(self):
@@ -351,4 +408,99 @@ class Toolbox:
 
     def _stop_training(self):
         self.actions.append({"type": "stop"})
+        return {}
+
+    # --- blending ---
+
+    def _blend(self, **change):
+        """The session's blend part with `change` applied, checked."""
+        wanted = dict(self.session["blend"], **change)
+        self.session["blend"] = blending.blend_of(wanted)
+        return self.session["blend"]
+
+    def _chosen(self):
+        return blending.chosen(self.catalog, self.user, self.session["blend"])
+
+    def _open_blending(self):
+        self.actions.append({"type": "blend"})
+        return {"next": "the page moves on to combining LoRAs right after your reply"}
+
+    def _choose_blend_loras(self, loras, add=False):
+        wanted = loras if isinstance(loras, list) else [loras]
+        rows = [blending.own(self.catalog, self.user, key) for key in wanted]
+        if add:
+            rows = [blending.own(self.catalog, self.user, one)
+                    for one in self.session["blend"]["loras"]] + rows
+        rows = blending.check_together(list({row["id"]: row for row in rows}.values()))
+        self._blend(loras=[row["id"] for row in rows])
+        return {"loras": [blending.describe(row) for row in rows],
+                "names_text": ", ".join(row["name"] for row in rows),
+                "slots": blending.slots(rows)}
+
+    def _set_blend_search(self, generations=None, population=None, questions=None, label=None):
+        change = {key: value for key, value in (("generations", generations),
+                                                ("population", population),
+                                                ("questions", questions),
+                                                ("label", label)) if value is not None}
+        if not change:
+            raise ToolError("say how many rounds, blends or questions")
+        blend = self._blend(**change)
+        found = blending.estimate(blend["population"], blend["generations"],
+                                  self.session["mock"])
+        return {"generations": blend["generations"], "population": blend["population"],
+                "questions": blend["questions"], "label": blend["label"], "time": found["time"],
+                "search_text": "%d round(s) after the first, %d blends each, %d question(s)"
+                               % (blend["generations"], blend["population"], blend["questions"])}
+
+    def _set_blend_questions(self, file=None, lora=None, conversation=False):
+        if sum(bool(one) for one in (file, lora is not None, conversation)) != 1:
+            raise ToolError("say one source: a demo dataset, one of your LoRAs, or this "
+                            "conversation's dataset")
+        if conversation:
+            if not self.dataset:
+                raise ToolError("no dataset was given in this conversation")
+            self._blend(source=None)
+            return {"source": None, "source_text": "the dataset in this conversation"}
+        if lora is not None:
+            row = blending.own(self.catalog, self.user, lora)
+            self._blend(source={"lora": row["id"]})
+            return {"source": {"lora": row["id"]},
+                    "source_text": "%s's training data" % row["name"]}
+        names = [one["file"] for one in self.shared_datasets() if one["usable"]]
+        match = [name for name in names if name == file] or \
+            [name for name in names if str(file).lower() in name.lower()]
+        if len(match) != 1:
+            raise ToolError("no demo dataset %r; there are: %s" % (file, ", ".join(names)))
+        self._blend(source={"file": match[0]})
+        return {"source": {"file": match[0]}, "source_text": match[0]}
+
+    def _show_blend_plan(self):
+        blend = self.session["blend"]
+        rows = self._chosen()
+        mock = self.session["mock"] or any(row["mock"] for row in rows)
+        source = blend["source"]
+        return {"loras": [blending.describe(row) for row in rows],
+                "places": ({slot: next(row["name"] for row in rows if row["id"] == lora_id)
+                            for slot, lora_id in blending.slots(rows).items()} if rows else {}),
+                "generations": blend["generations"], "population": blend["population"],
+                "questions": blend["questions"], "label": blend["label"],
+                "questions_from": (source["file"] if source and source.get("file") else
+                                   "a LoRA's training data" if source else
+                                   "this conversation's dataset" if self.dataset else
+                                   "the LoRAs' own training data"),
+                "practice_run": mock,
+                "estimate": blending.estimate(blend["population"], blend["generations"],
+                                              mock)["time"]}
+
+    def _start_blend(self):
+        rows = self._chosen()
+        if not rows:
+            raise ToolError("there are no ready LoRAs of yours to blend yet")
+        self.actions.append({"type": "start_blend"})
+        return {"loras": [row["name"] for row in rows],
+                "next": "the page reads the search back and queues it right after your reply, "
+                        "so say it is about to start, not that it has"}
+
+    def _stop_blend(self):
+        self.actions.append({"type": "stop_blend"})
         return {}

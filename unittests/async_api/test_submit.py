@@ -81,8 +81,44 @@ class SubmitTests(JobsTestCase):
         self.assertEqual(conf["COMPOSITE_EVALUATORS"], ["heuristic", ["similarity", 2]])
 
     def test_missing_adapters_are_refused(self):
-        self.refused(self.submission(LORA_SLOTS={"L1": os.path.join(self.folder, "none")}),
+        self.refused(self.submission(LORA_SLOTS=dict(self.slots,
+                                                     L1=os.path.join(self.folder, "none"))),
                      "slot L1")
+
+    def test_a_job_names_its_own_loras_and_no_others(self):
+        # No slots: the server's own LORA_SLOTS are never a job's default.
+        payload = self.submission()
+        del payload["settings"]["LORA_SLOTS"]
+        self.refused(payload, "LORA_SLOTS must name one of your LoRAs")
+        # Every one of the five, not some of them.
+        self.refused(self.submission(LORA_SLOTS={"L1": self.slots["L1"]}), "each of L1")
+        # A folder nobody gave the user -- the command line's own set, say -- is
+        # refused in the same words as one that does not exist.
+        catalog = self.registry.catalog
+        catalog.update(catalog.by_folder(self.slots["L5"])["id"], owner=None)
+        self.refused(self.submission(LORA_SLOTS=self.slots), "slot L5: no LoRA of yours")
+
+    def test_a_slot_is_named_by_id_name_or_folder(self):
+        self.own_slots()
+        catalog = self.registry.catalog
+        slots = {"L1": catalog.by_folder(self.slots["L1"])["id"], "L2": "slot-L2",
+                 "L3": self.slots["L3"], "L4": "slot-L4", "L5": "slot-L4"}
+        job = submit.submit(self.registry, self.user, self.submission(LORA_SLOTS=slots))
+        conn = store.connect(self.registry.database(job))
+        try:
+            stored = store.get_settings(conn, job["run_id"])["LORA_SLOTS"]
+        finally:
+            conn.close()
+        self.assertEqual(stored, dict(self.slots, L5=self.slots["L4"]))
+
+    def test_a_lora_that_is_not_ready_or_not_for_this_model_is_refused(self):
+        self.own_slots()
+        catalog = self.registry.catalog
+        catalog.update(catalog.by_name("slot-L2", "alice")["id"], status="failed")
+        self.refused(self.submission(), "slot L2: slot-L2 is failed")
+        catalog.update(catalog.by_name("slot-L2", "alice")["id"], status="ready",
+                       base_model="someone/else")
+        self.refused(self.submission(), "slot L2: slot-L2 was trained on someone/else")
 
     def test_a_job_needs_training_questions(self):
         payload = self.submission()

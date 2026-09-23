@@ -51,9 +51,10 @@ tools/        test.py, combination.py, compare_servers.py -- dev aids, not
 async_api/    server, worker, submit, registry, results, golive, inference,
               users, verify, evaluate, train -- the search as a web service. See
               "The async API" below. agent-ui.html is the LoRA guide page (/agent).
-async_api_agent/  settings, prompts, providers, analysis, selection, planner, tools,
-              commands, agent, routes -- the chat model behind /agent that walks a
-              user to trained LoRAs, and acts on what they ask in the chat
+async_api_agent/  settings, prompts, providers, analysis, selection, planner, blending,
+              tools, commands, agent, routes -- the chat model behind /agent that
+              walks a user to trained LoRAs and then a search that blends them,
+              and acts on what they ask in the chat
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -1072,16 +1073,21 @@ change to it. These rules hold it together:
   and catalogue ids are `AUTOINCREMENT` -- a stale link would hand someone the right to
   delete a folder. **A LoRA is its owner's alone**: `loras.owner` is a user's name, every
   `/loras` endpoint 404s on another's (`App.own_lora`), names are unique per owner, API
-  trainings go to `TRAINED_LORAS_DIR/user<N>/`, and `submit.check_slot_owners` refuses
-  another user's folder as a job's slot unless it is one of `config.LORA_SLOTS`. Rows
-  found by `scan` belong to nobody until `catalog own <user>`. `--mock` trains nothing and writes
+  trainings go to `TRAINED_LORAS_DIR/user<N>/`, and **a job blends only its owner's
+  LoRAs**: `submit.own_slots` requires all five `LORA_SLOTS`, each one of the user's
+  own ready rows (by id, name or folder), before anything touches the disk, and
+  `check_base_model` holds them to the job's `BASE_MODEL`. `config.LORA_SLOTS` (the
+  `loras/Lora00N` set) is the command line's and never a job's default -- `submit.form`
+  offers `{}`. Rows found by `scan` belong to nobody until `catalog own <user>`. `--mock` trains nothing and writes
   a weightless adapter; `submit.settings_for` refuses a weightless slot unless the
   template is the mocked one.
 
 - **The LoRA guide proposes; the API does.** `async_api_agent/` (mounted by
   `server.py` as `/agent/*`, page `async_api/agent-ui.html`) never trains, queues or
   stores: `/agent/plan` returns `POST /loras` bodies and the *page* sends them, then
-  watches `/loras/{id}`. Keep it that way -- a second path into training would be a
+  watches `/loras/{id}`; `/agent/blend/plan` returns one `POST /jobs` body naming the
+  user's own LoRAs by id (`blending.py`), and the page submits it and watches
+  `/jobs/{id}/status`. Keep it that way -- a second path into training would be a
   second set of checks. Its routes are functions in `routes.ROUTES`, which the server
   calls with its `App`; an `AgentError` is its 4xx/5xx.
 - **The guide's facts are computed, its words are the model's, and it works with
@@ -1103,7 +1109,9 @@ change to it. These rules hold it together:
   are in `tools.SPECS` (with the stages it may run in), its description in
   `prompts.TOOLS` and its one-line summary in `prompts.TOOL_DONE` -- a new tool
   needs all three (a test checks). A selection is keys applied on the way
-  (`selection.py`), never a copy of the data. `commands.py` is the no-model path to
+  (`selection.py`), never a copy of the data. The blend's choices are the session's
+  `blend` part (`blending.blend_of`), changed by the blend tools, whose outcome is a
+  `blend` / `blend_plan` / `start_blend` / `stop_blend` action. `commands.py` is the no-model path to
   the same calls; keep it narrow -- an unrecognised request must produce no call,
   not a guess.
 

@@ -25,8 +25,9 @@ says nothing.
 PERSONA = """\
 You are the LoRA guide inside a web page that helps people train LoRA \
 adapters — small add-ons that teach a language model a new style or skill \
-from example conversations. The person you are talking to may never have \
-trained a model. The page has two halves: on the left, you and the controls \
+from example conversations — and then combine them: a *search* tries many \
+blends of the person's LoRAs and keeps the one whose answers are judged \
+best. The person you are talking to may never have trained a model. The page has two halves: on the left, you and the controls \
 for the current step; on the right, charts, tables and logs of what is \
 happening.
 
@@ -51,11 +52,13 @@ simply and warmly, what is about to happen, as a short numbered list of the \
 steps in FACTS.steps — one line each. Mention that FACTS.loras LoRAs will be \
 trained from their data, each at a different rank (a rank is how much \
 capacity the adapter has: higher learns more detail but takes more memory), \
-on the base model FACTS.base_model. If FACTS.mock is true, say this is a \
-practice run: nothing is really trained, so it takes seconds and needs no GPU.
+on the base model FACTS.base_model, and that afterwards you can combine them. \
+If FACTS.mock is true, say this is a practice run: nothing is really trained, \
+so it takes seconds and needs no GPU. If FACTS.ready_loras is above 0, say \
+they already have that many LoRAs and can go straight to combining them.
 
-End by asking whether they are ready to start. They answer with the Yes / \
-Not yet buttons under your message."""
+End by asking whether they are ready to start. They answer with the buttons \
+under your message."""
 
 ANALYSIS = """\
 The person has just given you a dataset. FACTS.stats describes all of it; \
@@ -107,17 +110,20 @@ CHAT = """\
 The person has typed a message. FACTS.stage is the step they are on, \
 FACTS.step_instructions what that step asks of them, FACTS.session what they \
 have asked for so far (which part of the dataset, the ranks, the epochs, \
-training options, practice run), and FACTS.context what is known (the \
-dataset, the plan, live training progress).
+training options, practice run, and FACTS.session.blend for combining \
+LoRAs), and FACTS.context what is known (the dataset, the plan, live training \
+or search progress).
 
 You have tools that act on the plan. Use them whenever the person asks for \
 something a tool does -- "only train on the first 20", "drop the ones about \
 fever", "use rank 32", "10 epochs", "a lower learning rate", "show me record \
-7", "use the poem dataset", "start", "stop" -- rather than telling them to do \
-it themselves. Several tools may be needed for one request. Do not call a \
-tool that changes something unless they asked for that change. Call \
-start_training only when they clearly ask to start now; the plan is then read \
-back to them and started.
+7", "use the poem dataset", "start", "stop", "blend my LoRAs", "only poem-r8 \
+and poem-r16", "5 rounds", "judge on 20 questions" -- rather than telling them \
+to do it themselves. Several tools may be needed for one request. Do not call \
+a tool that changes something unless they asked for that change. Call \
+start_training or start_blend only when they clearly ask to start now; the \
+plan is then read back to them and started. Only the person's own LoRAs can \
+be blended: list_my_loras says which they have.
 
 A tool's result is the truth: report what it says changed, with its numbers, \
 in one to three short sentences. If you meant to set something and the result \
@@ -125,7 +131,7 @@ does not show it set, call the tool again rather than saying it was done. If a t
 Never claim a change no tool confirmed. When no tool fits, just answer: \
 explain LoRAs, ranks, epochs or loss simply, or say kindly what the page \
 cannot do. End by bringing them back to the current step, unless the step is \
-"training" or "done"."""
+"training", "done", "blending" or "blended"."""
 
 DEBRIEF = """\
 The training has finished. FACTS.loras lists each LoRA: its status (ready, \
@@ -139,10 +145,57 @@ is closer to their examples; there is no universal good number, so compare \
 the LoRAs to each other rather than to an ideal). If there is a sample \
 answer, say in one sentence whether it sounds like their data.
 - For any that failed: say which, and the error in plain words.
-Then suggest one or two next steps from these: open the console (the \
-**Open the console** button) to blend them in a search or compare them; or \
-train again with a different wait. If it was a practice run, say that a real \
-run is the same steps with *Practice run* turned off."""
+Then suggest the next step: combining their LoRAs (the **Blend them** \
+button), where a search tries many blends and keeps the best. Mention that \
+they can also train again with a different wait. If it was a practice run, \
+say that a real run is the same steps with *Practice run* turned off."""
+
+BLEND_INTRO = """\
+The person has moved on to combining their LoRAs. FACTS.loras are the LoRAs \
+picked for the blend (name, rank, base model); FACTS.available is how many \
+ready LoRAs of theirs there are in all; FACTS.search is the search as it \
+stands: FACTS.search.generations rounds after the first, FACTS.search.population \
+blends in each, each judged on FACTS.search.questions questions; FACTS.estimate \
+is roughly how long it takes.
+
+Explain in a few short sentences what happens: a search builds many blends \
+of these LoRAs — stacking, merging or mixing them at different strengths — \
+asks each one the questions, has a judge score the answers, and breeds the \
+best into the next round. Say which LoRAs are picked and that fewer than five \
+simply take more than one of the five places a blend has. If FACTS.loras is \
+empty, say they have no ready LoRAs yet and should train some first.
+
+End by asking them to check the LoRAs ticked on the left and press **Plan \
+the search**, or to tell you what to change (which LoRAs, how many rounds, \
+how many blends, how many questions)."""
+
+BLEND_START = """\
+The search has just been queued. FACTS.label is its name, FACTS.loras the \
+LoRAs in it, FACTS.estimate roughly how long it takes and FACTS.queue where \
+it is in the worker's queue. Tell the person, in two or three short \
+sentences, that it has started, roughly how long it should take, and that \
+they can watch the rounds and the best score so far on the right — the \
+*score* is how the judge rated a blend's answers, from 0 to 1. If FACTS.mock \
+is true, say this is a practice run: the scores are random. Tell them you \
+will let them know when it is done."""
+
+BLEND_DEBRIEF = """\
+The search has finished (FACTS.status). FACTS.best is the blend it found: \
+FACTS.best.formula says how it is built from the LoRAs — stack(…) puts \
+adapters side by side, merge(…) folds them into one, mix(…) averages them, \
+and ×n is the strength each LoRA was given — FACTS.best.fitness its score \
+(0 to 1), and FACTS.best.tested_quality its score on questions the search \
+never saw, if a testing pass ran. FACTS.history is the best and mean score \
+of each round; FACTS.blocked how many blends could not be built. FACTS.mock \
+says whether it was a practice run, whose scores are random.
+
+Tell the person how it went, briefly: the best blend in plain words, its \
+score, and whether the scores rose over the rounds. If a tested score is \
+there, say whether it held up. If FACTS.best is missing, say that no blend \
+scored and, from FACTS.error if there is one, why. Then suggest one next \
+step: open the console (the **Open the console** button) to put the best \
+blend live, or run a longer search. Never call a practice run's scores \
+meaningful."""
 
 
 STEPS = {
@@ -152,6 +205,9 @@ STEPS = {
     "start": START,
     "chat": CHAT,
     "debrief": DEBRIEF,
+    "blend": BLEND_INTRO,
+    "blend_start": BLEND_START,
+    "blend_debrief": BLEND_DEBRIEF,
 }
 
 
@@ -204,9 +260,27 @@ TOOLS = {
     "list_demo_datasets": "The demo datasets on the server, with their sizes. Changes nothing.",
     "use_demo_dataset": "Switch to one of the demo datasets, by its file name.",
     "choose_another_dataset": "Go back to the step where the person gives a dataset.",
-    "list_my_loras": "The person's LoRAs already in the catalogue, with status and loss. Changes nothing.",
+    "list_my_loras": ("The person's own LoRAs in the catalogue, with id, status, rank, base "
+                      "model and loss. Changes nothing."),
     "start_training": "Start training now, with the plan as it stands. Only when the person asks.",
     "stop_training": "Stop the training that is running.",
+    "open_blending": ("Go to combining the person's LoRAs: a search that tries many blends of "
+                      "them and keeps the best."),
+    "choose_blend_loras": (
+        "Choose which of the person's own ready LoRAs to blend, by id or name: 1 to 5, all "
+        "on one base model. add=true adds them to those already chosen instead of "
+        "replacing them. Fewer than five take more than one of a blend's five places."),
+    "set_blend_search": (
+        "Size the search: generations (rounds after the first), population (blends in each "
+        "round), questions (how many questions every blend is judged on), label (its name)."),
+    "set_blend_questions": (
+        "Where the questions the blends are judged on come from: file (a demo dataset), "
+        "lora (a LoRA of theirs, by id or name, whose training data is used), or "
+        "conversation=true for the dataset given in this conversation."),
+    "show_blend_plan": ("What the search is so far: the LoRAs, their places, its size and "
+                        "roughly how long it takes. Changes nothing."),
+    "start_blend": "Start the search now, as it stands. Only when the person asks.",
+    "stop_blend": "Stop the search that is running; what it found so far is kept.",
 }
 
 TOOL_DONE = {
@@ -226,6 +300,13 @@ TOOL_DONE = {
     "list_my_loras": "listed {count} LoRA(s) of yours",
     "start_training": "starting the training",
     "stop_training": "stopping the training",
+    "open_blending": "on to combining your LoRAs",
+    "choose_blend_loras": "blending {names_text}",
+    "set_blend_search": "search: {search_text}",
+    "set_blend_questions": "questions from {source_text}",
+    "show_blend_plan": "read the search plan",
+    "start_blend": "starting the search",
+    "stop_blend": "stopping the search",
 }
 TOOL_FAILED = "{tool}: {error}"
 
@@ -246,9 +327,13 @@ Here is how it works:
 {steps}
 
 I'll train **{loras} LoRAs** from your data, each at a different *rank* (how \
-much detail it can hold), on the base model `{base_model}`.{mock}
+much detail it can hold), on the base model `{base_model}`. Then, if you like, \
+I'll combine them: a search tries many blends and keeps the best.{mock}{ready}
 
 Ready to start?"""
+
+FALLBACK_INTRO_READY = (" You already have **{count} ready LoRA(s)** — press **Blend my "
+                        "LoRAs** to go straight to combining them.")
 
 FALLBACK_INTRO_MOCK = (" This is a **practice run**: nothing is really trained, so it "
                        "takes seconds and needs no GPU.")
@@ -313,8 +398,64 @@ FALLBACK_DEBRIEF = """\
 Training is finished.
 {lines}
 
-Next, you can **Open the console** to blend these LoRAs in a search or \
-compare them, or train again with a different wait.{mock}"""
+Next, press **Blend them** and I'll combine these LoRAs: a search tries many \
+blends and keeps the one whose answers score best. Or train again with a \
+different wait.{mock}"""
+
+FALLBACK_BLEND = """\
+Let's combine your LoRAs. A *search* builds many blends of them — stacking, \
+merging or mixing them at different strengths — asks each one {questions} \
+question(s), has a judge score the answers, and breeds the best into the \
+next round.
+
+I've picked {picked}.{repeat} The search runs **{generations} rounds** of \
+**{population} blends** — {time} ({source}).
+
+Check the LoRAs on the left and press **Plan the search**, or tell me what to \
+change: which LoRAs, how many rounds, blends or questions."""
+
+FALLBACK_BLEND_REPEAT = (" A blend has five places, so with fewer LoRAs some take more than "
+                         "one.")
+
+FALLBACK_BLEND_NONE = """\
+You have no ready LoRAs to combine yet. Train some first — press **New \
+dataset** to start."""
+
+FALLBACK_BLEND_CONFIRM = """\
+Here's the search:
+{lines}
+
+**{generations} rounds** of **{population} blends**, each judged on \
+**{questions} question(s)** from {source}{testing}. That's {time} ({estimate_source}).\
+{mock} Shall I start?"""
+
+FALLBACK_BLEND_CONFIRM_TESTING = ", then the best tested on {testing} question(s) it never saw"
+FALLBACK_BLEND_CONFIRM_MOCK = (" As a practice run, nothing is loaded and the scores are "
+                               "random.")
+
+FALLBACK_BLEND_START = """\
+Done — the search **{label}** has started: {rounds} rounds, {time} in \
+all.{mock}
+
+Watch the right-hand side: each round's best score (how the judge rated a \
+blend's answers, from 0 to 1) should rise. I'll tell you when it's finished."""
+
+FALLBACK_BLEND_START_MOCK = " It's a practice run, so the scores are random and it will be quick."
+
+FALLBACK_BLEND_DEBRIEF = """\
+The search is finished ({status}).
+
+The best blend is **{formula}**, with a score of **{fitness}**{tested}. {trend}\
+{mock}
+
+Next, **Open the console** to put it live and talk to it, or run a longer \
+search."""
+
+FALLBACK_BLEND_DEBRIEF_NONE = """\
+The search is over ({status}), but no blend scored{error}. Try again with \
+more rounds or other LoRAs."""
+
+FALLBACK_BLEND_DEBRIEF_MOCK = " This was a practice run: the scores are random."
 
 FALLBACK_DEBRIEF_MOCK = (" This was a practice run — a real one is the same steps with "
                          "*Practice run* turned off.")
@@ -329,7 +470,12 @@ STEP_INSTRUCTIONS = {
     "wait": "Pick how long to wait from the options, or type it (\"about an hour\").",
     "confirm": "Press **Start training** to begin, or **Change** to pick another wait.",
     "training": "Nothing to do — the training runs on its own. You can stop it with **Stop**.",
-    "done": "Press **Open the console** to use the LoRAs, or **Train again**.",
+    "done": "Press **Blend them** to combine the LoRAs, or **Train again**.",
+    "blend": ("Tick the LoRAs to blend on the left and press **Plan the search**, or tell me "
+              "what to change."),
+    "blend_confirm": "Press **Start the search** to begin, or **Change** to go back.",
+    "blending": "Nothing to do — the search runs on its own. You can stop it with **Stop**.",
+    "blended": "Press **Open the console** to put the best blend live, or **Search again**.",
 }
 
 # The steps as the intro lists them, one line each.
@@ -338,6 +484,7 @@ PROCESS = [
     "I read them and tell you what they'll teach.",
     "You tell me how long you're happy to wait.",
     "I train the LoRAs, and you watch the progress on the right.",
+    "Then I combine them: a search tries many blends and keeps the best.",
 ]
 
 # What the agent says when a step needs nothing from a model: the person
@@ -347,6 +494,10 @@ ASK_DATASET = ("Great! First I need some example conversations — the kind of a
                "want the LoRAs to learn to give.\n\n" + STEP_INSTRUCTIONS["dataset"])
 ANOTHER_DATASET = "No problem — give me another dataset. " + STEP_INSTRUCTIONS["dataset"]
 STOPPED = "I've asked the worker to stop the training. Whatever finished stays in your catalogue."
+BLEND_STOPPED = ("I've asked the worker to stop the search. Every round it finished stays in "
+                 "the job, and the console can resume it.")
+BLEND_HINT = ("You can also ask me in words: \u201conly poem-r8 and poem-r16\u201d, \u201c5 "
+              "rounds\u201d, \u201c12 blends each\u201d, \u201cjudge on 20 questions\u201d…")
 CHAT_HINT = ("You can also ask me in words: \u201conly use the first 20\u201d, \u201cdrop the ones "
              "about X\u201d, \u201cone LoRA at rank 32\u201d, \u201ca lower learning rate\u201d…")
 

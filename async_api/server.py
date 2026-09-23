@@ -85,6 +85,9 @@ The LoRA agent (async_api_agent/routes.py)
                                            page trains through POST /loras above
     POST   /agent/chat                     a typed message, answered and acted on with
                                            the agent's tools
+    POST   /agent/blend/{intro,plan,started,debrief}
+                                           the second half: the user's own LoRAs blended;
+                                           the page submits the plan to POST /jobs above
 """
 
 import argparse
@@ -175,8 +178,9 @@ def training_json(registry, row):
 
 
 def default_slots():
-    """{folder: [slot]} for the server's own LORA_SLOTS, so a LoRA can say
-    which slots of the default search it fills."""
+    """{folder: [slot]} for the server's own LORA_SLOTS -- the command line's
+    set, which no job submitted here may use (submit.own_slots). Kept only so
+    a LoRA that is one of them cannot be deleted from under the command line."""
     out = {}
     for slot, where in sorted(config.LORA_SLOTS.items()):
         out.setdefault(os.path.normcase(lora_catalog.absolute(where)), []).append(slot)
@@ -196,7 +200,7 @@ def training_of(registry, row):
     return training
 
 
-def lora_json(app, row, user, detail=False, slots=None):
+def lora_json(app, row, user, detail=False):
     """One of the user's catalogue rows as the API shows it: the row, the
     training that made it here if one did, and what may be done with it."""
     out = lora_catalog.as_dict(row)
@@ -212,8 +216,6 @@ def lora_json(app, row, user, detail=False, slots=None):
     # Only what the API made can the API delete: a folder found on disk, or
     # trained by hand, is left to whoever put it there, owner or not.
     out["can_delete"] = trained_here and not in_flight and training["status"] in reg.FINISHED
-    slots = default_slots() if slots is None else slots
-    out["default_slots"] = slots.get(os.path.normcase(lora_catalog.absolute(row["folder"])), [])
     if detail:
         out["history"] = lora_catalog.history(row["folder"])
     return out
@@ -571,8 +573,7 @@ class App:
 
     def list_loras(self, user, query):
         base_model = (query.get("base_model") or [None])[0]
-        slots = default_slots()
-        return 200, {"loras": [lora_json(self, row, user, slots=slots) for row
+        return 200, {"loras": [lora_json(self, row, user) for row
                                in self.catalog.all(base_model=base_model, owner=user["name"])]}
 
     def lora_form(self, user):
@@ -740,6 +741,7 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     app = None                                   # bound by make_server()
     quiet = False
+    _unread = 0                                  # the request body's bytes not yet read
 
     def log_message(self, fmt, *args):
         if not self.quiet:
@@ -756,13 +758,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self):
-        length = int(self.headers.get("Content-Length") or 0)
+        length = self._unread
         if length > settings.MAX_BODY_BYTES:
             raise ApiError(413, "request body over %d bytes" % settings.MAX_BODY_BYTES)
         if not length:
             return {}
+        raw = self.rfile.read(length)
+        self._unread = 0
         try:
-            return json.loads(self.rfile.read(length).decode("utf-8"))
+            return json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as error:
             raise ApiError(400, "bad JSON: %s" % error)
 
@@ -771,6 +775,35 @@ class Handler(BaseHTTPRequestHandler):
         return header[7:].strip() if header.lower().startswith("bearer ") else None
 
     def _dispatch(self):
+        """One request, and then whatever of its body nobody read.
+
+        The connection is kept alive (HTTP/1.1), so a reply sent before the
+        body was read -- an unknown route, a wrong method, a bad key -- would
+        leave that body on the socket, to be read as the start of the next
+        request ("400 Bad request syntax ('{...}POST /...')"). So it is drained
+        here, whatever the route did; one too big to read is not, and the
+        connection is closed instead."""
+        try:
+            self._unread = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._unread, self.close_connection = 0, True
+        try:
+            self._route()
+        finally:
+            self._drain()
+
+    def _drain(self):
+        left, self._unread = self._unread, 0
+        if left > settings.MAX_BODY_BYTES:
+            self.close_connection = True
+            return
+        while left > 0:
+            chunk = self.rfile.read(min(left, 1 << 16))
+            if not chunk:
+                break
+            left -= len(chunk)
+
+    def _route(self):
         url = urlparse(self.path)
         path = url.path.rstrip("/") or "/"
         try:
@@ -880,10 +913,18 @@ class Handler(BaseHTTPRequestHandler):
             pieces.close()
 
 
+class Server(ThreadingHTTPServer):
+    # http.server sets SO_REUSEADDR, which on Windows lets a second process bind
+    # a port another is still listening on -- no error, and connections then go
+    # to either. A restart that left the old server running would serve half its
+    # requests from the old code. So on Windows a taken port is an error.
+    allow_reuse_address = os.name != "nt"
+
+
 def make_server(app=None, host=None, port=None, quiet=False):
     app = app or App()
     handler = type("BoundHandler", (Handler,), {"app": app, "quiet": quiet})
-    server = ThreadingHTTPServer((host or settings.HOST,
+    server = Server((host or settings.HOST,
                                   settings.PORT if port is None else port), handler)
     server.daemon_threads = True
     server.app = app
@@ -897,7 +938,12 @@ def main(argv=None):
     parser.add_argument("--jobs-dir", default=None,
                         help="the registry folder (default %s)" % settings.JOBS_DIR)
     args = parser.parse_args(argv)
-    server = make_server(App(reg.Registry(args.jobs_dir)), args.host, args.port)
+    try:
+        server = make_server(App(reg.Registry(args.jobs_dir)), args.host, args.port)
+    except OSError as error:
+        print("[api] cannot listen on %s:%d (%s) -- is another API server still running? "
+              "Stop it first." % (args.host, args.port, error), file=sys.stderr, flush=True)
+        return 1
     print("[api] listening on http://%s:%d, jobs in %s"
           % (args.host, server.server_address[1], server.app.registry.root), flush=True)
     try:

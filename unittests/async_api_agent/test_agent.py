@@ -19,7 +19,12 @@ What async_api_agent owns, and so what is tested here:
     trip in every wire format;
   * the endpoints, with a real worker behind them: the page's whole path from
     a shared dataset to trained LoRAs and a debrief of them, and a chat that
-    narrows the dataset and changes the plan on the way.
+    narrows the dataset and changes the plan on the way;
+  * the second half -- blending: only the user's own ready LoRAs, on one
+    base model, round the five places; the POST /jobs body the plan becomes;
+    the chat's blend tools and their no-model commands; and trained LoRAs
+    blended by a real search and read back, which another user can neither
+    plan with, submit nor read.
 
 No test here asks a real model: every provider is the scripted one, or a
 stand-in on localhost.
@@ -34,6 +39,7 @@ from unittest import mock
 from async_api import worker
 from async_api_agent import agent
 from async_api_agent import analysis
+from async_api_agent import blending
 from async_api_agent import commands
 from async_api_agent import planner
 from async_api_agent import prompts
@@ -584,3 +590,211 @@ class EndpointTests(ServerTestCase):
             self.assertEqual(status, 400, (path, reply))
         status, reply = self.call("GET", "/agent/models?provider=openai&base_url=http://x/v1")
         self.assertEqual(status, 502, reply)
+
+
+# --- the second half: combining the LoRAs ---------------------------------------
+
+
+def lora(catalog, name, owner="alice", rank=8, base_model="unsloth/base", mock=True,
+         status="ready", folder=None):
+    """A catalogue row of `owner`'s, standing in for a trained LoRA."""
+    return catalog.add(name, folder or os.path.join("C:/nowhere", owner or "nobody", name),
+                       status, "trained", owner=owner, rank=rank, base_model=base_model,
+                       mock=int(mock))
+
+
+class BlendingTests(JobsTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.catalog = self.registry.catalog
+        self.a = lora(self.catalog, "poem-r8")
+        self.b = lora(self.catalog, "poem-r16", rank=16)
+
+    def test_the_blend_part_of_a_session_is_checked_and_filled(self):
+        session = planner.session_of({})
+        self.assertEqual(session["blend"]["generations"], settings.BLEND_GENERATIONS)
+        self.assertEqual(session["blend"]["loras"], [])
+        for bad in ({"population": 1}, {"generations": 0}, {"loras": ["x"]},
+                    {"loras": list(range(1, 8))}, {"source": {"url": "http://x"}}):
+            with self.assertRaises(planner.SessionError, msg=bad):
+                planner.session_of({"blend": bad})
+
+    def test_only_the_users_own_ready_loras_can_be_blended(self):
+        theirs = lora(self.catalog, "secret", owner=None)
+        self.registry.add_user("bob")
+        bobs = lora(self.catalog, "bobs", owner="bob")
+        failed = lora(self.catalog, "broken", status="failed")
+        for key in (theirs["id"], bobs["id"], "bobs", "secret"):
+            with self.assertRaises(blending.BlendError) as caught:
+                blending.own(self.catalog, self.user, key)
+            self.assertIn("no LoRA of yours", str(caught.exception))
+        with self.assertRaises(blending.BlendError):
+            blending.own(self.catalog, self.user, failed["id"])
+        self.assertEqual({row["name"] for row in blending.mine(self.catalog, self.user)},
+                         {"poem-r16", "poem-r8"})
+
+    def test_one_base_model_and_five_places(self):
+        other = lora(self.catalog, "other", base_model="someone/else")
+        with self.assertRaises(blending.BlendError):
+            blending.check_together([self.a, other])
+        self.assertEqual(blending.slots([self.a, self.b]),
+                         {"L1": self.a["id"], "L2": self.b["id"], "L3": self.a["id"],
+                          "L4": self.b["id"], "L5": self.a["id"]})
+        # Nothing chosen: the ones just trained, else the biggest set on one model.
+        self.assertEqual([row["id"] for row in blending.default_pick(self.catalog, self.user,
+                                                                     [self.b["id"]])],
+                         [self.b["id"]])
+        self.assertEqual({row["id"] for row in blending.default_pick(self.catalog, self.user)},
+                         {self.a["id"], self.b["id"]})
+
+    def test_a_chromosome_in_words(self):
+        said = blending.formula("CAT.SVD.L3.L1.L2.w1.w2.w3", {"L1": "a", "L2": "b", "L3": "c"},
+                                {"w1": 0.5, "w2": 1.0})
+        self.assertEqual(said, "stack(merge(a ×1.00, b ×w3), c ×0.50)")
+
+    def test_the_plan_is_a_job_naming_the_loras_by_id(self):
+        session = planner.session_of({"blend": {"loras": [self.a["id"], self.b["id"]],
+                                                "generations": 2, "population": 5,
+                                                "questions": 4}})
+        found = blending.plan(self.catalog, self.registry, self.user, session,
+                              dataset=(jsonl(RECORDS), "x.jsonl", None))
+        job = found["job"]
+        self.assertEqual(job["settings"]["LORA_SLOTS"], blending.slots([self.a, self.b]))
+        self.assertEqual((job["settings"]["GENERATIONS"], job["settings"]["COUNT"],
+                          job["settings"]["TRAINING_COUNT"]), (2, 5, 4))
+        self.assertEqual(job["settings"]["BASE_MODEL"], "unsloth/base")
+        # A practice LoRA has no weights: only the mocked template runs one.
+        self.assertEqual(job["settings"]["TEMPLATE"], blending.MOCKED_TEMPLATE)
+        self.assertEqual((found["questions"], found["testing"]), (4, 2))
+        self.assertEqual(len(job["datasets"]["testing"].splitlines()), 2)
+        # With no dataset and no copy of the LoRAs' own data, it says so.
+        with self.assertRaises(blending.BlendError):
+            blending.plan(self.catalog, self.registry, self.user, session)
+
+
+class BlendToolboxTests(JobsTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.catalog = self.registry.catalog
+        self.a = lora(self.catalog, "poem-r8")
+        self.b = lora(self.catalog, "poem-r16", rank=16)
+        self.registry.add_user("bob")
+        self.bobs = lora(self.catalog, "bobs", owner="bob")
+
+    def box(self, stage="blend", session=None):
+        return tools.Toolbox(self.catalog, self.user, stage, session or {}, None,
+                             lambda: [{"file": "poem_lora_dataset.json", "records": 50,
+                                       "usable": True, "keywords": []}])
+
+    def test_the_chat_blends_the_users_loras_and_no_others(self):
+        box = self.box()
+        self.assertIn("no LoRA of yours",
+                      box.run("choose_blend_loras", {"loras": [str(self.bobs["id"])]})["error"])
+        result = box.run("choose_blend_loras", {"loras": ["poem-r8", str(self.b["id"])]})
+        self.assertEqual(box.session["blend"]["loras"], [self.a["id"], self.b["id"]])
+        self.assertEqual(result["names_text"], "poem-r8, poem-r16")
+        box.run("set_blend_search", {"generations": 5, "questions": 20})
+        self.assertEqual((box.session["blend"]["generations"], box.session["blend"]["questions"]),
+                         (5, 20))
+        self.assertIn("error", box.run("set_blend_search", {"population": 1}))
+        box.run("set_blend_questions", {"file": "poem"})
+        self.assertEqual(box.session["blend"]["source"], {"file": "poem_lora_dataset.json"})
+        self.assertEqual(box.outcome()["actions"], [{"type": "blend_plan"}])
+
+    def test_what_the_page_is_told_to_do(self):
+        box = self.box("done")
+        box.run("open_blending", {})
+        self.assertEqual(box.outcome()["actions"], [{"type": "blend"}])
+        box = self.box("intro")
+        box.run("choose_blend_loras", {"loras": ["poem-r8"]})
+        self.assertEqual([one["type"] for one in box.outcome()["actions"]], ["blend", "blend_plan"])
+        box = self.box("blend_confirm")
+        box.run("start_blend", {})
+        self.assertEqual([one["type"] for one in box.outcome()["actions"]],
+                         ["blend_plan", "start_blend"])
+        self.assertIn("search is running", self.box("blending").run(
+            "choose_blend_loras", {"loras": ["poem-r8"]})["error"])
+        self.assertIn("error", self.box("blend").run("stop_blend", {}))
+        box = self.box("blending")
+        box.run("stop_blend", {})
+        self.assertEqual(box.outcome()["actions"], [{"type": "stop_blend"}])
+        # Training's own tools have no say over a search.
+        self.assertIn("error", self.box("blend").run("set_loras", {"ranks": [4]}))
+
+    def test_plain_blend_requests_without_a_model(self):
+        names = ["poem-r8", "poem-r16"]
+        for said, stage, calls in (
+                ("blend them", "done", [("open_blending", {})]),
+                ("only poem-r16 and poem-r8, 4 rounds", "blend",
+                 [("choose_blend_loras", {"loras": ["poem-r16", "poem-r8"]}),
+                  ("set_blend_search", {"generations": 4})]),
+                ("12 blends each, judged on 20 questions", "blend",
+                 [("set_blend_search", {"population": 12, "questions": 20})]),
+                ("go ahead", "blend_confirm", [("start_blend", {})]),
+                ("stop", "blending", [("stop_blend", {})]),
+                ("5 epochs", "blend", [])):
+            self.assertEqual(commands.parse(said, stage, ["poem_lora_dataset.json"], names),
+                             calls, said)
+
+
+class BlendEndpointTests(ServerTestCase):
+
+    def test_trained_loras_blended_by_a_search_and_read_back(self):
+        # Two practice LoRAs, trained through the API as the page does it.
+        status, plan = self.call("POST", "/agent/plan", {
+            "dataset": {"text": jsonl(RECORDS), "name": "tiny.jsonl"}, "epochs": 1, "mock": True})
+        self.assertEqual(status, 200, plan)
+        ids = [self.call("POST", "/loras", body)[1]["lora"]["id"] for body in plan["trainings"]]
+        for _ in ids:
+            worker.serve(self.registry, once=True, poll=0.05, catalog=self.app.catalog)
+
+        status, intro = self.call("POST", "/agent/intro", {"agent": SCRIPTED})
+        self.assertEqual(intro["ready_loras"], len(ids))
+        status, reply = self.call("POST", "/agent/blend/intro", {
+            "agent": SCRIPTED, "session": {}, "prefer": ids})
+        self.assertEqual(status, 200, reply)
+        self.assertEqual(sorted(reply["blend"]["loras"]), sorted(ids))
+        self.assertIn("Plan the search", reply["message"]["text"])
+
+        # No dataset in the page: the questions are the LoRAs' own training data.
+        session = {"blend": dict(reply["blend"], generations=1, population=4, questions=3)}
+        status, found = self.call("POST", "/agent/blend/plan", {"session": session})
+        self.assertEqual(status, 200, found)
+        self.assertIn("Shall I start", found["message"]["text"])
+        self.assertIn("training data", found["source"])
+        self.assertEqual(found["job"]["settings"]["LORA_SLOTS"]["L1"], reply["blend"]["loras"][0])
+
+        # Another user can neither plan with these LoRAs nor submit them.
+        bob = self.registry.add_user("bob")
+        status, refused = self.call("POST", "/agent/blend/plan", {"session": session}, key=bob)
+        self.assertEqual(status, 400)
+        self.assertIn("no LoRA of yours", refused["error"])
+        status, refused = self.call("POST", "/jobs", found["job"], key=bob)
+        self.assertEqual(status, 400)
+        self.assertIn("no LoRA of yours", refused["error"])
+
+        # The page's half: the body goes to POST /jobs as it is.
+        status, queued = self.call("POST", "/jobs", found["job"])
+        self.assertEqual(status, 201, queued)
+        job_id = queued["job"]["id"]
+        status, said = self.call("POST", "/agent/blend/started", {
+            "agent": SCRIPTED, "job": {"id": job_id, "queue_position": 1}, "plan": found})
+        self.assertIn(found["label"], said["message"]["text"])
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+        self.assertEqual(self.call("GET", "/jobs/%d/status" % job_id)[1]["job"]["status"], "done",
+                         self.call("GET", "/jobs/%d/log" % job_id)[1])
+
+        status, debrief = self.call("POST", "/agent/blend/debrief", {"agent": SCRIPTED,
+                                                                    "job": job_id})
+        self.assertEqual(status, 200, debrief)
+        result = debrief["result"]
+        self.assertTrue(result["mock"])
+        self.assertEqual(sorted(set(result["slots"].values())),
+                         sorted(one["name"] for one in found["loras"]))
+        self.assertIsNotNone(result["best"])
+        self.assertTrue(any(one["name"] in result["best"]["formula"] for one in found["loras"]))
+        self.assertIn("practice run", debrief["message"]["text"])
+        self.assertEqual(self.call("POST", "/agent/blend/debrief", {"job": job_id}, key=bob)[0],
+                         404)
