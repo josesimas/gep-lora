@@ -12,10 +12,12 @@ what the page must do afterwards.
 Three rules keep it honest:
 
   * **A tool changes the plan, never the world.** Starting and stopping a
-    training or a search, and switching datasets, are *actions* handed back
-    to the page, which does them through the API's own endpoints -- POST
-    /loras, POST /jobs, their cancels, /agent/analyse -- exactly as its
-    buttons do. Nothing here queues, trains or blends.
+    training, a search or a testing pass, verifying a blend, putting one live
+    and switching datasets are *actions* handed back to the page, which does
+    them through the API's own endpoints -- POST /loras, POST /jobs, their
+    cancels, POST /jobs/{id}/test, /verify and /live, /agent/analyse --
+    exactly as its buttons do. Nothing here queues, trains, blends, tests or
+    deploys.
   * **The stage decides what may be asked.** The plan cannot change while a
     training runs; a dataset has to be there before part of it is chosen;
     a training can be started only once its length is known. A tool asked at
@@ -37,12 +39,15 @@ from async_api_agent import analysis
 from async_api_agent import blending
 from async_api_agent import planner
 from async_api_agent import prompts
+from async_api_agent import release
 from async_api_agent import selection as picking
 from async_api_agent import settings
 
-# The page's stages, in order: training LoRAs, then blending them.
+# The page's stages, in order: training LoRAs, blending them, then testing the
+# blends, verifying one and putting one live.
 STAGES = ("intro", "dataset", "analysis", "wait", "confirm", "training", "done",
-          "blend", "blend_confirm", "blending", "blended")
+          "blend", "blend_confirm", "blending", "blended",
+          "testing", "tested", "verifying", "verified", "live")
 
 # Stages in which the training plan may change (not while a training runs,
 # nor once the person has moved on to blending).
@@ -55,9 +60,16 @@ STARTABLE = ("analysis", "wait", "confirm", "done")
 BLEND_PLANNING = ("intro", "done", "blend", "blend_confirm", "blended")
 BLEND_STAGES = ("blend", "blend_confirm", "blending", "blended")
 
+# After a search: when a blend may be picked (and put live), and when a
+# verification may be asked for -- once there is something to pick from.
+PICKING = ("blended", "tested", "verified", "live")
+VERIFYING = ("tested", "verified")
+
 # Nothing may change while one of these runs.
 RUNNING = {"training": "a training is running; stop it or wait for it first",
-           "blending": "a search is running; stop it or wait for it first"}
+           "blending": "a search is running; stop it or wait for it first",
+           "testing": "the blends are being tested; stop it or wait for it first",
+           "verifying": "a verification is running; wait for it first"}
 
 _INT = {"type": "integer"}
 _NUM = {"type": "number"}
@@ -110,7 +122,7 @@ SPECS = {
     "list_my_loras": ({}, [], False, STAGES, False),
     "start_training": ({}, [], True, STARTABLE, False),
     "stop_training": ({}, [], False, ("training",), False),
-    "open_blending": ({}, [], False, PLANNING + ("blended",), False),
+    "open_blending": ({}, [], False, PLANNING + PICKING, False),
     "choose_blend_loras": ({
         "loras": dict(_WORDS, description="LoRA ids or names, e.g. [3, \"poem-r16\"]"),
         "add": {"type": "boolean", "description": "add to the LoRAs already chosen"},
@@ -130,11 +142,29 @@ SPECS = {
     "show_blend_plan": ({}, [], False, STAGES, False),
     "start_blend": ({}, [], False, BLEND_PLANNING, False),
     "stop_blend": ({}, [], False, ("blending",), False),
+    "start_testing": ({}, [], False, PICKING, False),
+    "stop_testing": ({}, [], False, ("testing",), False),
+    "choose_best_blend": ({
+        "individual": dict(_INT, description="the blend's number, e.g. 7 for #7"),
+    }, ["individual"], False, PICKING, True),
+    "set_verify_questions": ({
+        "split": {"type": "string", "enum": list(release.SPLITS),
+                  "description": "one of the search's own sets of questions"},
+        "file": {"type": "string", "description": "a demo dataset's file name"},
+        "lora": {"type": "string", "description": "a LoRA of theirs, by id or name"},
+        "count": dict(_INT, description="how many questions"),
+    }, [], False, PICKING, True),
+    "start_verification": ({}, [], False, VERIFYING, False),
+    "go_live": ({
+        "individual": dict(_INT, description="the blend's number; default the one picked"),
+    }, [], False, PICKING, False),
 }
 
 
 # The tools that change what a search blends rather than what is trained.
 BLEND_TOOLS = ("choose_blend_loras", "set_blend_search", "set_blend_questions")
+# The tools that change what happens after a search: which blend, which questions.
+RELEASE_TOOLS = ("choose_best_blend", "set_verify_questions")
 
 
 class ToolError(ValueError):
@@ -153,10 +183,13 @@ class Toolbox:
     """One chat message's tools: the session as they change it, and what the
     page must do once the reply is back."""
 
-    def __init__(self, catalog, user, stage, session, dataset=None, shared_datasets=None):
+    def __init__(self, catalog, user, stage, session, dataset=None, shared_datasets=None,
+                 registry=None):
         """`dataset` is (text, name, shared file or None), or None before one
-        is given; `shared_datasets` a callable listing the demo datasets."""
+        is given; `shared_datasets` a callable listing the demo datasets;
+        `registry` the API's, to read the blends of the session's search."""
         self.catalog = catalog
+        self.registry = registry
         self.user = user
         self.stage = stage if stage in STAGES else "intro"
         self.before = planner.session_of(session)
@@ -168,7 +201,9 @@ class Toolbox:
         self.preview = None
         self.plan_changed = False
         self.blend_changed = False
+        self.release_changed = False
         self._records = None
+        self._found = False
 
     # --- what the tools read ---
 
@@ -202,7 +237,7 @@ class Toolbox:
                 raise ToolError("there is no dataset yet; give one first")
             result = getattr(self, "_" + name)(**arguments)
         except (ToolError, picking.SelectionError, planner.SessionError,
-                analysis.DatasetError, blending.BlendError) as error:
+                analysis.DatasetError, blending.BlendError, release.ReleaseError) as error:
             result = {"error": str(error)}
         except TypeError as error:            # an argument the tool does not take
             result = {"error": "bad arguments: %s" % error}
@@ -212,6 +247,8 @@ class Toolbox:
             if SPECS[name][4]:
                 if name in BLEND_TOOLS:
                     self.blend_changed = True
+                elif name in RELEASE_TOOLS:
+                    self.release_changed = True
                 else:
                     self.plan_changed = True
             summary = prompts.TOOL_DONE[name].format(**result)
@@ -504,3 +541,115 @@ class Toolbox:
     def _stop_blend(self):
         self.actions.append({"type": "stop_blend"})
         return {}
+
+    # --- after the search ---
+
+    def _blends(self):
+        """release.blends() for the session's search, or None when there is
+        no registry to read it from. Read once per message."""
+        if self._found is False:
+            self._found = None
+            if self.registry is not None:
+                job = release.own_job(self.registry, self.user, self.session["release"]["job"])
+                self._found = release.blends(self.registry, self.catalog, self.user, job)
+        return self._found
+
+    def _search(self):
+        if self.session["release"]["job"] is None:
+            raise ToolError("there is no finished search to work with yet")
+
+    def _picked(self, individual=None):
+        """The blend asked for, else the one picked, else the recommended one.
+        -> (number, the blend's entry, or None when the search cannot be read)."""
+        wanted = individual if individual is not None else self.session["release"]["individual"]
+        if isinstance(wanted, float) and wanted == int(wanted):
+            wanted = int(wanted)
+        if isinstance(wanted, bool) or (wanted is not None and not isinstance(wanted, int)):
+            raise ToolError("a blend is picked by its number")
+        found = self._blends()
+        if found is None:
+            if wanted is None:
+                raise ToolError("pick a blend first, by its number")
+            return wanted, None
+        one = release.pick(found, dict(self.session["release"], individual=wanted))
+        return one["number"], one
+
+    def _choose_best_blend(self, individual):
+        self._search()
+        number, one = self._picked(individual)
+        self.session["release"]["individual"] = number
+        out = {"individual": number}
+        if one is not None:
+            out.update(formula=one["formula"], search_score=one["quality"],
+                       tested_score=one["tested"], loras=one["loras"])
+        return out
+
+    def _set_verify_questions(self, split=None, file=None, lora=None, count=None):
+        self._search()
+        given = [one for one in (split, file, lora) if one not in (None, "")]
+        if len(given) > 1:
+            raise ToolError("say one source: the search's own questions, a demo dataset, or "
+                            "one of your LoRAs")
+        if not given and count is None:
+            raise ToolError("say where the questions come from, or how many")
+        part = dict(self.session["release"])
+        if split:
+            found = self._blends()
+            if found is not None and split not in found["splits"]:
+                raise ToolError("that search holds no %s questions; it has: %s"
+                                % (split, ", ".join(found["splits"]) or "none"))
+            part["questions"] = {"split": split}
+        elif file:
+            names = [one["file"] for one in self.shared_datasets() if one["usable"]]
+            match = [name for name in names if name == file] or \
+                [name for name in names if str(file).lower() in name.lower()]
+            if len(match) != 1:
+                raise ToolError("no demo dataset %r; there are: %s" % (file, ", ".join(names)))
+            part["questions"] = {"file": match[0]}
+        elif lora not in (None, ""):
+            row = blending.own(self.catalog, self.user, lora)
+            part["questions"] = {"lora": row["id"]}
+        if count is not None:
+            part["count"] = count
+        self.session["release"] = release.release_of(part)
+        questions = self.session["release"]["questions"]
+        if questions is None:
+            text = "the validation questions"
+        elif questions.get("split"):
+            text = "its %s questions" % questions["split"]
+        elif questions.get("file"):
+            text = questions["file"]
+        else:
+            text = "%s's training data" % self.catalog.get(questions["lora"])["name"]
+        if self.session["release"]["count"]:
+            text += ", %d of them" % self.session["release"]["count"]
+        return {"questions": questions, "count": self.session["release"]["count"],
+                "questions_text": text}
+
+    def _start_testing(self):
+        self._search()
+        self.actions.append({"type": "start_testing"})
+        return {"next": "the page queues the testing right after your reply, so say it is about "
+                        "to start, not that it has"}
+
+    def _stop_testing(self):
+        self.actions.append({"type": "stop_testing"})
+        return {}
+
+    def _start_verification(self):
+        self._search()
+        number, _ = self._picked()
+        self.session["release"]["individual"] = number
+        self.actions.append({"type": "start_verification"})
+        return {"individual": number,
+                "next": "the page reads the verification back and queues it right after your "
+                        "reply, so say it is about to start, not that it has"}
+
+    def _go_live(self, individual=None):
+        self._search()
+        number, _ = self._picked(individual)
+        self.session["release"]["individual"] = number
+        self.actions.append({"type": "go_live"})
+        return {"individual": number,
+                "next": "the page puts it live right after your reply and shows its key; never "
+                        "say or invent a key yourself"}

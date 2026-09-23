@@ -137,8 +137,14 @@ def session_of(raw):
         blend = blending.blend_of(raw.get("blend"))
     except blending.BlendError as error:
         raise SessionError(str(error))
+    from async_api_agent import release
+    try:
+        after = release.release_of(raw.get("release"))
+    except release.ReleaseError as error:
+        raise SessionError(str(error))
     return {"selection": chosen,
             "blend": blend,
+            "release": after,
             "ranks": check_ranks(raw["ranks"]) if raw.get("ranks") else list(settings.LORA_RANKS),
             "epochs": epochs,
             "options": check_options(raw.get("options") or {}),

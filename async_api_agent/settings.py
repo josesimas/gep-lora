@@ -179,8 +179,11 @@ MAX_BLEND_POPULATION = 40
 MAX_BLEND_QUESTIONS = 100
 
 # How many of the questions left over after the judged ones go to the testing
-# pass: questions the search never saw, asked of its best blends at the end.
+# step (every blend is asked them) and then to the verification (the chosen
+# blend beside each of its LoRAs): questions the search never saw, kept apart
+# from each other. See blending.split().
 BLEND_TEST_QUESTIONS = 10
+BLEND_VALIDATION_QUESTIONS = 10
 
 # The estimate: seconds one blend takes to build and answer, and to start a
 # search (the lora servers loading the base model). A guess until measured;
@@ -191,6 +194,14 @@ BLEND_OVERHEAD_SECONDS = 60
 
 # The job's label when the chat names none: the first LoRA's stem.
 BLEND_LABEL = "{stem}-blend"
+
+# --- after the search: testing, verification, going live ----------------------
+#
+# How many questions a verification asks when they come from a file -- a demo
+# dataset, a LoRA's training data -- rather than one of the search's own
+# splits, which carry their own size; and the most the chat may ask for.
+VERIFY_QUESTIONS = 10
+MAX_VERIFY_QUESTIONS = 100
 
 
 def _override():

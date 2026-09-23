@@ -19,6 +19,10 @@ A job can come back through the queue after that, with a different `task`:
               carry a stopped, cancelled or failed search on from where it got to
     evaluate  python main.py --db ... --run ... --evaluate [--force] [--set ...]
               grade the answers it already holds, and restate its fitness
+    test      python -m testing.test_run_with_dataset --from-db --db ... --run ...
+              put every blend of a finished search in front of its testing
+              split (see testpass.py) -- the testing pass alone, run directly
+              rather than through main.py, which would only hand it on
 
 Which is why a cancel of a running search *stops* it rather than ending it: the
 sweep database says how far it got, and `main.py --resume` reads that back.
@@ -64,9 +68,10 @@ from adapters import catalog as lora_catalog
 from async_api import evaluate
 from async_api import results
 from async_api import settings
+from async_api import testpass
 from async_api import train
 from async_api import verify
-from async_api.registry import (CANCELLED, DONE, EVALUATE, FAILED, RESUME, STOPPED,
+from async_api.registry import (CANCELLED, DONE, EVALUATE, FAILED, RESUME, STOPPED, TEST,
                                 Registry)
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -78,8 +83,13 @@ def say(message):
 
 
 def command(registry, job, python=None, main=MAIN):
-    """The main.py command line for one job, for the task it was queued for."""
+    """The main.py command line for one job, for the task it was queued for --
+    or, for a testing pass, the testing script's own."""
     options = json.loads(job["options"] or "{}")
+    if job["task"] == TEST:
+        return testpass.command(python or sys.executable, registry.database(job),
+                                job["run_id"], json.loads(job["task_options"] or "{}"),
+                                options.get("timeout"))
     argv = [python or sys.executable, "-u", main,
             "--db", registry.database(job), "--run", str(job["run_id"])]
     if job["task"] == RESUME:
@@ -173,40 +183,45 @@ def supervise(argv, log_path, what, on_start, cancelled=None, poll=None):
 
 RESUME_HINT = "; resume it to carry on from there"
 
+# The tasks that read a job's search without moving it, so the job ends where
+# its search is (settle) rather than where the child left it.
+SETTLED = {EVALUATE: "evaluation", TEST: "testing pass"}
+
 
 def run_job(registry, job, argv=None, poll=None):
     """Run one claimed job to its end. -> the status it finished in."""
     argv = argv or command(registry, job)
     what = "job %d" % job["id"]
-    if job["task"] in (RESUME, EVALUATE):
+    if job["task"] in (RESUME, EVALUATE, TEST):
         what += " (%s)" % job["task"]
     say("%s: %s" % (what, " ".join(argv[2:])))
+    kind = SETTLED.get(job["task"])
     try:
         code, cancelled = supervise(
             argv, os.path.join(registry.folder(job), "job.log"), what,
             lambda pid: registry.set_pid(job["id"], pid),
             lambda: registry.cancel_requested(job["id"]), poll)
     except Stopped as stopped:
-        if job["task"] == EVALUATE:
+        if kind:
             settle(registry, job, stopped.args[0],
-                   "the worker stopped while this evaluation was running")
+                   "the worker stopped while this %s was running" % kind)
         else:
             registry.finish(job["id"], FAILED, exit_code=stopped.args[0],
                             error="the worker stopped while this job was running"
                                   + RESUME_HINT)
         raise
     if code is None:
-        if job["task"] == EVALUATE:
-            return settle(registry, job, None, "could not start main.py: %s" % cancelled)
+        if kind:
+            return settle(registry, job, None, "could not start the %s: %s" % (kind, cancelled))
         registry.finish(job["id"], FAILED,
                         error="could not start main.py: %s" % cancelled)
         return FAILED
 
-    if job["task"] == EVALUATE:
+    if kind:
         return settle(registry, job, code,
-                      "the evaluation was stopped" if cancelled
+                      "the %s was stopped" % kind if cancelled
                       else None if code == 0
-                      else "the evaluation exited with %s; see the job log" % code)
+                      else "the %s exited with %s; see the job log" % (kind, code))
     if cancelled:
         # Stopped rather than ended: what it did is in the sweep database, and
         # main.py --resume carries it on from exactly there.
@@ -388,9 +403,9 @@ def recover(registry):
     """Mark the jobs a dead worker left running as failed. -> how many."""
     stale = registry.orphaned()
     for job in stale:
-        if job["task"] == EVALUATE:
-            status = settle(registry, job, None,
-                            "the worker stopped while this evaluation was running")
+        if job["task"] in SETTLED:
+            status = settle(registry, job, None, "the worker stopped while this %s was "
+                                                 "running" % SETTLED[job["task"]])
         else:
             status = FAILED
             registry.finish(job["id"], FAILED,

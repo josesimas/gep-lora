@@ -49,12 +49,14 @@ adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
 tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
 async_api/    server, worker, submit, registry, results, golive, inference,
-              users, verify, evaluate, train -- the search as a web service. See
-              "The async API" below. agent-ui.html is the LoRA guide page (/agent).
+              users, verify, evaluate, testpass, train -- the search as a web
+              service. See "The async API" below. agent-ui.html is the LoRA guide
+              page (/agent).
 async_api_agent/  settings, prompts, providers, analysis, selection, planner, blending,
-              tools, commands, agent, routes -- the chat model behind /agent that
-              walks a user to trained LoRAs and then a search that blends them,
-              and acts on what they ask in the chat
+              release, tools, commands, agent, routes -- the chat model behind
+              /agent that walks a user to trained LoRAs, a search that blends
+              them, and then testing, verifying and putting a blend live, and
+              acts on what they ask in the chat
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -1038,6 +1040,18 @@ change to it. These rules hold it together:
   Results go in `verify<id>/` inside the job's folder, so deleting the run takes
   them with it -- a reading of a sweep is worth nothing without the sweep.
 
+- **Testing a finished job's blends is a job task too** (`task: "test"`,
+  `POST /jobs/{id}/test`, `async_api/testpass.py`), but the worker runs
+  `python -m testing.test_run_with_dataset --from-db ... --min-quality=-1.0 --resume`
+  directly rather than through `main.py`. Every blend that ran is tested by
+  default (`testpass.ALL`), since the pass exists so a person can choose one; it
+  only runs on a `done` job, and `worker.settle()` ends it where the search is,
+  as an evaluation (`worker.SETTLED`). A verification may ask another dataset
+  than a split (`dataset`: `{"file"}` or `{"lora": id}`, resolved by
+  `server.App.verify_dataset`, the user's own LoRAs only), and passes
+  `--evaluator` only when asked for one, so a mocked sweep is scored with its
+  printed numbers instead of a judge.
+
 - **Stop, resume and evaluate are `main.py --resume` / `--evaluate`**, run by the same
   worker on the same job. A job carries a `task` (`search`, `resume`, `evaluate`) and
   `task_options`; `registry.requeue()` puts a stopped one back in the queue (keeping its
@@ -1111,7 +1125,16 @@ change to it. These rules hold it together:
   needs all three (a test checks). A selection is keys applied on the way
   (`selection.py`), never a copy of the data. The blend's choices are the session's
   `blend` part (`blending.blend_of`), changed by the blend tools, whose outcome is a
-  `blend` / `blend_plan` / `start_blend` / `stop_blend` action. `commands.py` is the no-model path to
+  `blend` / `blend_plan` / `start_blend` / `stop_blend` action. After the search,
+  the session's `release` part (`release.release_of`: the job, the picked blend,
+  the verification's questions and count) is changed by `choose_best_blend` and
+  `set_verify_questions`, and `start_testing` / `stop_testing` /
+  `start_verification` / `go_live` are actions; the Toolbox gets the registry to
+  check a blend number against the user's own job. The blend search itself
+  runs no testing pass (`no_test`) -- testing is its own step -- and keeps a
+  validation split back for the verification (`blending.split`). The live
+  token stays in the page: `/agent/live/started` takes a deployment id, and no
+  fact handed to a model carries a token. `commands.py` is the no-model path to
   the same calls; keep it narrow -- an unrecognised request must produce no call,
   not a guess.
 

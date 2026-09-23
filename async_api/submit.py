@@ -238,15 +238,26 @@ def options_for(options):
     return out
 
 
+def shared_path(name):
+    """A file under SHARED_DATASETS_DIR, by name. -> its path, or None when
+    there is no such file there (or the name reaches outside the folder)."""
+    if not isinstance(name, str) or not name.strip():
+        return None
+    shared = os.path.abspath(os.path.join(_ROOT, settings.SHARED_DATASETS_DIR))
+    path = os.path.abspath(os.path.join(shared, name))
+    if os.path.commonpath([shared, path]) != shared or not os.path.isfile(path):
+        return None
+    return path
+
+
 def dataset_lines(split, value):
     """One split of a submission as the lines of a dataset file. -> [str]."""
     if isinstance(value, dict):
         name = value.get("file")
         if not isinstance(name, str) or set(value) != {"file"}:
             raise SubmissionError("%s: a dataset object must be {\"file\": name}" % split)
-        shared = os.path.abspath(os.path.join(_ROOT, settings.SHARED_DATASETS_DIR))
-        path = os.path.abspath(os.path.join(shared, name))
-        if os.path.commonpath([shared, path]) != shared or not os.path.isfile(path):
+        path = shared_path(name)
+        if path is None:
             raise SubmissionError("%s: no shared dataset %r" % (split, name))
         with open(path, encoding="utf-8") as handle:
             return [line.strip() for line in handle if line.strip()]

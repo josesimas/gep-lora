@@ -277,6 +277,16 @@ class ResumeTests(ServerTestCase):
         finally:
             conn.close()
 
+    def test_only_a_finished_search_is_tested(self):
+        job_id, job = self.stopped_job()
+        self.assertFalse(self.call("GET", "/jobs/%d" % job_id)[1]["job"]["can_test"])
+        status, reply = self.call("POST", "/jobs/%d/test" % job_id, {})
+        self.assertEqual(status, 409, reply)
+        self.assertIn("only a finished search", reply["error"])
+        self.assertEqual(self.call("POST", "/jobs/%d/test" % job_id, {"nope": 1})[0], 409)
+        self.assertEqual(self.call("GET", "/jobs/%d/test" % job_id,
+                                   key=self.registry.add_user("bob"))[0], 404)
+
     def test_a_stopped_job_carries_on_from_where_it_stopped(self):
         job_id, job = self.stopped_job()
         status, reply = self.call("POST", "/jobs/%d/resume" % job_id)

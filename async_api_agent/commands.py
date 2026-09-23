@@ -15,7 +15,14 @@ which the same Toolbox then runs under the same checks.
         ("set_blend_search", {"generations": 5})]
 
 Once the person is combining LoRAs, only the blend's requests are read: "5
-epochs" means nothing to a search, and would only be refused.
+epochs" means nothing to a search, and would only be refused. And once the
+search is over, only the requests about its blends: test them, pick one
+("#7 is the best"), what to verify it on, verify it, put it live.
+
+    parse("verify #7 on the testing questions", "tested")
+    -> [("choose_best_blend", {"individual": 7}),
+        ("set_verify_questions", {"split": "testing"}),
+        ("start_verification", {})]
 
 It is deliberately narrow: a request it does not recognise returns no calls,
 and the agent says what it can do instead of guessing.
@@ -121,6 +128,10 @@ def _options(said):
 # The stages in which the person is combining LoRAs, not training them.
 BLEND_STAGES = ("blend", "blend_confirm", "blending", "blended")
 
+# The stages after the search: testing its blends, verifying one, going live.
+# "blended" is both: the search is over, and another may be planned from it.
+RELEASE_STAGES = ("blended", "testing", "tested", "verifying", "verified", "live")
+
 _START = (r"\b(?:start|begin|kick off|launch|run) (?:the )?(?:training|search|blend(?:ing)?)\b|"
           r"\bstart (?:it |them )?now\b|\bgo ahead\b|\blet'?s go\b|^ (?:start|go|begin) ?[.!]? $")
 
@@ -176,12 +187,67 @@ def _blend(said, stage, demo_files, names):
     return calls
 
 
+_BLEND_NUMBER = r"(?:#|\bblend (?:#|number )?|\bindividual (?:#|number )?|\bnumber )(\d+)\b"
+
+
+def _release(said, stage, demo_files, names):
+    """The calls about a finished search's blends. -> [(name, arguments)]."""
+    calls = []
+    if stage == "testing":
+        if re.search(r"\b(?:stop|cancel|abort|halt)\b", said):
+            calls.append(("stop_testing", {}))
+        return calls
+    if stage == "verifying":
+        return calls
+    if re.search(r"\b(?:test|try) (?:all |every |the |them|those|these)(?:the )?"
+                 r"(?:blends?|of them|them)?\b|\b(?:run|start) (?:the )?test(?:s|ing)\b", said) \
+            and not re.search(r"\btesting (?:questions|split|set|data)\b", said):
+        calls.append(("start_testing", {}))
+        return calls
+    number = re.search(_BLEND_NUMBER, said)
+    live = re.search(r"\b(?:go(?:es)? live|put (?:it |them |that |this |\S+ )?live|deploy|"
+                     r"set (?:it |\S+ )?live|make (?:it |\S+ )?live)\b", said)
+    verify = re.search(r"\b(?:verify|verification|check (?:it|that|this|blend|#))", said)
+    if number and not live:
+        calls.append(("choose_best_blend", {"individual": int(number.group(1))}))
+    found = re.search(r"\b(?:on|with|using|against) (?:the |its )?(validation|testing|training)"
+                      r"(?: questions| split| set| data)?\b", said)
+    source = {}
+    if found:
+        source["split"] = found.group(1)
+    else:
+        found = re.search(r"\b(?:on|with|using|use) (?:the )?([\w.-]+)(?: demo)? "
+                          r"(?:dataset|data|file)\b", said)
+        if found:
+            match = [name for name in demo_files if found.group(1) in name.lower()]
+            if len(match) == 1:
+                source["file"] = match[0]
+            else:
+                mentioned = _named(said, names)
+                if mentioned:
+                    source["lora"] = mentioned[0]
+    found = re.search(r"(\d+) ?questions?\b", said)
+    if found:
+        source["count"] = int(found.group(1))
+    if source and stage != "live":
+        calls.append(("set_verify_questions", source))
+    if live:
+        calls.append(("go_live", {"individual": int(number.group(1))} if number else {}))
+    elif verify and stage in ("tested", "verified"):
+        calls.append(("start_verification", {}))
+    return calls
+
+
 def parse(message, stage, demo_files=(), lora_names=()):
     """The tool calls a plain request asks for. -> [(name, arguments)].
 
     `lora_names` are the person's own ready LoRAs, so naming one ("blend
     poem-r8 and poem-r16") chooses it without a model."""
     said = _clean(message)
+    if stage in RELEASE_STAGES:
+        calls = _release(said, stage, demo_files, lora_names)
+        if calls or stage != "blended":
+            return calls
     if stage in BLEND_STAGES:
         return _blend(said, stage, demo_files, lora_names)
     calls = []

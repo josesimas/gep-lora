@@ -31,6 +31,17 @@ App and the user, like an App method, and returns (status, payload).
     POST /agent/blend/started       {agent, job: {id, queue_position}, plan, history}
     POST /agent/blend/debrief       {agent, job: id, history} -> what the search found
 
+  after the search (release.py)
+    POST /agent/test/started        {agent, job: {id, queue_position}, history}
+    POST /agent/test/debrief        {agent, job: id, session, history}
+                                                              -> every blend, tested or not,
+                                                                 and the one recommended
+    POST /agent/verify/plan         {session}                 -> the POST /jobs/{id}/verify
+                                                                 body, read back
+    POST /agent/verify/debrief      {agent, verification: id, history}
+                                                              -> the blend beside its LoRAs
+    POST /agent/live/started        {agent, deployment: id, history}
+
 `agent` is the page's choice of model -- {"provider", "model", "base_url",
 "conversation"}, the last an id per conversation for the providers that route
 by one --
@@ -44,6 +55,14 @@ The blend half is the same bargain: /agent/blend/plan returns a POST /jobs
 body naming the user's own LoRAs by catalogue id, the page submits it, and
 watches GET /jobs/{id}/status; /agent/blend/debrief reads only a job of the
 user's own (another user's is a 404, as on /jobs/{id}).
+
+And so is the last part. The page queues the testing pass itself (POST
+/jobs/{id}/test) and watches the job; /agent/verify/plan returns the body of a
+POST /jobs/{id}/verify, which the page sends and watches through GET
+/verifications/{id}; the page puts a blend live with POST /jobs/{id}/live and
+tries it through POST /infer. The token that call returns stays in the page:
+/agent/live/started is sent the deployment's id, never its token, so no model
+is ever shown one.
 """
 
 import os
@@ -55,6 +74,7 @@ from async_api_agent import blending
 from async_api_agent import planner
 from async_api_agent import prompts
 from async_api_agent import providers
+from async_api_agent import release
 from async_api_agent import settings
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -197,7 +217,12 @@ def config(app, user):
                            "another_dataset": prompts.ANOTHER_DATASET,
                            "stopped": prompts.STOPPED, "blend_stopped": prompts.BLEND_STOPPED,
                            "chat_hint": prompts.CHAT_HINT,
-                           "blend_hint": prompts.BLEND_HINT}}
+                           "blend_hint": prompts.BLEND_HINT,
+                           "test_stopped": prompts.TEST_STOPPED,
+                           "release_hint": prompts.RELEASE_HINT},
+                 "release": {"splits": list(release.SPLITS),
+                             "questions": settings.VERIFY_QUESTIONS,
+                             "max_questions": settings.MAX_VERIFY_QUESTIONS}}
 
 
 def models(app, user, query):
@@ -265,7 +290,7 @@ def chat(app, user, body):
     return 200, agent.chat(app.catalog, user, message.strip()[:4000],
                            str((body or {}).get("stage") or ""), session, dataset,
                            context if isinstance(context, dict) else None,
-                           _choice(body), _history(body), demo_datasets)
+                           _choice(body), _history(body), demo_datasets, app.registry)
 
 
 def debrief(app, user, body):
@@ -326,6 +351,92 @@ def blend_debrief(app, user, body):
                                     _history(body))
 
 
+# --- after the search ------------------------------------------------------------
+
+
+def _id(body, name):
+    value = (body or {}).get(name)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise AgentError(400, "%s must be an id" % name)
+    return value
+
+
+def _blends(app, user, job_id):
+    """release.blends() for one of the user's own jobs; another's is a 404."""
+    job = app.registry.job(job_id, user["id"])
+    if job is None:
+        raise AgentError(404, "no job %d" % job_id)
+    try:
+        return release.blends(app.registry, app.catalog, user, job)
+    except release.ReleaseError as error:
+        raise AgentError(409, str(error))
+
+
+def test_started(app, user, body):
+    job = (body or {}).get("job")
+    if not isinstance(job, dict) or not isinstance(job.get("id"), int):
+        raise AgentError(400, "job must be {id, queue_position}")
+    found = _blends(app, user, job["id"])
+    return 200, {"message": agent.test_started(found, job, _choice(body), _history(body))}
+
+
+def test_debrief(app, user, body):
+    """Every blend of the search, tested or not; the session's release part
+    comes back pointing at this job, with a blend picked if none was."""
+    job_id = _id(body, "job")
+    found = _blends(app, user, job_id)
+    part = dict(_session(body)["release"], job=job_id)
+    numbers = {one["number"] for one in found["blends"] if one["state"] != "BAD"}
+    if part["individual"] not in numbers:
+        part["individual"] = found["recommended"]
+    out = agent.test_debrief(found, _choice(body), _history(body))
+    return 200, {"message": out, "result": found, "release": part}
+
+
+def verify_plan(app, user, body):
+    """The POST /jobs/{id}/verify body for the session's picked blend."""
+    part = _session(body)["release"]
+    if part["job"] is None:
+        raise AgentError(400, "the session names no search to verify a blend of")
+    found = _blends(app, user, part["job"])
+    questions = part["questions"] or {}
+    name = None
+    if questions.get("lora") is not None:
+        row = app.catalog.get(questions["lora"])
+        name = row["name"] if row is not None and row["owner"] == user["name"] else None
+    try:
+        planned = release.verify_request(found, part, name)
+    except release.ReleaseError as error:
+        raise AgentError(400, str(error))
+    planned["message"] = agent.verify_start(planned, found["mock"])
+    planned["release"] = dict(part, individual=planned["blend"]["number"])
+    return 200, planned
+
+
+def verify_debrief(app, user, body):
+    verification_id = _id(body, "verification")
+    row = app.registry.verification(verification_id, user["id"])
+    if row is None:
+        raise AgentError(404, "no verification %d" % verification_id)
+    facts = release.verification_outcome(app.registry, app.catalog, user, row)
+    return 200, {"message": agent.verify_debrief(facts, _choice(body), _history(body)),
+                 "result": facts}
+
+
+def live_started(app, user, body):
+    deployment_id = _id(body, "deployment")
+    row = app.registry.deployment(deployment_id, user["id"])
+    if row is None or row["revoked_at"]:
+        raise AgentError(404, "no live deployment %d" % deployment_id)
+    from async_api import server                  # its view of a deployment row
+    shown = server.deployment_json(row)
+    found = _blends(app, user, row["job_id"])
+    one = next((blend for blend in found["blends"] if blend["number"] == row["number"]), None)
+    formula = one["formula"] if one else row["chromosome"]
+    return 200, {"message": agent.live(shown, formula, _choice(body), _history(body)),
+                 "deployment": shown, "formula": formula}
+
+
 # (method, path pattern, handler, extras) -- the shape of server.ROUTES, with
 # a function where the server's own routes name an App method.
 ROUTES = [
@@ -342,4 +453,9 @@ ROUTES = [
     ("POST", r"/agent/blend/plan", blend_plan, ("body",)),
     ("POST", r"/agent/blend/started", blend_started, ("body",)),
     ("POST", r"/agent/blend/debrief", blend_debrief, ("body",)),
+    ("POST", r"/agent/test/started", test_started, ("body",)),
+    ("POST", r"/agent/test/debrief", test_debrief, ("body",)),
+    ("POST", r"/agent/verify/plan", verify_plan, ("body",)),
+    ("POST", r"/agent/verify/debrief", verify_debrief, ("body",)),
+    ("POST", r"/agent/live/started", live_started, ("body",)),
 ]

@@ -24,7 +24,10 @@ the API.
 The second half -- combining the LoRAs -- has steps of its own (blend_intro,
 blend_confirm, blend_started, blend_debrief) built the same way, from
 blending.py's facts: which of the user's own LoRAs, the search's size, and
-what the search found.
+what the search found. And the third -- after the search -- has test_started,
+test_debrief, verify_start, verify_debrief and live, from release.py's: every
+blend's tested score, the blend the person picked beside each of its LoRAs,
+and the one put live.
 
 Nothing here keeps state between calls. The page holds the conversation and
 the session and sends back what a step needs; the dataset is re-read rather
@@ -198,13 +201,13 @@ def _summary(box):
 
 
 def chat(catalog, user, message, stage, session=None, dataset=None, context=None,
-         choice=None, history=None, shared_datasets=None):
+         choice=None, history=None, shared_datasets=None, registry=None):
     """A typed message: answered, and acted on with the tools.
 
     -> {message, session, actions, steps, preview, analysis} -- the reply,
     and what the page must now do (Toolbox.outcome()).
     """
-    box = tools.Toolbox(catalog, user, stage, session, dataset, shared_datasets)
+    box = tools.Toolbox(catalog, user, stage, session, dataset, shared_datasets, registry)
     instructions = prompts.STEP_INSTRUCTIONS.get(stage, "")
     facts = {"stage": stage, "step_instructions": instructions, "session": box.session,
              "dataset_given": bool(dataset), "context": context or {}}
@@ -347,7 +350,8 @@ def blend_confirm(plan):
     text = prompts.FALLBACK_BLEND_CONFIRM.format(
         lines=_bullets(lines), generations=found["generations"],
         population=found["population"], questions=plan["questions"], source=plan["source"],
-        testing=(prompts.FALLBACK_BLEND_CONFIRM_TESTING.format(testing=plan["testing"])
+        testing=(prompts.FALLBACK_BLEND_CONFIRM_TESTING.format(
+            testing=plan["testing"], validation=plan.get("validation", 0))
                  if plan["testing"] else ""),
         time=found["time"], estimate_source=found["source"],
         mock=prompts.FALLBACK_BLEND_CONFIRM_MOCK if plan["mock"] else "")
@@ -394,3 +398,92 @@ def blend_debrief(registry, catalog, user, job, choice=None, history=None):
             trend=_trend(facts.get("history") or []),
             mock=prompts.FALLBACK_BLEND_DEBRIEF_MOCK if facts.get("mock") else "")
     return {"message": say("blend_debrief", facts, fallback, choice, history), "result": facts}
+
+
+# --- after the search: testing, verification, going live ----------------------
+
+
+def _score(value):
+    return "%.3f" % value if isinstance(value, (int, float)) else "–"
+
+
+def test_started(found, job, choice=None, history=None):
+    """What the agent says once the page has queued the testing step.
+    `found` is release.blends() for the job, read before it ran."""
+    facts = {"blends": found["testing"]["blends"], "questions": found["testing"]["records"],
+             "mock": found["mock"],
+             "queue": ("position %d in the worker's queue" % job["queue_position"])
+             if job.get("queue_position") else "the worker starts it next"}
+    fallback = prompts.FALLBACK_TEST_START.format(
+        blends=facts["blends"], questions=facts["questions"],
+        mock=prompts.FALLBACK_TEST_START_MOCK if found["mock"] else "")
+    return say("test_start", facts, fallback, choice, history)
+
+
+def test_debrief(found, choice=None, history=None):
+    """How the testing went, from release.blends(): the blends ranked, and
+    the one recommended -- the best on the questions the search never saw."""
+    top = [{"number": one["number"], "formula": one["formula"], "search_score": one["quality"],
+            "tested_score": one["tested"]} for one in found["blends"][:3]
+           if one["state"] != "BAD"]
+    facts = {"status": found["status"], "blends": found["testing"]["blends"],
+             "tested": found["testing"]["tested"], "questions": found["testing"]["records"],
+             "top": top, "recommended": found["recommended"], "mock": found["mock"]}
+    if not found["testing"]["tested"]:
+        fallback = prompts.FALLBACK_TEST_DEBRIEF_NONE.format(
+            why=" yet" if found["testing"]["records"] else
+            " — this search kept no questions back to test on")
+    else:
+        fallback = prompts.FALLBACK_TEST_DEBRIEF.format(
+            tested=facts["tested"], blends=facts["blends"], questions=facts["questions"],
+            lines=_bullets(["**#%d** %s — search %s, tested **%s**"
+                            % (one["number"], one["formula"], _score(one["search_score"]),
+                               _score(one["tested_score"])) for one in top]),
+            recommended=found["recommended"],
+            mock=prompts.FALLBACK_TEST_START_MOCK if found["mock"] else "")
+    return say("test_debrief", facts, fallback, choice, history)
+
+
+def verify_start(planned, mock=False):
+    """The verification read back as it is queued: exact numbers, so no model."""
+    one = planned["blend"]
+    text = prompts.FALLBACK_VERIFY_START.format(
+        individual=one["number"], formula=one["formula"],
+        against=", ".join("**%s**" % name for name in planned["against"]),
+        count=planned["count"], source=planned["questions_from"],
+        mock=prompts.FALLBACK_VERIFY_START_MOCK if mock else "")
+    return {"text": text, "by": "built-in wording", "fallback": False, "note": None}
+
+
+def verify_debrief(facts, choice=None, history=None):
+    """How the verification went, from release.verification_outcome()."""
+    report = facts.get("report")
+    if report is None:
+        fallback = prompts.FALLBACK_VERIFY_FAILED.format(
+            status=facts["status"], error=": " + facts["error"] if facts.get("error") else "")
+    else:
+        against = report["against"]
+        lines = ["**%s** alone: %s — the blend won %d, tied %d, lost %d (%s)"
+                 % (one["lora"], _score(one["mean"]), one["wins"], one["ties"], one["losses"],
+                    one["blend_is"]) for one in against]
+        fallback = prompts.FALLBACK_VERIFY_DEBRIEF.format(
+            individual=facts["individual"], blend=_score(report["blend_mean"]),
+            questions=report["questions"], source=report["questions_from"],
+            lines=_bullets(lines),
+            verdict=(prompts.FALLBACK_VERIFY_BETTER
+                     if against and all(one["blend_is"] == "better" for one in against)
+                     else prompts.FALLBACK_VERIFY_MIXED),
+            mock=prompts.FALLBACK_TEST_START_MOCK if report["mock"] else "")
+    return say("verify_debrief", facts, fallback, choice, history)
+
+
+def live(deployment, formula, choice=None, history=None):
+    """What the agent says once a blend is live. The token is never among the
+    facts: a model is not to be handed a secret it might repeat."""
+    facts = {"individual": deployment["individual"], "formula": formula,
+             "base_model": deployment["base_model"], "engine": deployment["engine"]}
+    fallback = prompts.FALLBACK_LIVE.format(
+        individual=deployment["individual"], formula=formula,
+        base_model=deployment["base_model"],
+        mock=prompts.FALLBACK_LIVE_MOCK if deployment["engine"] == "mock" else "")
+    return say("live", facts, fallback, choice, history)

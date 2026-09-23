@@ -27,7 +27,9 @@ You are the LoRA guide inside a web page that helps people train LoRA \
 adapters — small add-ons that teach a language model a new style or skill \
 from example conversations — and then combine them: a *search* tries many \
 blends of the person's LoRAs and keeps the one whose answers are judged \
-best. The person you are talking to may never have trained a model. The page has two halves: on the left, you and the controls \
+best. After the search the blends are *tested* on questions the search never \
+saw, the person picks the best one and it is *verified* against each of its \
+LoRAs on its own, and finally they put a blend *live* and talk to it. The person you are talking to may never have trained a model. The page has two halves: on the left, you and the controls \
 for the current step; on the right, charts, tables and logs of what is \
 happening.
 
@@ -118,12 +120,15 @@ You have tools that act on the plan. Use them whenever the person asks for \
 something a tool does -- "only train on the first 20", "drop the ones about \
 fever", "use rank 32", "10 epochs", "a lower learning rate", "show me record \
 7", "use the poem dataset", "start", "stop", "blend my LoRAs", "only poem-r8 \
-and poem-r16", "5 rounds", "judge on 20 questions" -- rather than telling them \
-to do it themselves. Several tools may be needed for one request. Do not call \
-a tool that changes something unless they asked for that change. Call \
-start_training or start_blend only when they clearly ask to start now; the \
-plan is then read back to them and started. Only the person's own LoRAs can \
-be blended: list_my_loras says which they have.
+and poem-r16", "5 rounds", "judge on 20 questions", "test the blends", "#7 is \
+the best", "verify it on the poem dataset", "put it live" -- rather than \
+telling them to do it themselves. Several tools may be needed for one request. \
+Do not call a tool that changes something unless they asked for that change. \
+Call start_training, start_blend, start_testing, start_verification or \
+go_live only when they clearly ask for it now; the plan is then read back to \
+them and started. Only the person's own LoRAs can be blended: list_my_loras \
+says which they have. After a search, FACTS.context.blends lists its blends \
+by number, with their search and tested scores.
 
 A tool's result is the truth: report what it says changed, with its numbers, \
 in one to three short sentences. If you meant to set something and the result \
@@ -131,7 +136,7 @@ does not show it set, call the tool again rather than saying it was done. If a t
 Never claim a change no tool confirmed. When no tool fits, just answer: \
 explain LoRAs, ranks, epochs or loss simply, or say kindly what the page \
 cannot do. End by bringing them back to the current step, unless the step is \
-"training", "done", "blending" or "blended"."""
+"training", "done", "blending", "blended", "testing", "verifying" or "live"."""
 
 DEBRIEF = """\
 The training has finished. FACTS.loras lists each LoRA: its status (ready, \
@@ -192,10 +197,66 @@ says whether it was a practice run, whose scores are random.
 Tell the person how it went, briefly: the best blend in plain words, its \
 score, and whether the scores rose over the rounds. If a tested score is \
 there, say whether it held up. If FACTS.best is missing, say that no blend \
-scored and, from FACTS.error if there is one, why. Then suggest one next \
-step: open the console (the **Open the console** button) to put the best \
-blend live, or run a longer search. Never call a practice run's scores \
-meaningful."""
+scored and, from FACTS.error if there is one, why. Then suggest the next \
+step: testing every blend on questions the search never saw (the **Test all \
+blends** button), so they can pick the best on answers it was not chosen \
+for. Never call a practice run's scores meaningful."""
+
+TEST_START = """\
+The testing step has just been queued: every blend the search built \
+(FACTS.blends of them) will answer FACTS.questions question(s) it never saw \
+during the search, and a judge will score the answers the way it scored the \
+search. FACTS.queue says where it is in the worker's queue. Tell the person, \
+in two or three short sentences, what is happening and why: a blend can do \
+well on the questions it was chosen on and worse on new ones, and this shows \
+which ones hold up. If FACTS.mock is true, say it is a practice run and the \
+scores are random. Say you will tell them when it is done."""
+
+TEST_DEBRIEF = """\
+The testing step is over (FACTS.status). FACTS.tested of FACTS.blends blends \
+were tested on FACTS.questions question(s) the search never saw. FACTS.top \
+lists the best few: each blend's number, its formula (stack(…) puts adapters \
+side by side, merge(…) folds them into one, mix(…) averages them, ×n is a \
+LoRA's strength), its search score and its tested score, both from 0 to 1. \
+FACTS.recommended is the blend with the best tested score. FACTS.mock says \
+whether it was a practice run, whose scores are random. If FACTS.tested is 0, \
+testing did not run or found nothing to test; say so, and that they can \
+still pick a blend by its search score.
+
+Tell the person briefly which blends did best on the new questions, and \
+whether that agrees with the search's own ranking. Then ask them to pick the \
+blend they think is best on the left — FACTS.recommended is selected already \
+— choose the questions to check it on (the validation questions by default) \
+and press **Verify it**: that blend is then compared with each LoRA it is \
+made of, used alone. Never call a practice run's scores meaningful."""
+
+VERIFY_DEBRIEF = """\
+The verification is over (FACTS.status). FACTS.individual is the blend that \
+was checked and FACTS.report.formula how it is built. FACTS.report.blend_mean \
+is its average score on FACTS.report.questions question(s) from \
+FACTS.report.questions_from; FACTS.report.against lists each of its LoRAs \
+used alone: its average score, on how many questions the blend won, tied \
+and lost against it, and FACTS.report.against[].blend_is -- whether the blend \
+is clearly better, clearly worse, or not clearly different (a sign test; \
+with few questions most differences are not clear). If FACTS.report is \
+missing, the verification failed: say so, with FACTS.error.
+
+Tell the person plainly whether combining the LoRAs was worth it: better than \
+every one of them, better than some, or no better than using one alone -- \
+and if one LoRA alone did as well, say that is a fine result too. If \
+FACTS.report.mock is true, say it is a practice run and the scores are random. \
+Then ask them to choose the model to put live on the left (the blend just \
+verified is selected) and press **Go live**."""
+
+LIVE = """\
+A blend has just been put live. FACTS.individual is its number, \
+FACTS.formula how it is built, FACTS.base_model the model under it and \
+FACTS.engine how it is served ("mock" answers with made-up text, for a \
+practice run). Tell the person in two or three short sentences that it is \
+live, that the key to reach it is shown on the right once and must be kept \
+(never repeat or invent a key yourself), and that they can ask it something \
+in the box on the left to try it. The first answer takes longer, while the \
+model loads."""
 
 
 STEPS = {
@@ -208,6 +269,10 @@ STEPS = {
     "blend": BLEND_INTRO,
     "blend_start": BLEND_START,
     "blend_debrief": BLEND_DEBRIEF,
+    "test_start": TEST_START,
+    "test_debrief": TEST_DEBRIEF,
+    "verify_debrief": VERIFY_DEBRIEF,
+    "live": LIVE,
 }
 
 
@@ -281,6 +346,19 @@ TOOLS = {
                         "roughly how long it takes. Changes nothing."),
     "start_blend": "Start the search now, as it stands. Only when the person asks.",
     "stop_blend": "Stop the search that is running; what it found so far is kept.",
+    "start_testing": ("Test every blend of the search on the questions it never saw. Only "
+                      "when the person asks."),
+    "stop_testing": "Stop the testing that is running; the blends it finished keep their scores.",
+    "choose_best_blend": ("Pick the blend the person thinks is best, by its number (#7 is 7): "
+                          "the one that is verified and put live."),
+    "set_verify_questions": (
+        "What the verification asks: split (validation, testing or training -- the search's "
+        "own questions), file (a demo dataset), or lora (a LoRA of theirs, by id or name, whose "
+        "training data is used); count is how many questions."),
+    "start_verification": ("Verify the picked blend now: it and each of its LoRAs alone answer "
+                           "the same questions. Only when the person asks."),
+    "go_live": ("Put a blend live now -- the picked one, or the one given by number -- so the "
+                "person can talk to it. Only when the person asks."),
 }
 
 TOOL_DONE = {
@@ -307,6 +385,12 @@ TOOL_DONE = {
     "show_blend_plan": "read the search plan",
     "start_blend": "starting the search",
     "stop_blend": "stopping the search",
+    "start_testing": "testing every blend",
+    "stop_testing": "stopping the testing",
+    "choose_best_blend": "picked blend #{individual}",
+    "set_verify_questions": "verifying on {questions_text}",
+    "start_verification": "verifying blend #{individual}",
+    "go_live": "putting blend #{individual} live",
 }
 TOOL_FAILED = "{tool}: {error}"
 
@@ -429,7 +513,8 @@ Here's the search:
 **{questions} question(s)** from {source}{testing}. That's {time} ({estimate_source}).\
 {mock} Shall I start?"""
 
-FALLBACK_BLEND_CONFIRM_TESTING = ", then the best tested on {testing} question(s) it never saw"
+FALLBACK_BLEND_CONFIRM_TESTING = ("; {testing} more are kept back to test the blends on, and "
+                                  "{validation} to verify the one you pick")
 FALLBACK_BLEND_CONFIRM_MOCK = (" As a practice run, nothing is loaded and the scores are "
                                "random.")
 
@@ -448,14 +533,67 @@ The search is finished ({status}).
 The best blend is **{formula}**, with a score of **{fitness}**{tested}. {trend}\
 {mock}
 
-Next, **Open the console** to put it live and talk to it, or run a longer \
-search."""
+Next, press **Test all blends**: every blend answers questions the search \
+never saw, so you can pick the best on answers it was not chosen for."""
 
 FALLBACK_BLEND_DEBRIEF_NONE = """\
 The search is over ({status}), but no blend scored{error}. Try again with \
 more rounds or other LoRAs."""
 
 FALLBACK_BLEND_DEBRIEF_MOCK = " This was a practice run: the scores are random."
+
+FALLBACK_TEST_START = """\
+Done — every blend ({blends}) is now being tested on **{questions} question(s)** \
+the search never saw.{mock} A blend can shine on the questions it was chosen \
+on and slip on new ones; this shows which hold up. I'll tell you when it's \
+finished."""
+
+FALLBACK_TEST_START_MOCK = " It's a practice run, so the scores are random."
+
+FALLBACK_TEST_DEBRIEF = """\
+Testing is finished: {tested} of {blends} blend(s) answered {questions} new \
+question(s).
+{lines}
+
+I've selected **#{recommended}**, the best on the new questions.{mock} Pick the \
+one you think is best on the left, choose the questions to check it on, and \
+press **Verify it** — I'll compare it with each of its LoRAs used alone."""
+
+FALLBACK_TEST_DEBRIEF_NONE = """\
+No blend has a testing score{why}. You can still pick one by its search \
+score on the left and press **Verify it**, or run the testing again."""
+
+FALLBACK_VERIFY_START = """\
+Verifying blend **#{individual}** — {formula} — against {against}, each used \
+alone: all of them answer **{count} question(s)** from {source}, and the \
+judge scores every answer.{mock} Each one loads the model on its own, so \
+this takes a little while."""
+
+FALLBACK_VERIFY_START_MOCK = " As a practice run, the scores are random."
+
+FALLBACK_VERIFY_DEBRIEF = """\
+The verification is finished. Blend **#{individual}** scored **{blend}** on \
+{questions} question(s) from {source}:
+{lines}
+
+{verdict}{mock} Now choose the model to put live on the left and press \
+**Go live**."""
+
+FALLBACK_VERIFY_BETTER = "The blend beats every one of its LoRAs — combining them paid off."
+FALLBACK_VERIFY_MIXED = ("The blend is not clearly better than all of its LoRAs; with this "
+                         "few questions, small differences are not settled.")
+FALLBACK_VERIFY_FAILED = """\
+The verification did not finish ({status}{error}). You can try again, or \
+put a blend live without it."""
+
+FALLBACK_LIVE = """\
+Blend **#{individual}** is live — {formula}, on `{base_model}`.{mock}
+
+Its key is on the right: it's shown **once**, so copy it now. Ask it \
+something in the box on the left to try it; the first answer is slower while \
+the model loads."""
+
+FALLBACK_LIVE_MOCK = " It's a practice run, so its answers are made up."
 
 FALLBACK_DEBRIEF_MOCK = (" This was a practice run — a real one is the same steps with "
                          "*Practice run* turned off.")
@@ -475,7 +613,15 @@ STEP_INSTRUCTIONS = {
               "what to change."),
     "blend_confirm": "Press **Start the search** to begin, or **Change** to go back.",
     "blending": "Nothing to do — the search runs on its own. You can stop it with **Stop**.",
-    "blended": "Press **Open the console** to put the best blend live, or **Search again**.",
+    "blended": ("Press **Test all blends** to test every blend on questions the search never "
+                "saw, or **Search again**."),
+    "testing": "Nothing to do — the testing runs on its own. You can stop it with **Stop**.",
+    "tested": ("Pick the blend you think is best on the left, choose the questions to check it "
+               "on, and press **Verify it** — or **Go live** straight away."),
+    "verifying": "Nothing to do — the verification runs on its own.",
+    "verified": "Choose the model to put live on the left and press **Go live**.",
+    "live": ("Type a question in the box on the left and press **Ask it** to try the blend, or "
+             "**Take it down**."),
 }
 
 # The steps as the intro lists them, one line each.
@@ -485,6 +631,8 @@ PROCESS = [
     "You tell me how long you're happy to wait.",
     "I train the LoRAs, and you watch the progress on the right.",
     "Then I combine them: a search tries many blends and keeps the best.",
+    "I test every blend on questions it never saw, and you pick the best.",
+    "I check your pick against each of its LoRAs alone, then you put it live.",
 ]
 
 # What the agent says when a step needs nothing from a model: the person
@@ -496,6 +644,10 @@ ANOTHER_DATASET = "No problem — give me another dataset. " + STEP_INSTRUCTIONS
 STOPPED = "I've asked the worker to stop the training. Whatever finished stays in your catalogue."
 BLEND_STOPPED = ("I've asked the worker to stop the search. Every round it finished stays in "
                  "the job, and the console can resume it.")
+TEST_STOPPED = ("I've asked the worker to stop the testing. The blends it finished keep their "
+                "scores.")
+RELEASE_HINT = ("You can also ask me in words: \u201cverify #7\u201d, \u201con the testing "
+                "questions\u201d, \u201cuse the poem dataset\u201d, \u201cput #3 live\u201d…")
 BLEND_HINT = ("You can also ask me in words: \u201conly poem-r8 and poem-r16\u201d, \u201c5 "
               "rounds\u201d, \u201c12 blends each\u201d, \u201cjudge on 20 questions\u201d…")
 CHAT_HINT = ("You can also ask me in words: \u201conly use the first 20\u201d, \u201cdrop the ones "

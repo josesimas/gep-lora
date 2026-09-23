@@ -65,13 +65,15 @@ FINISHED = (DONE, FAILED, CANCELLED, STOPPED, DELETED)
 RESUMABLE = (STOPPED, CANCELLED, FAILED)
 # What the worker does with a job it claims. `search` runs the prepared sweep
 # from the top; `resume` carries a started one on; `evaluate` grades the
-# answers it already holds. See worker.command().
-SEARCH, RESUME, EVALUATE = "search", "resume", "evaluate"
-TASKS = (SEARCH, RESUME, EVALUATE)
+# answers it already holds; `test` puts its blends in front of its testing
+# split (see testpass.py). See worker.command().
+SEARCH, RESUME, EVALUATE, TEST = "search", "resume", "evaluate", "test"
+TASKS = (SEARCH, RESUME, EVALUATE, TEST)
 # Which statuses each requeued task may be asked of: resuming a finished
-# search has nothing left to do, and evaluating asks only for answers, which a
-# finished search has and a stopped one may.
-REQUEUE_FROM = {RESUME: RESUMABLE, EVALUATE: (DONE,) + RESUMABLE}
+# search has nothing left to do, evaluating asks only for answers, which a
+# finished search has and a stopped one may, and testing asks for the blends
+# a search *found* -- a half-finished search's are not that.
+REQUEUE_FROM = {RESUME: RESUMABLE, EVALUATE: (DONE,) + RESUMABLE, TEST: (DONE,)}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -96,7 +98,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     pid              INTEGER,                 -- main.py's, while running
     exit_code        INTEGER,
     error            TEXT,
-    task             TEXT NOT NULL DEFAULT 'search',  -- search | resume | evaluate
+    task             TEXT NOT NULL DEFAULT 'search',  -- search | resume | evaluate | test
     task_options     TEXT NOT NULL DEFAULT '{}',      -- JSON, the task's own
     requeued_from    TEXT                     -- the status a requeue took it from
 );
@@ -397,7 +399,8 @@ class Registry:
                              " requeued_from = NULL, error = ? WHERE id = ?",
                              (status, now(),
                               "the %s was cancelled before it started"
-                              % ("evaluation" if row["task"] == EVALUATE else row["task"]),
+                              % {EVALUATE: "evaluation", TEST: "testing pass"}.get(
+                                  row["task"], row["task"]),
                               job_id))
             elif row["status"] in (QUEUED, PREPARING):
                 conn.execute("UPDATE jobs SET status = 'cancelled', finished_at = ?,"

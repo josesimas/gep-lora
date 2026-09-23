@@ -377,12 +377,15 @@
 const STAGES = [
   ["intro", "Welcome"], ["dataset", "Dataset"], ["analysis", "Review"],
   ["wait", "How long"], ["training", "Training"], ["done", "Trained"],
-  ["blend", "Blend"], ["blending", "Search"], ["blended", "Best blend"]];
-const STAGE_OF = { confirm: "wait", blend_confirm: "blend" };
+  ["blend", "Blend"], ["blending", "Search"], ["blended", "Best blend"],
+  ["testing", "Test"], ["verifying", "Verify"], ["live", "Live"]];
+const STAGE_OF = { confirm: "wait", blend_confirm: "blend", tested: "testing", verified: "verifying" };
 const FINAL = ["ready", "failed", "cancelled", "missing"];
 // A job that will not change again on its own (registry.FINISHED).
 const JOB_FINAL = ["done", "failed", "cancelled", "stopped", "deleted"];
-const BLEND_STAGES = ["blend", "blend_confirm", "blending", "blended"];
+// After the search: testing its blends, verifying one, putting one live.
+const RELEASE_STAGES = ["testing", "tested", "verifying", "verified", "live"];
+const BLEND_STAGES = ["blend", "blend_confirm", "blending", "blended", ...RELEASE_STAGES];
 
 let key = "";
 let config = null;
@@ -399,6 +402,9 @@ let datasetMode = "paste";
 let blendTimer = null;              // the search's poll
 let jobDetail = null;               // the last GET /jobs/{id}: its fitness history
 let jobLog = [];                    // the search's console
+let testTimer = null, verifyTimer = null;
+let testForm = null;                // the last GET /jobs/{id}/test: how many blends tested
+let verifyLog = [];                 // the verification's console
 
 // One id per conversation, sent with every call: a provider that routes and
 // caches by conversation (OpenCode Go's x-opencode-session) is told which one.
@@ -421,12 +427,20 @@ function fresh() {
            session: {}, preview: null,
            // The second half: the user's ready LoRAs, the search's plan (the
            // POST /jobs body, read back), the job it became and what it found.
-           blend: freshBlend() };
+           blend: freshBlend(),
+           // The third: the search's blends tested, one verified, one live.
+           // What the person chose (the blend, the questions) is the
+           // session's `release` part; this is what the API gave back.
+           release: freshRelease() };
 }
 
 function freshBlend() {
   return { available: [], estimate: null, plan: null, job: null, status: null, result: null,
            startedAt: null, finishedAt: null, debriefed: false };
+}
+
+function freshRelease() {
+  return { testing: null, found: null, verification: null, plan: null, report: null, live: null };
 }
 
 const $ = (id) => document.getElementById(id);
@@ -856,8 +870,8 @@ function newDataset() {
 }
 
 function startOver() {
-  clearTimeout(pollTimer); clearTimeout(blendTimer);
-  jobDetail = null; jobLog = [];
+  clearTimeout(pollTimer); clearTimeout(blendTimer); clearTimeout(testTimer); clearTimeout(verifyTimer);
+  jobDetail = null; jobLog = []; testForm = null; verifyLog = [];
   S = fresh();
   details = {}; logText = {}; pendingFile = null; datasetMode = "paste";
   save();
@@ -909,7 +923,7 @@ async function applyChat(reply) {
     } else if (action.type === "stop") {
       await stopRun();
     } else if (action.type === "blend") {
-      if (S.stage === "blended") resetBlend();
+      if (S.stage === "blended" || RELEASE_STAGES.includes(S.stage)) resetBlend();
       await enterBlend(true);
     } else if (action.type === "blend_plan") {
       await planBlend();
@@ -917,6 +931,14 @@ async function applyChat(reply) {
       if (S.stage === "blend_confirm" && S.blend.plan) await queueBlend();
     } else if (action.type === "stop_blend") {
       await stopBlend();
+    } else if (action.type === "start_testing") {
+      await startTesting();
+    } else if (action.type === "stop_testing") {
+      await stopTesting();
+    } else if (action.type === "start_verification") {
+      await startVerification();
+    } else if (action.type === "go_live") {
+      await goLive();
     }
   }
   save();
@@ -942,6 +964,14 @@ function chatContext() {
     if (B.job) context.search = { job: B.job.id, label: B.job.label, status: B.status && B.status.job.status,
                                   progress: B.status && B.status.progress, best: B.result && B.result.best };
   }
+  const R = S.release;
+  if (R.found) context.blends = R.found.blends.slice(0, 20).map((one) => ({
+    number: one.number, formula: one.formula, search_score: one.quality, tested_score: one.tested,
+    loras: one.loras, can_be_built: one.state !== "BAD" }));
+  if (R.found) context.testing = R.found.testing;
+  if (R.report && R.report.report) context.verification = R.report.report;
+  // Which blend is live, never its key: a model is not shown a secret.
+  if (R.live) context.live = { individual: R.live.deployment.individual, deployment: R.live.deployment.id };
   return context;
 }
 
@@ -949,7 +979,7 @@ function chatContext() {
 
 function goBlend() {
   userSays("Let's blend my LoRAs.");
-  if (S.stage === "blended") resetBlend();
+  if (S.stage === "blended" || RELEASE_STAGES.includes(S.stage)) resetBlend();
   step(() => enterBlend(false));
 }
 
@@ -1092,18 +1122,284 @@ async function blendDebrief() {
     const reply = await api("POST", "/agent/blend/debrief", { agent: agentChoice(), job: S.blend.job.id,
                                                               history: history() });
     S.blend.result = reply.result;
+    // What comes after is about this search: the chat's tools read its blends.
+    setRelease({ job: S.blend.job.id, individual: null, questions: null, count: null });
     agentSays(reply.message);
     setStage("blended");
   });
 }
 
-// Forget the last search (not the LoRAs chosen, nor its size).
+// Forget the last search (not the LoRAs chosen, nor its size) -- and with it
+// what was tested, verified and put live from it.
 function resetBlend() {
   clearTimeout(blendTimer);
   const available = S.blend.available, estimate = S.blend.estimate;
   S.blend = Object.assign(freshBlend(), { available, estimate });
   S.stamps.blending = null; S.stamps.blended = null;
   jobDetail = null; jobLog = [];
+  resetRelease();
+  S.session = Object.assign({}, S.session, { release: {} });
+}
+
+function resetRelease() {
+  clearTimeout(testTimer); clearTimeout(verifyTimer);
+  S.release = freshRelease();
+  for (const stage of ["testing", "verifying", "live"]) S.stamps[stage] = null;
+  testForm = null; verifyLog = [];
+}
+
+// --- the third part: testing the blends, verifying one, putting one live ----------------------
+
+const releaseOf = () => Object.assign({ job: null, individual: null, questions: null, count: null },
+                                      S.session.release || {});
+const releaseJob = () => releaseOf().job || (S.blend.job && S.blend.job.id);
+function setRelease(change) {
+  S.session = Object.assign({}, S.session, { release: Object.assign(releaseOf(), change) });
+  save();
+  drawAction(); drawBoard();
+}
+const pickedBlend = () => ((S.release.found || {}).blends || []).find((one) => one.number === releaseOf().individual);
+
+function testAll() {
+  userSays("Test all the blends on questions the search never saw.");
+  step(startTesting);
+}
+
+// POST /jobs/{id}/test: every blend of the search, on its testing split.
+async function startTesting() {
+  const job = releaseJob();
+  if (!job) return;
+  setRelease({ job });
+  let reply;
+  try {
+    reply = await api("POST", `/jobs/${job}/test`, {});
+  } catch (error) {
+    if (error.status !== 400 && error.status !== 409) throw error;
+    agentSays(plain(`I can't test the blends: ${error.message}`));
+    if (!S.release.found) await loadBlends();
+    return;
+  }
+  S.release.testing = { startedAt: Date.now(), finishedAt: null, debriefed: false, job: reply.job };
+  testForm = null; jobLog = [];
+  marker(`testing queued · job ${job}`);
+  setStage("testing");
+  const said = await api("POST", "/agent/test/started", { agent: agentChoice(), history: history(),
+                                                          job: { id: job, queue_position: reply.job.queue_position } });
+  agentSays(said.message);
+  pollTest();
+}
+
+function stopTestingNow() {
+  userSays("Please stop the testing.");
+  step(stopTesting);
+}
+
+async function stopTesting() {
+  const job = releaseJob();
+  if (!job) return;
+  try { await api("POST", `/jobs/${job}/cancel`); } catch (error) { event(`testing: ${error.message}`); }
+  agentSays(plain(words("test_stopped")));
+  pollTest();
+}
+
+async function pollTest() {
+  clearTimeout(testTimer);
+  const job = releaseJob(), T = S.release.testing;
+  if (!job || !T) return;
+  let status;
+  try {
+    status = await api("GET", `/jobs/${job}/status`);
+  } catch (error) {
+    testTimer = setTimeout(pollTest, 4000);
+    return;
+  }
+  const was = T.job && T.job.status;
+  T.job = status.job;
+  if (was && was !== status.job.status) event(`testing: ${was} → ${status.job.status}`);
+  try { testForm = await api("GET", `/jobs/${job}/test`); } catch (_) { /* gone */ }
+  try { jobLog = (await api("GET", `/jobs/${job}/log?lines=120`)).lines; } catch (_) { /* gone */ }
+  save();
+  drawBoard();
+  if (S.stage === "testing") drawAction();
+  if (JOB_FINAL.includes(status.job.status)) {
+    if (!T.debriefed) { if (busy) testTimer = setTimeout(pollTest, 1000); else testDebrief(); }
+    return;
+  }
+  testTimer = setTimeout(pollTest, 2000);
+}
+
+async function testDebrief() {
+  S.release.testing.debriefed = true;
+  S.release.testing.finishedAt = Date.now();
+  marker("testing finished");
+  await step(loadBlends);
+}
+
+function skipTesting() {
+  userSays("Skip the testing — let me pick a blend.");
+  step(loadBlends);
+}
+
+// Every blend of the search, tested or not, and the one to start from.
+async function loadBlends() {
+  const reply = await api("POST", "/agent/test/debrief", { agent: agentChoice(), job: releaseJob(),
+                                                           session: session(), history: history() });
+  S.release.found = reply.result;
+  S.session = Object.assign({}, S.session, { release: reply.release });
+  agentSays(reply.message);
+  setStage("tested");
+}
+
+function pickBlend(number) {
+  if (busy || !["tested", "verified", "live"].includes(S.stage)) return;
+  setRelease({ individual: number });
+}
+
+function verifyNow() {
+  const one = pickedBlend();
+  userSays(one ? `Verify blend #${one.number} against its LoRAs.` : "Verify the blend.");
+  step(startVerification);
+}
+
+// The verification, planned by the agent and sent as it is to POST /jobs/{id}/verify.
+async function startVerification() {
+  let plan, reply;
+  try {
+    plan = await api("POST", "/agent/verify/plan", { session: session() });
+    reply = await api("POST", `/jobs/${releaseJob()}/verify`, plan.body);
+  } catch (error) {
+    if (error.status !== 400 && error.status !== 409) throw error;
+    agentSays(plain(`I couldn't start the verification: ${error.message}`));
+    return;
+  }
+  S.session = Object.assign({}, S.session, { release: plan.release });
+  Object.assign(S.release, { plan, report: null,
+                             verification: { id: reply.verification.id, row: reply.verification,
+                                             startedAt: Date.now(), debriefed: false } });
+  verifyLog = [];
+  agentSays(plan.message);
+  marker(`verification queued · #${reply.verification.id}`);
+  setStage("verifying");
+  pollVerify();
+}
+
+async function pollVerify() {
+  clearTimeout(verifyTimer);
+  const V = S.release.verification;
+  if (!V) return;
+  try {
+    V.row = (await api("GET", `/verifications/${V.id}`)).verification;
+  } catch (error) {
+    verifyTimer = setTimeout(pollVerify, 4000);
+    return;
+  }
+  try { verifyLog = (await api("GET", `/verifications/${V.id}/log?lines=120`)).lines; } catch (_) { /* gone */ }
+  save();
+  drawBoard();
+  if (["done", "failed"].includes(V.row.status)) {
+    if (!V.debriefed) { if (busy) verifyTimer = setTimeout(pollVerify, 1000); else verifyDebrief(); }
+    return;
+  }
+  verifyTimer = setTimeout(pollVerify, 2000);
+}
+
+async function verifyDebrief() {
+  const V = S.release.verification;
+  V.debriefed = true;
+  marker("verification finished");
+  await step(async () => {
+    const reply = await api("POST", "/agent/verify/debrief", { agent: agentChoice(), verification: V.id,
+                                                               history: history() });
+    S.release.report = reply.result;
+    agentSays(reply.message);
+    setStage("verified");
+  });
+}
+
+function goLiveNow() {
+  const one = pickedBlend();
+  userSays(one ? `Put blend #${one.number} live.` : "Put it live.");
+  step(goLive);
+}
+
+// POST /jobs/{id}/live: the token comes back once and stays in this page --
+// the guide is told the deployment, never its key.
+async function goLive() {
+  let reply;
+  try {
+    reply = await api("POST", `/jobs/${releaseJob()}/live`, { individual: releaseOf().individual });
+  } catch (error) {
+    if (error.status !== 400 && error.status !== 409) throw error;
+    agentSays(plain(`I couldn't put it live: ${error.message}`));
+    return;
+  }
+  S.release.live = { token: reply.token, deployment: reply.deployment, formula: null,
+                     prompt: "", answer: null, asking: false };
+  marker(`blend #${reply.deployment.individual} is live · deployment ${reply.deployment.id}`);
+  setStage("live");
+  const said = await api("POST", "/agent/live/started", { agent: agentChoice(), history: history(),
+                                                          deployment: reply.deployment.id });
+  S.release.live.formula = said.formula;
+  agentSays(said.message);
+}
+
+// POST /infer with the deployment's token, the answer drawn as it streams in.
+async function askLive() {
+  const L = S.release.live, box = $("livePrompt");
+  const prompt = box ? box.value.trim() : "";
+  if (!L || !prompt || L.asking) return;
+  Object.assign(L, { prompt, answer: "", asking: true });
+  drawAction(); drawBoard();
+  const entry = { at: Date.now(), method: "POST", path: "/infer", status: null, ms: null };
+  activity.push(entry); drawActivity();
+  const started = performance.now();
+  try {
+    const response = await fetch("/infer", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify({ token: L.token, prompt }) });
+    entry.status = response.status;
+    if (!response.ok) {
+      let data = null;
+      try { data = await response.json(); } catch (_) { /* no body */ }
+      throw new Error((data && data.error) || response.status + " " + response.statusText);
+    }
+    const reader = response.body.getReader(), decoder = new TextDecoder();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      L.answer += decoder.decode(value, { stream: true });
+      drawBoard();
+    }
+  } catch (error) {
+    L.answer = (L.answer || "") + `\n[${error.message}]`;
+    if (entry.status === null) entry.status = "down";
+  } finally {
+    entry.ms = performance.now() - started;
+    L.asking = false;
+    drawActivity(); save(); drawAction(); drawBoard();
+  }
+}
+
+function takeDown() {
+  userSays("Take it down.");
+  step(async () => {
+    const L = S.release.live;
+    if (L) {
+      try { await api("DELETE", `/live/${L.deployment.id}`); } catch (error) { event(`live: ${error.message}`); }
+      marker(`deployment ${L.deployment.id} taken down`);
+    }
+    S.release.live = null;
+    setStage(S.release.report ? "verified" : "tested");
+  });
+}
+
+function chooseAgain() {
+  userSays("Let me choose another blend.");
+  setStage(S.release.report ? "verified" : "tested");
+}
+
+function verifyAnother() {
+  userSays("Let me verify another blend.");
+  setStage("tested");
 }
 
 function blendAgain() {
@@ -1226,10 +1522,100 @@ function drawAction() {
         el("button", { class: "danger", onclick: stopBlendNow, disabled: lock }, "Stop the search"))];
   } else if (stage === "blended") content = [ask("What next?"),
     el("div", { class: "buttons" },
-      el("button", { class: "primary lg", type: "button", onclick: () => window.open("/demo", "_blank", "noopener") }, "Open the console"),
+      el("button", { class: "primary lg", onclick: testAll, disabled: lock || !S.blend.job }, "Test all blends"),
+      el("button", { class: "lg", onclick: skipTesting, disabled: lock || !S.blend.job }, "Skip testing"),
       el("button", { class: "lg", onclick: blendAgain, disabled: lock }, "Search again"),
       el("button", { class: "lg ghost", onclick: newDataset, disabled: lock }, "Train more LoRAs"))];
+  else if (stage === "testing") {
+    const f = testForm || {};
+    const fraction = f.blends ? (f.tested || 0) / f.blends : 0;
+    content = [ask("Testing — nothing to do but watch"),
+      el("div", { class: "meter big live" }, el("i", { style: `width:${Math.max(2, fraction * 100)}%` })),
+      el("p", { class: "help" }, f.blends ? `${f.tested || 0} of ${f.blends} blends tested` : "Waiting for the worker…"),
+      el("div", { class: "buttons" },
+        el("button", { class: "danger", onclick: stopTestingNow, disabled: lock }, "Stop the testing"))];
+  } else if (stage === "tested") content = [ask("Which blend is the best?"),
+    blendPicker(lock), verifyQuestions(lock),
+    el("div", { class: "buttons" },
+      el("button", { class: "primary lg", onclick: verifyNow, disabled: lock || !pickedBlend() }, "Verify it"),
+      el("button", { class: "lg", onclick: goLiveNow, disabled: lock || !pickedBlend() }, "Go live now"),
+      untested() ? el("button", { class: "lg ghost", onclick: testAll, disabled: lock }, "Test all blends") : null),
+    el("p", { class: "help" }, words("release_hint"))];
+  else if (stage === "verifying") content = [ask("Verifying — nothing to do but watch"),
+    el("div", { class: "meter big live" }, el("i", { style: "width:100%" })),
+    el("p", { class: "help" }, `The blend and each of its LoRAs answer the same questions, one after another` +
+      ` — status: ${((S.release.verification || {}).row || {}).status || "queued"}.`)];
+  else if (stage === "verified") content = [ask("Which model goes live?"),
+    blendPicker(lock),
+    el("div", { class: "buttons" },
+      el("button", { class: "primary lg", onclick: goLiveNow, disabled: lock || !pickedBlend() }, "Go live"),
+      el("button", { class: "lg", onclick: verifyAnother, disabled: lock }, "Verify another")),
+    el("p", { class: "help" }, words("release_hint"))];
+  else if (stage === "live") {
+    const L = S.release.live || {};
+    const input = el("textarea", { id: "livePrompt", rows: 3, disabled: lock || L.asking,
+                                   placeholder: "Ask the live blend something…" });
+    input.value = drawAction.live || "";
+    input.addEventListener("input", (e) => { drawAction.live = e.target.value; });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) askLive(); });
+    content = [ask(`Blend #${(L.deployment || {}).individual ?? "?"} is live — try it`), input,
+      el("div", { class: "buttons" },
+        el("button", { class: "primary lg", onclick: askLive, disabled: lock || L.asking }, L.asking ? "Answering…" : "Ask it"),
+        el("button", { class: "lg", onclick: chooseAgain, disabled: lock }, "Choose another"),
+        el("button", { class: "lg danger", onclick: takeDown, disabled: lock || !L.deployment }, "Take it down")),
+      el("p", { class: "help" }, "Ctrl+Enter asks. The answer streams in on the right.")];
+  }
   box.replaceChildren(...content);
+}
+
+// A testing pass could still add scores: some blend that ran has none yet.
+function untested() {
+  const f = S.release.found;
+  return f && f.testing.records && f.testing.tested < f.testing.blends;
+}
+
+// The search's blends to choose from, best on the new questions first.
+function blendPicker(lock) {
+  const found = S.release.found;
+  if (!found) return el("p", { class: "muted" }, "Reading the search's blends…");
+  const picked = releaseOf().individual;
+  return el("div", { class: "options scroll", style: "max-height:260px" }, found.blends.map((one) => {
+    const bad = one.state === "BAD";
+    return el("label", { class: "option" + (bad ? " blocked" : ""), title: bad ? "PEFT cannot build this one" : one.chromosome },
+      el("input", { type: "radio", name: "pick", checked: one.number === picked, disabled: lock || bad,
+                    onchange: () => pickBlend(one.number) }),
+      el("b", {}, `#${one.number} `, el("span", { class: "muted", style: "font-weight:400" }, one.formula)),
+      el("span", { class: "side" }, one.tested === null ? "not tested" : `tested ${fmt(one.tested)}`),
+      el("span", { class: "sub" }, `search ${fmt(one.quality)} · ${one.loras.join(", ") || "–"}`));
+  }));
+}
+
+// What the verification asks: one of the search's own splits, a demo
+// dataset, or the data one of the blend's LoRAs was trained on.
+function verifyQuestions(lock) {
+  const found = S.release.found || { splits: {} }, r = releaseOf(), limits = config.release;
+  const value = !r.questions ? "" : r.questions.split ? "split:" + r.questions.split
+    : r.questions.file ? "file:" + r.questions.file : "lora:" + r.questions.lora;
+  const mine = S.blend.available.filter((one) => (pickedBlend() || { loras: [] }).loras.includes(one.name));
+  const select = el("select", { id: "vSource", disabled: lock, onchange: (e) => {
+    const [kind, ...rest] = e.target.value.split(":"), name = rest.join(":");
+    setRelease({ questions: !kind ? null : { [kind]: kind === "lora" ? Number(name) : name } });
+  } },
+    el("option", { value: "" }, "the default (validation, else testing)"),
+    el("optgroup", { label: "The search's own questions" },
+      Object.entries(found.splits).map(([split, records]) => el("option", { value: "split:" + split }, `${split} — ${records}`))),
+    el("optgroup", { label: "A demo dataset" },
+      (config.datasets || []).filter((one) => one.usable).map((one) => el("option", { value: "file:" + one.file }, one.file))),
+    mine.length ? el("optgroup", { label: "A LoRA's own training data" },
+      mine.map((one) => el("option", { value: "lora:" + one.id }, one.name))) : null);
+  select.value = value;
+  return el("div", { class: "knobs", style: "grid-template-columns: minmax(0, 2fr) minmax(0, 1fr)" },
+    el("div", {}, el("label", { for: "vSource" }, "Verify on"), select),
+    el("div", {}, el("label", { for: "vCount" }, "Questions"),
+      el("input", { id: "vCount", type: "number", min: 1, max: limits.max_questions, step: 1, disabled: lock,
+                    value: r.count ?? "", placeholder: r.questions && !r.questions.split ? String(limits.questions) : "all",
+                    onchange: (e) => { const v = Math.round(Number(e.target.value));
+                                       setRelease({ count: e.target.value === "" ? null : v >= 1 && v <= limits.max_questions ? v : r.count }); } })));
 }
 
 // The blend step's controls: the user's ready LoRAs to tick (one base model,
@@ -1318,7 +1704,15 @@ function drawBoard() {
   if (!key) return $("board").replaceChildren(card("Nothing yet", null, el("div", { class: "empty-state" },
     el("b", {}, "Waiting for your API key"), el("p", {}, "Paste it on the left to begin."))));
   const cards = [pipelineCard()];
-  if (BLEND_STAGES.includes(S.stage)) {
+  if (RELEASE_STAGES.includes(S.stage)) {
+    const R = S.release;
+    if (R.live) cards.push(liveCard());
+    if (R.verification) cards.push(verificationCard());
+    if (R.found) cards.push(blendsCard());
+    if (R.testing) cards.push(testingCard());
+    if (S.blend.result) cards.push(bestBlendCard());
+    if (S.blend.job) cards.push(searchCard());
+  } else if (BLEND_STAGES.includes(S.stage)) {
     if (S.blend.job) cards.push(searchCard());
     if (S.blend.result) cards.push(bestBlendCard());
     cards.push(blendPlanCard());
@@ -1347,12 +1741,15 @@ function pipelineCard() {
   const now = STAGE_OF[S.stage] || S.stage;
   const index = STAGES.findIndex(([id]) => id === now);
   const pipeline = el("div", { class: "pipeline", style: `--stages:${STAGES.length}` }, STAGES.map(([id, label], i) => {
-    const state = i < index || (["done", "blended"].includes(id) && S.stage === id) ? "done" : i === index ? "now" : "";
+    const finished = ["done", "blended", "live"].includes(id) && S.stage === id
+      || ({ testing: "tested", verifying: "verified" })[id] === S.stage;
+    const state = i < index || finished ? "done" : i === index ? "now" : "";
     const stamp = S.stamps[id];
     return el("div", { class: "stage " + state },
       el("div", { class: "dot" }, state === "done" ? "✓" : String(i + 1)),
       el("b", {}, label), el("span", {}, stamp ? clock(stamp).slice(0, 5) : state === "now" ? "now" : " "));
   }));
+  if (RELEASE_STAGES.includes(S.stage)) return card("Where we are", S.mock || $("mock").checked ? "practice run" : null, pipeline, releaseTiles());
   if (BLEND_STAGES.includes(S.stage)) return card("Where we are", S.mock || $("mock").checked ? "practice run" : null, pipeline, blendTiles());
   const t = timing();
   const est = S.estimate;
@@ -1413,7 +1810,7 @@ function blendPlanCard() {
     el("p", { class: "help" }, "A blend has five places (L1–L5); with fewer LoRAs some take more than one. " +
       "Each blend stacks, merges or mixes them at strengths the search picks; rank decides which of those can run." +
       (B.plan ? ` Judged on ${B.plan.questions} question(s) from ${B.plan.source}` +
-        (B.plan.testing ? `; the best then tested on ${B.plan.testing} it never saw.` : ".") : "")));
+        (B.plan.testing ? `; ${B.plan.testing} more kept back to test the blends on, and ${B.plan.validation || 0} to verify the one you pick.` : ".") : "")));
 }
 
 function searchCard() {
@@ -1455,6 +1852,126 @@ function bestBlendCard() {
     el("div", { class: "muted small", style: "margin-top:8px" }, el("code", {}, best.chromosome)),
     el("div", { class: "chips", style: "margin-top:8px" }, Object.entries(r.slots || {}).map(([slot, name]) =>
       el("span", { class: "chip" }, el("b", {}, slot + " "), name))));
+}
+
+function releaseTiles() {
+  const R = S.release, f = R.found, one = pickedBlend(), rep = R.report && R.report.report;
+  const beaten = rep ? rep.against.filter((a) => a.blend_is === "better").length : null;
+  return tilesOf([
+    ["Blends", f ? f.testing.blends : "–", f ? `from search job ${f.job}` : "reading the search"],
+    ["Tested", f ? `${f.testing.tested}/${f.testing.blends}` : testForm ? `${testForm.tested}/${testForm.blends}` : "–",
+     f && f.testing.records ? `on ${f.testing.records} new question(s)` : "no testing questions"],
+    ["Picked", one ? `#${one.number}` : "–", one ? (one.tested === null ? `search ${fmt(one.quality)}` : `tested ${fmt(one.tested)}`) : "choose on the left"],
+    ["Verified", rep ? fmt(rep.blend_mean) : "–", rep ? `beats ${beaten} of ${rep.against.length} LoRA(s) clearly` : "the pick against its LoRAs"],
+    ["Live", R.live ? `#${R.live.deployment.individual}` : "–", R.live ? `deployment ${R.live.deployment.id} · ${R.live.deployment.engine}` : "not yet"],
+  ]);
+}
+
+function testingCard() {
+  const T = S.release.testing, st = (T.job || {}).status || "…", f = testForm || {};
+  const fraction = f.blends ? (f.tested || 0) / f.blends : 0;
+  return card("Testing", `job ${releaseJob()} · every blend, on questions the search never saw`,
+    el("div", { class: "result-head" }, pill(st),
+      el("span", { class: "num" }, f.blends ? `${f.tested || 0} of ${f.blends} blends tested on ${f.records} question(s)` : "")),
+    el("div", { class: "meter big" + (JOB_FINAL.includes(st) ? (st === "done" ? " done" : " stopped") : " live") },
+      el("i", { style: `width:${Math.max(1, fraction * 100)}%` })),
+    T.job && T.job.error ? el("div", { class: "note-box" }, T.job.error) : null,
+    S.stage === "testing" ? el("pre", { class: "log", style: "margin-top:12px" },
+      jobLog.length ? jobLog.join("\n") : "(nothing logged yet — the worker writes here once it starts)") : null);
+}
+
+// Every blend: what the search gave it beside what the new questions did.
+// A row is picked by clicking it, as by the radio on the left.
+function blendsCard() {
+  const f = S.release.found, picked = releaseOf().individual;
+  const tested = f.blends.filter((one) => one.tested !== null);
+  return card("The blends", f.mock ? "practice run — the scores are random" : `${f.evaluator || "the judge"} · 0 to 1`,
+    tested.length ? el("div", { class: "grid2" },
+      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Search score against tested score"),
+        el("div", { style: "max-width:380px" }, scoreScatter(f.blends, picked)),
+        el("p", { class: "help" }, "Above the diagonal: better on new questions than on the ones the search chose it by.")),
+      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Why test"),
+        el("p", { class: "muted small" }, "The search keeps the blends whose answers scored best on its own questions — so its " +
+          "scores flatter them. The testing questions were kept back: a blend that holds up there learned something general."))) : null,
+    el("div", { class: "scroll", style: "margin-top:12px" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["#", "Blend", "LoRAs", "Search", "Tested", "Δ"].map((h, i) => el("th", { class: i >= 3 ? "num" : "" }, h)))),
+      el("tbody", {}, f.blends.map((one) => el("tr", { class: (one.state === "BAD" ? "" : "pick") + (one.number === picked ? " picked" : ""),
+                                                       onclick: one.state === "BAD" ? null : () => pickBlend(one.number) },
+        el("td", { class: "num" }, one.number),
+        el("td", { class: "clip" }, el("div", { title: one.chromosome }, one.state === "BAD" ? "cannot be built — " + one.chromosome : one.formula)),
+        el("td", {}, one.loras.join(", ") || "–"),
+        el("td", { class: "num" }, fmt(one.quality)), el("td", { class: "num" }, fmt(one.tested)),
+        el("td", { class: "num" }, one.tested === null || one.quality === null ? "–" : (one.tested - one.quality >= 0 ? "+" : "") + fmt(one.tested - one.quality))))))));
+}
+
+function scoreScatter(blends, picked) {
+  const W = 300, H = 220, L = 34, R = 10, T = 10, B = 26;
+  const { svg, add } = drawing(W, H);
+  const x = (v) => L + Math.max(0, Math.min(1, v || 0)) * (W - L - R);
+  const y = (v) => T + (1 - Math.max(0, Math.min(1, v || 0))) * (H - T - B);
+  for (const k of [0, 0.5, 1]) {
+    add("line", { x1: L, x2: W - R, y1: y(k), y2: y(k), stroke: "var(--line)", "stroke-dasharray": k ? "3 4" : "" });
+    add("text", { x: L - 6, y: y(k) + 3, "text-anchor": "end" }, k.toFixed(1));
+    add("text", { x: x(k), y: H - 8, "text-anchor": "middle" }, k.toFixed(1));
+  }
+  add("line", { x1: x(0), y1: y(0), x2: x(1), y2: y(1), stroke: "var(--line-2)" });
+  for (const one of blends.filter((b) => b.tested !== null && b.quality !== null)) {
+    const mine = one.number === picked;
+    add("circle", { cx: x(one.quality), cy: y(one.tested), r: mine ? 6 : 4, fill: mine ? "var(--c3)" : "var(--c1)",
+                    opacity: mine ? 1 : .75 }).append(hint(`#${one.number} · search ${fmt(one.quality)} · tested ${fmt(one.tested)}`));
+  }
+  return svg;
+}
+
+function verificationCard() {
+  const V = S.release.verification, row = V.row || {}, rep = S.release.report && S.release.report.report;
+  const plan = S.release.plan;
+  const done = ["done", "failed"].includes(row.status);
+  return card("Verification", `#${V.id} · blend #${row.number ?? "?"}` + (plan ? ` · ${plan.count} question(s) from ${plan.questions_from}` : ""),
+    el("div", { class: "result-head" }, pill(row.status || "queued"),
+      plan ? el("span", { class: "muted small" }, `against ${plan.against.join(", ")}, each alone`) : null),
+    el("div", { class: "meter big" + (done ? (row.status === "done" ? " done" : " stopped") : " live") }, el("i", { style: `width:${done ? 100 : 40}%` })),
+    row.error ? el("div", { class: "note-box" }, row.error) : null,
+    rep ? el("div", { class: "grid2", style: "margin-top:12px" },
+      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Average score"),
+        meansChart([{ name: `blend #${S.release.report.individual}`, mean: rep.blend_mean, blend: true }]
+          .concat(rep.against.map((a) => ({ name: a.lora + " alone", mean: a.mean }))))),
+      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Question by question"),
+        el("table", {}, el("thead", {}, el("tr", {}, ["Against", "Won", "Tied", "Lost", "p", ""].map((h, i) => el("th", { class: i && i < 5 ? "num" : "" }, h)))),
+          el("tbody", {}, rep.against.map((a) => el("tr", {}, el("td", {}, a.lora), el("td", { class: "num" }, a.wins),
+            el("td", { class: "num" }, a.ties), el("td", { class: "num" }, a.losses), el("td", { class: "num" }, fmt(a.p, 2)),
+            el("td", {}, el("span", { class: "tag" + (a.blend_is === "better" ? " rec" : "") }, a.blend_is)))))),
+        el("p", { class: "help" }, "p is a sign test over the questions both answered: below 0.05, the difference is unlikely to be luck."))) : null,
+    !done ? el("pre", { class: "log", style: "margin-top:12px" }, verifyLog.length ? verifyLog.join("\n") : "(nothing logged yet)") : null);
+}
+
+function meansChart(rows) {
+  const W = 420, row = 26, L = 150, R = 44, H = rows.length * row + 8;
+  const { svg, add } = drawing(W, H);
+  rows.forEach((one, i) => {
+    const y = 4 + i * row, w = Math.max(0, Math.min(1, one.mean || 0)) * (W - L - R);
+    add("text", { x: L - 8, y: y + 15, "text-anchor": "end" }, one.name.length > 24 ? one.name.slice(0, 23) + "…" : one.name);
+    add("rect", { x: L, y: y + 3, width: W - L - R, height: 16, rx: 4, fill: "var(--code)" });
+    add("rect", { x: L, y: y + 3, width: w, height: 16, rx: 4, fill: one.blend ? "var(--c1)" : "var(--c2)" });
+    add("text", { x: L + w + 6, y: y + 15 }, fmt(one.mean));
+  });
+  return svg;
+}
+
+function liveCard() {
+  const L = S.release.live, d = L.deployment;
+  const origin = location.origin;
+  const curl = `curl -N ${origin}/infer -H "Content-Type: application/json" -d '{"token": "${L.token}", "prompt": "Hello"}'`;
+  return card("Live", `deployment ${d.id} · ${d.engine}${d.engine === "mock" ? " — made-up answers" : ""}`,
+    el("p", { class: "formula" }, L.formula || d.chromosome),
+    el("div", { class: "muted small" }, `blend #${d.individual} of job ${d.job_id} on ${d.base_model || "?"} — the first answer loads the model`),
+    el("div", { class: "note-box" }, el("b", {}, "Its key, shown once: "), el("code", {}, L.token), " ",
+      el("button", { class: "sm", type: "button", onclick: () => navigator.clipboard && navigator.clipboard.writeText(L.token) }, "Copy"),
+      el("div", { class: "small", style: "margin-top:6px" }, "Anyone with it can ask this blend. Take it down on the left to revoke it.")),
+    el("h3", { style: "margin:14px 0 6px" }, "From anywhere else"),
+    el("pre", { class: "log", style: "height:auto" }, curl),
+    L.prompt ? [el("h3", { style: "margin:14px 0 6px" }, "You asked"), el("div", { class: "sample-q" }, L.prompt),
+      el("div", { class: "sample-a" }, L.answer || (L.asking ? "…" : ""))] : null);
 }
 
 function welcomeCard() {
@@ -1853,10 +2370,14 @@ async function useKey(value) {
     S = Object.assign(fresh(), saved);
     drawTranscript(); drawAction(); drawBoard();
     S.blend = Object.assign(freshBlend(), S.blend || {});
+    S.release = Object.assign(freshRelease(), S.release || {});
     if (S.loras.length && S.stage === "training") { marker("reconnected — watching the training again"); poll(); }
     else if (S.loras.length) poll();
     if (S.blend.job && S.stage === "blending") { marker("reconnected — watching the search again"); pollBlend(); }
     else if (S.blend.job) pollBlend();
+    if (S.release.testing && S.stage === "testing") { marker("reconnected — watching the testing again"); pollTest(); }
+    if (S.release.verification && S.stage === "verifying") { marker("reconnected — watching the verification again"); pollVerify(); }
+    if (S.release.live) S.release.live.asking = false;
   } else {
     drawBoard();
     intro();
@@ -1886,7 +2407,9 @@ $("mock").addEventListener("change", () => {
   drawChip(); drawBoard();
 });
 $("restart").addEventListener("click", () => { if (!busy) startOver(); });
-$("changeKey").addEventListener("click", () => { clearTimeout(pollTimer); clearTimeout(blendTimer); keyGate(); });
+$("changeKey").addEventListener("click", () => {
+  clearTimeout(pollTimer); clearTimeout(blendTimer); clearTimeout(testTimer); clearTimeout(verifyTimer); keyGate();
+});
 
 // The clock on the right keeps moving between polls.
 tickTimer = setInterval(() => {

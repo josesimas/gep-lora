@@ -24,7 +24,11 @@ What async_api_agent owns, and so what is tested here:
     base model, round the five places; the POST /jobs body the plan becomes;
     the chat's blend tools and their no-model commands; and trained LoRAs
     blended by a real search and read back, which another user can neither
-    plan with, submit nor read.
+    plan with, submit nor read;
+  * after the search: every blend tested, one picked and verified against
+    each of its LoRAs on the validation split, and a model put live and
+    asked -- through the API's own endpoints, with the chat's tools and
+    their no-model commands for each.
 
 No test here asks a real model: every provider is the scripted one, or a
 stand-in on localhost.
@@ -666,8 +670,13 @@ class BlendingTests(JobsTestCase):
         self.assertEqual(job["settings"]["BASE_MODEL"], "unsloth/base")
         # A practice LoRA has no weights: only the mocked template runs one.
         self.assertEqual(job["settings"]["TEMPLATE"], blending.MOCKED_TEMPLATE)
-        self.assertEqual((found["questions"], found["testing"]), (4, 2))
-        self.assertEqual(len(job["datasets"]["testing"].splitlines()), 2)
+        # The two left over are shared out: one to test the blends on, one to
+        # verify the picked blend on -- and no testing pass at the search's end,
+        # since testing is a step of its own.
+        self.assertEqual((found["questions"], found["testing"], found["validation"]), (4, 1, 1))
+        self.assertEqual(len(job["datasets"]["testing"].splitlines()), 1)
+        self.assertEqual(len(job["datasets"]["validation"].splitlines()), 1)
+        self.assertTrue(job["options"]["no_test"])
         # With no dataset and no copy of the LoRAs' own data, it says so.
         with self.assertRaises(blending.BlendError):
             blending.plan(self.catalog, self.registry, self.user, session)
@@ -798,3 +807,182 @@ class BlendEndpointTests(ServerTestCase):
         self.assertIn("practice run", debrief["message"]["text"])
         self.assertEqual(self.call("POST", "/agent/blend/debrief", {"job": job_id}, key=bob)[0],
                          404)
+
+
+class ReleaseEndpointTests(ServerTestCase):
+    """After the search, as the page drives it: test every blend, pick one and
+    verify it against its LoRAs, put a model live and ask it."""
+
+    def searched(self):
+        """Two practice LoRAs trained and blended by a finished search.
+        -> (job id, the blend plan)."""
+        status, plan = self.call("POST", "/agent/plan", {
+            "dataset": {"text": jsonl(RECORDS), "name": "tiny.jsonl"}, "epochs": 1, "mock": True})
+        ids = [self.call("POST", "/loras", body)[1]["lora"]["id"] for body in plan["trainings"]]
+        for _ in ids:
+            worker.serve(self.registry, once=True, poll=0.05, catalog=self.app.catalog)
+        session = {"blend": {"loras": ids, "generations": 1, "population": 4, "questions": 3}}
+        found = self.call("POST", "/agent/blend/plan", {"session": session})[1]
+        self.assertEqual((found["testing"], found["validation"]), (2, 1), found)
+        job_id = self.call("POST", "/jobs", found["job"])[1]["job"]["id"]
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+        return job_id, found
+
+    def test_every_blend_tested_one_verified_and_a_model_put_live(self):
+        job_id, found = self.searched()
+        job = self.call("GET", "/jobs/%d" % job_id)[1]
+        self.assertTrue(job["job"]["can_test"])
+        # The search ran no testing pass of its own: that is the next step.
+        self.assertFalse(job["results"]["testing"]["summary"])
+
+        status, offered = self.call("GET", "/jobs/%d/test" % job_id)
+        self.assertEqual(status, 200, offered)
+        self.assertEqual((offered["records"], offered["tested"]), (2, 0))
+        self.assertEqual(self.call("POST", "/jobs/%d/test" % job_id, {"min_quality": 2})[0], 400)
+        status, queued = self.call("POST", "/jobs/%d/test" % job_id, {})
+        self.assertEqual(status, 200, queued)
+        self.assertEqual((queued["job"]["status"], queued["job"]["task"]), ("queued", "test"))
+        status, said = self.call("POST", "/agent/test/started", {
+            "agent": SCRIPTED, "job": {"id": job_id, "queue_position": 1}})
+        self.assertIn("2 question(s)", said["message"]["text"])
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+        status = self.call("GET", "/jobs/%d/status" % job_id)[1]["job"]
+        self.assertEqual((status["status"], status["error"]), ("done", None),
+                         self.call("GET", "/jobs/%d/log" % job_id)[1])
+        # Every blend that ran, not only those above TESTING_MIN_QUALITY.
+        offered = self.call("GET", "/jobs/%d/test" % job_id)[1]
+        self.assertEqual(offered["tested"], offered["blends"])
+
+        status, tested = self.call("POST", "/agent/test/debrief", {"agent": SCRIPTED,
+                                                                   "job": job_id})
+        self.assertEqual(status, 200, tested)
+        result = tested["result"]
+        self.assertEqual(result["testing"]["tested"], offered["blends"])
+        self.assertEqual(sorted(result["splits"]), ["testing", "training", "validation"])
+        self.assertEqual(tested["release"]["individual"], result["recommended"])
+        best = next(one for one in result["blends"] if one["number"] == result["recommended"])
+        self.assertIsNotNone(best["tested"])
+        self.assertIn("Verify it", tested["message"]["text"])
+
+        # The verification: the picked blend against each distinct LoRA it uses,
+        # on the validation split, through POST /jobs/{id}/verify as it is.
+        session = {"release": tested["release"]}
+        status, planned = self.call("POST", "/agent/verify/plan", {"session": session})
+        self.assertEqual(status, 200, planned)
+        body = planned["body"]
+        self.assertEqual((body["individual"], body["split"], body["count"]),
+                         (best["number"], "validation", 1))
+        self.assertEqual(body["slots"], best["slots"])
+        self.assertEqual(len(set(planned["against"])), len(planned["against"]))
+        status, verification = self.call("POST", "/jobs/%d/verify" % job_id, body)
+        self.assertEqual(status, 201, verification)
+        verification_id = verification["verification"]["id"]
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+        row = self.call("GET", "/verifications/%d" % verification_id)[1]["verification"]
+        self.assertEqual(row["status"], "done", row)
+        status, verified = self.call("POST", "/agent/verify/debrief", {
+            "agent": SCRIPTED, "verification": verification_id})
+        self.assertEqual(status, 200, verified)
+        report = verified["result"]["report"]
+        self.assertEqual(sorted(one["lora"] for one in report["against"]),
+                         sorted(planned["against"]))
+        self.assertIn("Go live", verified["message"]["text"])
+
+        # Another dataset instead of a split: a LoRA's own training data -- the
+        # user's, and nobody else's -- or a shared file, and nothing outside them.
+        mine = found["loras"][0]
+        other = dict(tested["release"], questions={"lora": mine["id"]}, count=2)
+        planned = self.call("POST", "/agent/verify/plan", {"session": {"release": other}})[1]
+        self.assertEqual(planned["body"]["dataset"], {"lora": mine["id"]})
+        self.assertIn("training data", planned["questions_from"])
+        status, queued = self.call("POST", "/jobs/%d/verify" % job_id, planned["body"])
+        self.assertEqual(status, 201, queued)
+        self.assertEqual(queued["verification"]["options"]["dataset_label"],
+                         "%s's training data" % mine["name"])
+        self.assertNotIn("dataset", queued["verification"]["options"])
+        self.registry.add_user("bob")
+        bobs = lora(self.registry.catalog, "bobs", owner="bob")
+        for dataset in ({"lora": bobs["id"]}, {"file": "../secrets.txt"}, {"url": "x"}):
+            status, refused = self.call("POST", "/jobs/%d/verify" % job_id, {"dataset": dataset})
+            self.assertEqual(status, 400, (dataset, refused))
+        bob = self.registry.add_user("carol")
+        self.assertEqual(self.call("POST", "/agent/verify/plan", {"session": session},
+                                   key=bob)[0], 404)
+
+        # Going live: the model the person picks, and the guide never sees its key.
+        status, live = self.call("POST", "/jobs/%d/live" % job_id, {"individual": best["number"]})
+        self.assertEqual(status, 201, live)
+        status, said = self.call("POST", "/agent/live/started", {
+            "agent": SCRIPTED, "deployment": live["deployment"]["id"]})
+        self.assertEqual(status, 200, said)
+        self.assertNotIn(live["token"], json.dumps(said))
+        self.assertIn("#%d" % best["number"], said["message"]["text"])
+        status, text = self.call("POST", "/infer", {"token": live["token"], "prompt": "hello"},
+                                 raw=True)
+        self.assertEqual(status, 200)
+        self.assertIn("hello", text)
+        self.assertEqual(self.call("POST", "/agent/live/started", {
+            "deployment": live["deployment"]["id"]}, key=bob)[0], 404)
+
+    def test_the_chat_picks_verifies_and_puts_live(self):
+        job_id, found = self.searched()
+        base = {"agent": SCRIPTED, "session": {"release": {"job": job_id}}}
+        blends = self.call("POST", "/agent/test/debrief", dict(base, job=job_id))[1]["result"]
+        number = blends["recommended"]
+
+        reply = self.call("POST", "/agent/chat", dict(
+            base, stage="tested", message="verify #%d on the testing questions" % number))[1]
+        self.assertEqual([one["type"] for one in reply["actions"]], ["start_verification"])
+        self.assertEqual(reply["session"]["release"]["individual"], number)
+        self.assertEqual(reply["session"]["release"]["questions"], {"split": "testing"})
+        # A blend the search does not hold is refused.
+        reply = self.call("POST", "/agent/chat", dict(base, stage="tested",
+                                                      message="#999 is best"))[1]
+        self.assertFalse(reply["steps"][0]["ok"])
+        self.assertIsNone(reply["session"]["release"]["individual"])
+        reply = self.call("POST", "/agent/chat", dict(base, stage="tested",
+                                                      message="put #%d live" % number))[1]
+        self.assertEqual([one["type"] for one in reply["actions"]], ["go_live"])
+        # Stopping the testing is an action; nothing else may be asked meanwhile.
+        reply = self.call("POST", "/agent/chat", dict(base, stage="testing", message="stop"))[1]
+        self.assertEqual([one["type"] for one in reply["actions"]], ["stop_testing"])
+        # Another user's search is nobody else's to pick from.
+        bob = self.registry.add_user("bob")
+        reply = self.call("POST", "/agent/chat", dict(base, stage="tested",
+                                                      message="#%d is best" % number), key=bob)[1]
+        self.assertIn("no search", reply["steps"][0]["summary"])
+
+
+class ReleaseToolboxTests(JobsTestCase):
+
+    def test_the_release_part_of_a_session_is_checked(self):
+        session = planner.session_of({})
+        self.assertEqual(session["release"], {"job": None, "individual": None,
+                                              "questions": None, "count": None})
+        for bad in ({"job": "x"}, {"questions": {"split": "nope"}}, {"count": 0},
+                    {"questions": {"file": "a", "lora": 1}}):
+            with self.assertRaises(planner.SessionError, msg=bad):
+                planner.session_of({"release": bad})
+
+    def test_no_search_no_release_tools(self):
+        box = tools.Toolbox(self.registry.catalog, self.user, "tested", {}, None, None,
+                            self.registry)
+        self.assertIn("no finished search", box.run("start_verification", {})["error"])
+        self.assertIn("error", tools.Toolbox(self.registry.catalog, self.user, "blend", {})
+                      .run("start_testing", {}))
+
+    def test_plain_release_requests_without_a_model(self):
+        demo = ["poem_lora_dataset.json"]
+        for said, stage, calls in (
+                ("test all blends", "blended", [("start_testing", {})]),
+                ("verify #7 on the testing questions", "tested",
+                 [("choose_best_blend", {"individual": 7}),
+                  ("set_verify_questions", {"split": "testing"}), ("start_verification", {})]),
+                ("verify it on the poem dataset, 20 questions", "tested",
+                 [("set_verify_questions", {"file": "poem_lora_dataset.json", "count": 20}),
+                  ("start_verification", {})]),
+                ("put #3 live", "verified", [("go_live", {"individual": 3})]),
+                ("stop", "testing", [("stop_testing", {})]),
+                ("5 rounds", "blended", [("set_blend_search", {"generations": 5})]),
+                ("5 epochs", "tested", [])):
+            self.assertEqual(commands.parse(said, stage, demo, ["poem-r8"]), calls, said)

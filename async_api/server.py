@@ -28,6 +28,12 @@ Jobs
     POST   /jobs/{id}/evaluate             {"force"?, "judge_backend"?, "judge_model"?,
                                            "judge_base_url"?} -> queue it to grade the
                                            answers it holds (see evaluate.py)
+    GET    /jobs/{id}/test                 what a testing pass would do, and the
+                                           testing results so far
+    POST   /jobs/{id}/test                 {"min_quality"?, "count"?, "limit"?} -> queue a
+                                           finished job to test its blends -- every one
+                                           that ran, by default -- on its testing split
+                                           (see testpass.py)
     DELETE /jobs/{id}/run                  delete what the run produced; keep the job
     DELETE /jobs/{id}                      delete the job and its files
 
@@ -36,7 +42,9 @@ Verification
                                           the job's verifications so far
     POST   /jobs/{id}/verify              {"individual": n?, "evaluator"?, "judge_model"?,
                                           "judge_backend"?, "judge_base_url"?, "split"?,
-                                          "count"?, "slots"?} -> 201 {verification}
+                                          "count"?, "slots"?, "dataset"?} -> 201 {verification};
+                                          dataset is {"file": a shared dataset} or
+                                          {"lora": id}, that LoRA's training data
     GET    /verifications/{id}            one verification: its status, and its
                                           report once it has one
     GET    /verifications/{id}/log        the tail of its console output
@@ -108,6 +116,7 @@ from async_api import registry as reg
 from async_api import results
 from async_api import settings
 from async_api import submit
+from async_api import testpass
 from async_api import train
 from async_api import verify
 from async_api_agent import routes as agent_routes
@@ -150,6 +159,7 @@ def job_json(app, job, with_summary=False):
     out["task"] = job["task"]
     out["resumable"] = job["status"] in reg.RESUMABLE
     out["can_evaluate"] = job["status"] in reg.REQUEUE_FROM[reg.EVALUATE]
+    out["can_test"] = job["status"] in reg.REQUEUE_FROM[reg.TEST]
     if job["status"] == reg.QUEUED:
         out["queue_position"] = app.registry.queue_position(job["id"])
     if with_summary and job["status"] != reg.DELETED:
@@ -162,6 +172,9 @@ def verification_json(row, report=None):
                                      "started_at", "finished_at", "number",
                                      "chromosome", "exit_code", "error")}
     out["options"] = json.loads(row["options"] or "{}")
+    # The dataset is said by its label; where it sits on the server is not the
+    # client's business.
+    out["options"].pop("dataset", None)
     if report is not None:
         out["report"] = report
     return out
@@ -396,6 +409,36 @@ class App:
                      "note": "queued; the worker grades its answers after any job "
                              "ahead of it"}
 
+    def _testing(self, job):
+        """What a testing pass of this job is offered."""
+        try:
+            return testpass.choices(self.registry.database(job), job["run_id"])
+        except results.NoResults:
+            raise ApiError(409, "job %d has no database; its run was deleted" % job["id"])
+
+    def test_form(self, user, job_id):
+        job = self.own_job(user, job_id)
+        out = self._testing(job)
+        out["can_test"] = job["status"] in reg.REQUEUE_FROM[reg.TEST]
+        return 200, out
+
+    def start_test(self, user, job_id, body):
+        """Queue a finished job to put its blends in front of its testing split."""
+        job = self.own_job(user, job_id)
+        if job["status"] not in reg.REQUEUE_FROM[reg.TEST]:
+            raise ApiError(409, "job %d is %s; only a finished search's blends can be "
+                                "tested" % (job_id, job["status"]))
+        try:
+            options = testpass.options_for(body, self._testing(job))
+        except testpass.TestPassError as error:
+            raise ApiError(400, str(error))
+        queued = self.registry.requeue(job_id, reg.TEST, options)
+        if queued is None:
+            raise ApiError(409, "job %d changed status while being queued" % job_id)
+        return 200, {"job": job_json(self, queued),
+                     "note": "queued; the worker tests its blends after any job "
+                             "ahead of it"}
+
     def _finished(self, job, what):
         if job["status"] not in reg.FINISHED:
             raise ApiError(409, "job %d is %s; cancel it before deleting %s"
@@ -433,6 +476,9 @@ class App:
         out = self._offered(job)
         out["verifications"] = [verification_json(row) for row
                                 in self.registry.verifications(job_id=job_id)]
+        # Another dataset a verification may ask instead of a split: a shared
+        # file by name, or {"lora": id} for one of the user's own LoRAs' data.
+        out["datasets"] = self.list_datasets(user)[1]["datasets"]
         out["can_verify"] = job["status"] == reg.DONE
         return 200, out
 
@@ -444,7 +490,8 @@ class App:
                            % (job_id, job["status"]))
         offered = self._offered(job)
         try:
-            number, options = verify.options_for(body, offered)
+            number, options = verify.options_for(
+                body, offered, functools.partial(self.verify_dataset, user))
         except verify.VerifyError as error:
             raise ApiError(400, str(error))
         chromosome = next(one["chromosome"] for one in offered["individuals"]
@@ -452,6 +499,31 @@ class App:
         row = self.registry.add_verification(job, number, chromosome, options)
         return 201, {"verification": verification_json(row),
                      "note": "queued; the worker runs it after any queued job"}
+
+    def verify_dataset(self, user, value):
+        """A verification's `dataset`, as (path, label): {"file": name}, a file
+        under SHARED_DATASETS_DIR, or {"lora": id}, the data one of the user's
+        own LoRAs was trained on -- another user's is refused as a missing one
+        is. Raises verify.VerifyError."""
+        if isinstance(value, dict) and set(value) == {"file"}:
+            path = submit.shared_path(value["file"])
+            if path is None:
+                raise verify.VerifyError("no shared dataset %r" % (value["file"],))
+            return path, value["file"]
+        lora_id = (value.get("lora") if isinstance(value, dict) and set(value) == {"lora"}
+                   else None)
+        if not isinstance(lora_id, int) or isinstance(lora_id, bool):
+            raise verify.VerifyError('dataset must be {"file": name} or {"lora": id}')
+        row = self.catalog.get(lora_id)
+        if row is None or row["owner"] != user["name"]:
+            raise verify.VerifyError("no LoRA %d of yours" % lora_id)
+        training = training_of(self.registry, row)
+        if training is not None and training["user_id"] != user["id"]:
+            training = None
+        path = train.dataset_path(row, training, self.registry)
+        if path is None:
+            raise verify.VerifyError("no copy of %s's training data is kept" % row["name"])
+        return path, "%s's training data" % row["name"]
 
     def own_verification(self, user, verification_id):
         row = self.registry.verification(verification_id, user["id"])
@@ -711,6 +783,8 @@ ROUTES = [
     ("POST", r"/jobs/(\d+)/resume", "resume_job", ()),
     ("GET", r"/jobs/(\d+)/evaluate", "evaluate_form", ()),
     ("POST", r"/jobs/(\d+)/evaluate", "start_evaluation", ("body",)),
+    ("GET", r"/jobs/(\d+)/test", "test_form", ()),
+    ("POST", r"/jobs/(\d+)/test", "start_test", ("body",)),
     ("DELETE", r"/jobs/(\d+)/run", "delete_run", ()),
     ("DELETE", r"/jobs/(\d+)", "delete_job", ()),
     ("GET", r"/jobs/(\d+)/verify", "verify_form", ()),

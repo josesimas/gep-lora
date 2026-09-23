@@ -233,12 +233,18 @@ def source_text(catalog, registry, user, blend, rows, dataset=None):
 
 
 def split(lines, questions):
-    """-> (training lines, testing lines): the first `questions` records are
-    what every blend is judged on, and up to settings.BLEND_TEST_QUESTIONS of
-    the rest are the testing pass -- questions the search never saw."""
-    training = lines[:questions]
-    testing = lines[questions:questions + settings.BLEND_TEST_QUESTIONS]
-    return training, testing
+    """-> (training, testing, validation lines): the first `questions` records
+    are what every blend is judged on; of the rest, up to
+    settings.BLEND_TEST_QUESTIONS go to the testing step and then up to
+    settings.BLEND_VALIDATION_QUESTIONS to the verification -- questions the
+    search never saw, kept apart from each other so the blend a person picks
+    on its testing scores is verified on questions it was not picked on. When
+    too few are left for both, they are shared out, so neither step is empty
+    while there is anything to give it."""
+    training, rest = lines[:questions], lines[questions:]
+    validation = min(settings.BLEND_VALIDATION_QUESTIONS, len(rest) // 2)
+    testing = min(settings.BLEND_TEST_QUESTIONS, len(rest) - validation)
+    return training, rest[:testing], rest[testing:testing + validation]
 
 
 # --- the plan -------------------------------------------------------------------
@@ -263,7 +269,8 @@ def estimate(population, generations, mock=False, template=None):
 def plan(catalog, registry, user, session, mock=False, dataset=None, prefer=()):
     """The POST /jobs body that blends the session's LoRAs, and what it is.
 
-    -> {job, loras, slots, questions, testing, source, estimate, mock, template}.
+    -> {job, loras, slots, questions, testing, validation, source, estimate,
+    mock, template}.
     Mocked when asked to be, and whenever a chosen LoRA is a practice run: a
     practice LoRA has no weights, and only the mocked template runs one.
     """
@@ -279,7 +286,7 @@ def plan(catalog, registry, user, session, mock=False, dataset=None, prefer=()):
         raise BlendError("the questions could not be read: %s" % error)
     if not found["usable"]:
         raise BlendError("%s has no questions with answers to judge a blend by" % where)
-    training, testing = split(found["lines"], blend["questions"])
+    training, testing, validation = split(found["lines"], blend["questions"])
     mocked = bool(mock) or any(row["mock"] for row in rows)
     template = MOCKED_TEMPLATE if mocked else config.TEMPLATE
     first = rows[0]
@@ -292,14 +299,20 @@ def plan(catalog, registry, user, session, mock=False, dataset=None, prefer=()):
     datasets = {"training": "\n".join(training)}
     if testing:
         datasets["testing"] = "\n".join(testing)
+    if validation:
+        datasets["validation"] = "\n".join(validation)
     label = blend["label"] or settings.BLEND_LABEL.format(
         stem=planner.stem_of(first["name"]).rsplit("-r", 1)[0], loras=len(rows))
+    # No testing pass at the end of the search: testing is a step of its own
+    # (POST /jobs/{id}/test), which tests every blend rather than the ones
+    # above TESTING_MIN_QUALITY, so the person can choose between them.
     job = {"label": label, "settings": wanted, "datasets": datasets,
-           "options": {"no_test": not testing}}
+           "options": {"no_test": True}}
     names = {row["id"]: row["name"] for row in rows}
     return {"job": job, "loras": [describe(row) for row in rows],
             "slots": {slot: names[lora_id] for slot, lora_id in wanted["LORA_SLOTS"].items()},
             "questions": len(training), "testing": len(testing),
+            "validation": len(validation),
             "source": where, "total_records": found["records"],
             "estimate": estimate(blend["population"], blend["generations"], mocked, template),
             "mock": mocked, "template": template, "label": label}
@@ -330,6 +343,17 @@ def formula(chromosome, names, weights=None):
     return said(root)
 
 
+def slot_names(conf, catalog, user):
+    """{slot: LoRA name} for a sweep's LORA_SLOTS -- the user's own catalogue
+    name where the folder is one of theirs, else the folder's."""
+    names = {}
+    for slot, folder in (conf.get("LORA_SLOTS") or {}).items():
+        row = catalog.by_folder(lora_catalog.absolute(folder))
+        names[slot] = row["name"] if row is not None and row["owner"] == user["name"] \
+            else os.path.basename(str(folder).rstrip("/\\"))
+    return names
+
+
 def outcome(registry, job, user, catalog):
     """What a blend search came to, from the user's own job. -> facts."""
     database = registry.database(job)
@@ -338,11 +362,7 @@ def outcome(registry, job, user, catalog):
     except results.NoResults:
         return {"status": job["status"], "error": job["error"], "best": None}
     conf = found["settings"]
-    names = {}
-    for slot, folder in (conf.get("LORA_SLOTS") or {}).items():
-        row = catalog.by_folder(lora_catalog.absolute(folder))
-        names[slot] = row["name"] if row is not None and row["owner"] == user["name"] \
-            else os.path.basename(str(folder).rstrip("/\\"))
+    names = slot_names(conf, catalog, user)
     best = found["best"]
     weights = None
     if best is not None:

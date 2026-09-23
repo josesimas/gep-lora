@@ -19,6 +19,13 @@ sweep.
 answers is whether folding *these* adapters together beat using one of them, and
 a slot the blend never mentions is not part of that. `slots: "all"` asks for
 every slot anyway, which is the other question worth asking.
+
+**The questions are the sweep's own by default** -- one of the splits it
+holds, testing first, since the blend was selected on training -- or another
+dataset (`dataset`): a shared file, or the data one of the user's own LoRAs was
+trained on. The server resolves which file that is (it knows whose LoRA is
+whose); this module only takes the path it is handed and passes it to the
+script's --dataset, which asks those questions instead of a split.
 """
 
 import glob
@@ -122,12 +129,16 @@ def _text(body, name):
     return value.strip() or None
 
 
-def options_for(body, offered):
+def options_for(body, offered, dataset=None):
     """A request, checked against what this sweep offers. -> (number, options).
 
     Checked here rather than by the script, for the reason a submission is
     checked in submit.py: a bad request should be a 400 now, not a task that
     fails on the worker in ten minutes' time.
+
+    `dataset` turns the request's `dataset` field into (path, label), raising
+    VerifyError for one it cannot -- the server's, since whose file is whose
+    is the server's to know. Without it, a request naming a dataset is refused.
     """
     body = body or {}
     if not isinstance(body, dict):
@@ -149,7 +160,12 @@ def options_for(body, offered):
                           "cannot be built)" % number)
     blend = runnable[number]
 
-    name = _text(body, "evaluator") or offered["defaults"]["evaluator"]
+    # Named only when asked for. Left out, the script grades by the sweep's own
+    # EVALUATOR -- the same default -- except for a mocked sweep, whose answers
+    # it scores with the numbers its scripts printed: a judge asked about
+    # invented answers would only cost time (or wait on an endpoint that is
+    # not there).
+    name = _text(body, "evaluator")
     if name and name not in {one["value"] for one in offered["evaluators"]}:
         raise VerifyError("unknown evaluator %r; there are: %s"
                           % (name, ", ".join(one["value"] for one in offered["evaluators"])))
@@ -158,7 +174,14 @@ def options_for(body, offered):
         raise VerifyError("unknown judge backend %r; there are: %s"
                           % (backend, ", ".join(offered["backends"])))
     split = _text(body, "split")
-    if split and split not in offered["splits"]:
+    path = label = None
+    if body.get("dataset") not in (None, ""):
+        if split:
+            raise VerifyError("ask either a split of the sweep or another dataset, not both")
+        if dataset is None:
+            raise VerifyError("this server takes no dataset for a verification")
+        path, label = dataset(body["dataset"])
+    elif split and split not in offered["splits"]:
         raise VerifyError("this job holds no %s split; it has: %s"
                           % (split, ", ".join(offered["splits"]) or "none"))
 
@@ -182,7 +205,8 @@ def options_for(body, offered):
     return number, {"evaluator": name, "judge_model": _text(body, "judge_model"),
                     "judge_backend": backend,
                     "judge_base_url": _text(body, "judge_base_url"),
-                    "split": split or offered["defaults"]["split"],
+                    "split": None if path else split or offered["defaults"]["split"],
+                    "dataset": path, "dataset_label": label,
                     "count": _positive(body, "count"),
                     "slots": slots,
                     "timeout": _positive(body, "timeout") or 900}
@@ -203,6 +227,8 @@ def command(python, db_path, run_id, number, options, folder, script=None):
                        ("--judge-base-url", "judge_base_url"), ("--split", "split")):
         if options.get(name):
             argv += [flag, str(options[name])]
+    if options.get("dataset"):
+        argv += ["--dataset", options["dataset"]]
     if options.get("count"):
         argv += ["--count", str(options["count"])]
     if options.get("slots"):

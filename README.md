@@ -2817,10 +2817,12 @@ are refused with a 400 before anything is queued.
 | `POST /jobs/{id}/resume` | queue a `stopped`, `cancelled` or `failed` job again, to carry on from where it got to |
 | `GET /jobs/{id}/evaluate` | what grading its answers again would do: the evaluator, the judge, how many answers and how many ungraded |
 | `POST /jobs/{id}/evaluate` | queue it to grade the answers it holds: `{"force"?, "judge_backend"?, "judge_model"?, "judge_base_url"?}` |
+| `GET /jobs/{id}/test` | what a testing pass would do: the testing questions, how many blends could be tested and how many have been, the results so far |
+| `POST /jobs/{id}/test` | queue a finished job to test its blends on its testing split -- every one that ran, by default: `{"min_quality"?, "count"?, "limit"?}` |
 | `DELETE /jobs/{id}/run` | delete what the run produced, keep the job listed as `deleted` |
 | `DELETE /jobs/{id}` | delete the job and its folder |
 | `GET /jobs/{id}/verify` | what a verification may ask for (the blends, their slots, the splits, the evaluators) and the job's verifications so far |
-| `POST /jobs/{id}/verify` | queue one: `{"individual": n?, "slots": "blend"\|"all"\|[...], "split"?, "count"?, "evaluator"?, "judge_model"?, "judge_backend"?, "judge_base_url"?}` |
+| `POST /jobs/{id}/verify` | queue one: `{"individual": n?, "slots": "blend"\|"all"\|[...], "split"?, "dataset"?, "count"?, "evaluator"?, "judge_model"?, "judge_backend"?, "judge_base_url"?}` -- `dataset` is `{"file": a shared dataset}` or `{"lora": id}`, that LoRA's training data, instead of a split |
 | `GET /verifications/{id}` | one verification: its status, and its report once it has one |
 | `GET /verifications/{id}/log` | the tail of that verification's own console output |
 | `POST /jobs/{id}/live` | `{"individual": n?, "target": "local"?}` -> a token (shown once) |
@@ -2857,6 +2859,21 @@ was (a `done` job stays `done` and can still go live); cancelling one that is
 running stops it -- a resume ends `stopped` again, an evaluation where its
 search is.
 
+**Its blends can be tested on their own.** `POST /jobs/{id}/test` puts a
+*finished* job back in the queue with `task: "test"`, and the worker runs the
+testing pass alone -- `python -m testing.test_run_with_dataset --from-db --db
+<job.sqlite3> --run <id> --min-quality=-1.0 --resume` -- rather than through
+`main.py`, which would only hand it on. Two things set it apart from the pass
+`main.py` runs at the end of a search: it tests **every blend that ran**, not
+only those above `TESTING_MIN_QUALITY` (`min_quality` narrows it back down),
+because it exists so a person can *choose* a blend and one with no testing
+score cannot be weighed up; and it always resumes, so a blend already tested
+cleanly on the split keeps its row and only the rest run. Like an evaluation
+it does not move the search, so the job ends `done` again, with a failure of
+the pass in `error`. A job that is not `done` is a 409 -- a half-finished
+search's blends are not what it found -- and one with no testing split a 400.
+`async_api/testpass.py` owns the API's half.
+
 On the page, the job's actions carry **Stop** (a running job) or **Cancel** (a
 queued one), **Resume**, and **Evaluate…**, which opens a small form: the
 evaluator it will grade with, how many answers are still ungraded, where the
@@ -2887,6 +2904,17 @@ a verification graded by another rubric would not be comparable with the fitness
 the search produced. Anything the sweep cannot offer is a 400 before the task is
 queued: an unknown evaluator or backend, a split it does not hold, a slot it has
 no adapter for, a `BAD` individual.
+
+**The questions may come from elsewhere.** Instead of a split, `dataset` names
+another file: `{"file": name}`, one of the shared datasets, or
+`{"lora": id}`, the data one of the user's *own* LoRAs was trained on (another
+user's is refused as a missing one is). The server resolves it to a path and
+the script asks it with `--dataset`; the verification's options say which by
+`dataset_label`, never by where the file sits on the server. The evaluator is
+passed only when the request names one: left out, the script grades by the
+sweep's own `EVALUATOR` as before -- except for a mocked sweep, whose answers
+it scores with the numbers its scripts printed rather than asking a judge about
+invented answers.
 
 When it finishes, the page draws the report the script left behind:
 
@@ -3061,8 +3089,9 @@ summary of the process and *Yes, let's start*; a dataset (pasted, uploaded, or
 one of the shared ones under `datasets/`), which it reads and summarises; how
 long they are happy to wait (three options with the time each takes *on this
 dataset*, or typed: "about an hour", "5 epochs"); then the plan read back and
-*Start training*; and once the LoRAs are trained, *Blend them* -- the second
-half, below. At any point the chat box takes questions **and requests the
+*Start training*; once the LoRAs are trained, *Blend them* -- the second
+half, below; and once the search is done, *Test all blends*, *Verify it* and
+*Go live* -- the third. At any point the chat box takes questions **and requests the
 guide carries out** (below). On the right, what is
 happening: where the process is, the dataset's numbers (answer lengths, topic
 words, samples), the plan, and during training each LoRA's progress and ETA,
@@ -3082,6 +3111,7 @@ The Python behind it is `async_api_agent/`, mounted into the server as the
 | `analysis.py` | a dataset in any shape -- JSON Lines, a JSON array, prompt/answer pairs, CSV -- normalised to `{"messages": [...]}` lines and measured |
 | `planner.py` | the session (what the chat has set up), the time estimate, and the `POST /loras` bodies |
 | `blending.py` | the second half: which of the user's own LoRAs a search combines, its size, where its questions come from, the `POST /jobs` body, and what the search found |
+| `release.py` | the third: the search's blends beside their tested scores, the blend picked, the `POST /jobs/{id}/verify` body for it, and what the verification found |
 | `selection.py` | which part of a dataset is trained on: first/last N, a range, a percent, a random sample, words to keep or drop, answer lengths, no duplicates |
 | `tools.py` | what the chat can *do*: each tool's parameters, the steps it may run in, and what it hands back to the page |
 | `commands.py` | the most common requests read without a model, as the same tool calls |
@@ -3129,6 +3159,10 @@ where the model is given tools (`tools.py`, described to it in
 | `choose_blend_loras` | which of the user's own ready LoRAs a search blends: "only poem-r8 and poem-r16" |
 | `set_blend_search`, `set_blend_questions` | its size -- "5 rounds", "12 blends each", "judge on 20 questions" -- and where the questions come from |
 | `show_blend_plan`, `start_blend`, `stop_blend` | what is planned; start and stop, only when asked |
+| `start_testing`, `stop_testing` | test every blend of the finished search: "test the blends" |
+| `choose_best_blend` | the blend the person thinks is best, by number: "#7 is the best" |
+| `set_verify_questions` | what the verification asks: "on the testing questions", "use the poem dataset", "poem-r8's data", "20 questions" |
+| `start_verification`, `go_live` | verify the picked blend, or put a blend live -- "verify it", "put #3 live" -- only when asked |
 
 Everything a tool changes lives in the **session**: the part of the dataset in
 use, the ranks, epochs, options, name and test prompt. The page keeps it and
@@ -3181,6 +3215,10 @@ model's `<think>` block is stripped from an OpenAI-compatible reply.
 | `POST /agent/blend/intro` | the user's ready LoRAs, the ones picked (`prefer`: the ones just trained), the search's size and estimate |
 | `POST /agent/blend/plan` | the `POST /jobs` body that blends them, read back with exact numbers |
 | `POST /agent/blend/started`, `/agent/blend/debrief` | what the guide says once the search is queued, and what it found -- the latter reads only a job of the user's own |
+| `POST /agent/test/started`, `/agent/test/debrief` | what the guide says once the testing is queued; then every blend of the search, tested or not, ranked, and the one recommended |
+| `POST /agent/verify/plan` | the `POST /jobs/{id}/verify` body for the picked blend, read back with exact numbers |
+| `POST /agent/verify/debrief` | the blend beside each of its LoRAs, from the verification's report |
+| `POST /agent/live/started` | what the guide says once a blend is live -- sent the deployment's id, never its token |
 
 **The second half: blending them.** A search needs adapters, and the first
 half has just made some, so the guide carries on: *Blend them* (or "blend
@@ -3195,7 +3233,7 @@ and `/agent/blend/debrief` says what was found: the best blend **in words**
 (`stack(poem-r16 ×0.18, merge(poem-r8 ×0.65, ...))` -- `CAT`, `SVD`, `LIN` and
 the individual's drawn weights, with the user's LoRA names in place of the
 slots), its score, its score on questions the search never saw, and whether
-the rounds improved. The console then puts it live.
+the rounds improved. The third part, below, tests, verifies and puts live.
 
 Four rules shape that body. **Only the user's LoRAs**: every id is looked up
 among their catalogue rows (`blending.own()`), the body names the slots by id,
@@ -3209,9 +3247,46 @@ template -- scores are random, and the guide says so. **The questions are
 somebody's answers**: the source the chat chose (a shared dataset, or a LoRA's
 training data), else the dataset of this conversation, else the copy of its
 data the first chosen LoRA kept; the first `questions` records are the
-training split and up to `BLEND_TEST_QUESTIONS` more the testing pass. The
-estimate is a stated guess (`SECONDS_PER_INDIVIDUAL`), since nothing measures
-a search's pace yet.
+training split, and of the rest up to `BLEND_TEST_QUESTIONS` go to the
+testing split and then up to `BLEND_VALIDATION_QUESTIONS` to the validation
+split -- shared out when too few are left for both (`blending.split()`). The
+search itself runs **no testing pass** (`no_test`): testing is a step of its
+own, below. The estimate is a stated guess (`SECONDS_PER_INDIVIDUAL`), since
+nothing measures a search's pace yet.
+
+**The third part: testing, verifying, going live.** The search keeps the
+blends whose answers scored best on its own questions, so its scores flatter
+them; the guide then asks the questions it never saw, lets the person choose,
+checks the choice, and puts one live -- each step one of the API's own
+requests, sent by the page:
+
+1. **Test all blends** -- `POST /jobs/{id}/test`: every blend of the finished
+   search answers the testing split, graded the way the search was. The page
+   watches the job; `/agent/test/debrief` then lists every blend with its
+   search score and its tested score, ranked by the tested one, with a
+   scatter of the two on the right (above the diagonal: better on new
+   questions). *Skip testing* goes straight to choosing, by search score.
+2. **Verify it** -- the person picks the blend they think is best (the best
+   tested one is selected) and what to check it on: the validation split by
+   default, or another split, a demo dataset, or one of the blend's LoRAs'
+   own training data, and how many questions. `/agent/verify/plan` builds the
+   `POST /jobs/{id}/verify` body: the blend against **every LoRA it uses, once
+   each** -- with fewer than five LoRAs one fills several places, and asking it
+   once per place would only repeat its answers (`release.lora_slots()`). The
+   report comes back as each LoRA's average beside the blend's, and won / tied
+   / lost with the sign test's *p*.
+3. **Go live** -- the person picks the model to put live (the verified blend is
+   selected) and the page calls `POST /jobs/{id}/live`. The token comes back
+   once and stays in the page -- on the right, with a `curl` line -- and the
+   guide is told the deployment, never the key. A box on the left asks the
+   blend through `POST /infer`, the answer streaming in; *Take it down* is
+   `DELETE /live/{id}`.
+
+What the person chose -- which search, which blend, which questions, how many
+-- is the session's `release` part (`release.release_of()`), so the chat can do
+all of it too: "test the blends", "#7 is the best", "verify it on the poem
+dataset", "put #3 live". A blend the search does not hold, or cannot build, is
+refused by the tool; another user's search is "no search of yours".
 
 ---
 
