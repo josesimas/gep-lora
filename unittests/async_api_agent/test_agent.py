@@ -36,6 +36,7 @@ stand-in on localhost.
 
 import json
 import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest import mock
@@ -51,6 +52,7 @@ from async_api_agent import providers
 from async_api_agent import selection
 from async_api_agent import settings
 from async_api_agent import tools
+from async_api_agent import ui_help
 
 from unittests.async_api.support import RECORDS, JobsTestCase
 from unittests.async_api.test_server import ServerTestCase
@@ -599,6 +601,72 @@ class EndpointTests(ServerTestCase):
             self.assertEqual(status, 400, (path, reply))
         status, reply = self.call("GET", "/agent/models?provider=openai&base_url=http://x/v1")
         self.assertEqual(status, 502, reply)
+
+    def test_a_block_is_explained_through_the_api(self):
+        status, reply = self.call("GET", "/agent/help")
+        self.assertEqual(status, 200, reply)
+        self.assertEqual(reply["blocks"]["search.fitness"]["where"], "right")
+        status, reply = self.call("POST", "/agent/help", {
+            "agent": SCRIPTED, "block": "dataset", "title": "Your dataset",
+            "shown": "Conversations 6", "stage": "analysis", "history": []})
+        self.assertEqual(status, 200, reply)
+        self.assertEqual(reply["block"], "dataset")
+        self.assertIn("**Your dataset**", reply["message"]["text"])
+        self.assertEqual(self.call("POST", "/agent/help", {"block": "../x"})[0], 400)
+        self.assertEqual(self.call("GET", "/agent/help", key="nope")[0], 401)
+
+
+# --- "what is this?": the page's blocks explained ---------------------------------
+
+
+PAGE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                    "async_api", "agent-ui.html")
+
+
+class UiHelpTests(JobsTestCase):
+
+    def test_every_question_mark_on_the_page_has_a_block_behind_it(self):
+        with open(PAGE, encoding="utf-8") as handle:
+            page = handle.read()
+        named = set(re.findall(r'\b(?:qm|sub|helped|addCard)\("([a-z_.]+)"', page))
+        self.assertEqual(named, set(prompts.UI_BLOCKS))
+        for key, (where, title, about) in prompts.UI_BLOCKS.items():
+            self.assertIn(where, ("left", "right"), key)
+            self.assertTrue(title and about, key)
+            if "." in key:
+                self.assertIn(key.split(".")[0], prompts.UI_BLOCKS, key)
+
+    def test_a_block_is_explained_without_a_model(self):
+        found = ui_help.explain("training.loss", "Loss — how wrong", "step 10 loss 1.2",
+                                "training", SCRIPTED)
+        self.assertEqual(found["block"], "training.loss")
+        self.assertTrue(found["message"]["fallback"])
+        self.assertIn("lower is better", found["message"]["text"])
+        self.assertIn("Loss — how wrong", found["message"]["text"])
+        # No title from the page: the catalogue's.
+        self.assertEqual(ui_help.explain("activity", choice=SCRIPTED)["title"], "Activity")
+        with self.assertRaises(ui_help.HelpError):
+            ui_help.explain("nowhere", choice=SCRIPTED)
+
+    def test_a_model_is_told_what_the_block_is_and_what_it_shows(self):
+        sent = {}
+
+        def say(step, facts, fallback, choice=None, history=None, message=None):
+            sent.update(step=step, facts=facts, message=message)
+            return {"text": "It is the loss.", "by": "x", "fallback": False, "note": None}
+
+        with mock.patch.object(agent, "say", say):
+            ui_help.explain("training.log", "Log", "a\n\n  b   c\n" + "x" * 5000, "nowhere",
+                            SCRIPTED)
+        facts = sent["facts"]
+        self.assertEqual(sent["step"], "help")
+        self.assertEqual((facts["where"], facts["part_of"]), ("right", "Training"))
+        self.assertEqual(facts["about"], prompts.UI_BLOCKS["training.log"][2])
+        self.assertTrue(facts["shown"].startswith("a\nb c\n"))
+        self.assertLessEqual(len(facts["shown"]), ui_help.SHOWN_CHARS)
+        # A stage the page does not have is not passed on.
+        self.assertEqual((facts["stage"], facts["step_instructions"]), (None, None))
+        self.assertIn("Log", sent["message"])
 
 
 # --- the second half: combining the LoRAs ---------------------------------------

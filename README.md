@@ -3223,6 +3223,20 @@ model's `<think>` block is stripped from an OpenAI-compatible reply.
 | `POST /agent/verify/plan` | the `POST /jobs/{id}/verify` body for the picked blend, read back with exact numbers |
 | `POST /agent/verify/debrief` | the blend beside each of its LoRAs, from the verification's report |
 | `POST /agent/live/started` | what the guide says once a blend is live -- sent the deployment's id, never its token |
+| `GET /agent/help` | every block of the page that can be explained (`ui_help.py`), `{key: {where, title}}` -- the page draws a question mark on these and no others |
+| `POST /agent/help` | `{agent, block, title, shown, stage, history}`: what that block is and what it shows now, as a message for the conversation |
+
+**Every block can be asked about.** Each card on the right, the charts and
+tables inside them, the step's controls and the guide itself carry a small
+question mark. Pressing one sends `POST /agent/help` the block's key and the
+text it shows at that moment -- the hover titles of a chart included, which
+is where its numbers are -- and the answer is written into the conversation
+on the left like any other message. What a block *is* comes from
+`prompts.UI_BLOCKS`, never from the page; what it *shows* is handed to the
+model as a fact to point at ("2 answers of 7-8 words"), cut to
+`ui_help.SHOWN_CHARS`. With no model, the block's own description is the
+answer. A new block is a key in `UI_BLOCKS` and a `helped()`/`sub()` call in
+the page; a test checks the two name the same blocks.
 
 **The second half: blending them.** A search needs adapters, and the first
 half has just made some, so the guide carries on: *Blend them* (or "blend
@@ -3648,6 +3662,7 @@ async_api_agent/  the LoRA guide behind /agent: prompts, providers, tools, a dat
 | `async_api_agent/prompts.py` | every system prompt the guide sends, and the wording it falls back to without a model |
 | `async_api_agent/settings.py` | which provider and model the guide talks through, and what it plans |
 | `async_api_agent/tools.py` | what the guide's chat can do: choose part of the dataset, change ranks, epochs and options, switch dataset, start and stop |
+| `async_api_agent/ui_help.py` | "what is this?" for each block of the page: the blocks that can be explained, and one explained from what it shows |
 
 ### The adapters, and the dev aids
 

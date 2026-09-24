@@ -296,6 +296,21 @@
   .knobs label { font-size: 11px; }
   .formula { font: 13px/1.6 var(--mono); background: var(--code); border-radius: 8px; padding: 10px 12px;
              overflow-wrap: anywhere; margin: 0 0 10px; }
+
+  /* "What is this?": a question mark on every block the guide can explain (ui_help.py). */
+  button.qm { display: inline-grid; place-items: center; width: 20px; height: 20px; min-height: 0; padding: 0;
+              margin-left: 6px; border: 0; border-radius: 50%; background: transparent; color: var(--faint);
+              vertical-align: -5px; cursor: help; transition: color .15s, background .15s, transform .15s; }
+  button.qm svg { width: 16px; height: 16px; display: block; }
+  .card:hover .card-head button.qm, .action:hover .ask button.qm, .agent-head:hover button.qm { color: var(--muted); }
+  button.qm:hover:not(:disabled), button.qm:focus-visible { color: var(--accent); background: var(--accent-soft);
+              border-color: transparent; transform: scale(1.12); }
+  button.qm:hover svg .qm-dot { animation: nudge .5s ease-in-out; }
+  @keyframes nudge { 50% { transform: translateY(-1px); } }
+  .explained { animation: explained 1.8s ease-out; border-radius: 10px; }
+  @keyframes explained { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
+                         25% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 25%, transparent); }
+                         100% { box-shadow: 0 0 0 0 transparent; } }
   .slot-tag { display: inline-block; min-width: 26px; text-align: center; font: 600 11px var(--mono); padding: 1px 6px;
               border-radius: 5px; background: var(--accent-soft); color: var(--accent); margin-right: 6px; }
 </style>
@@ -323,7 +338,7 @@
   <!-- left: the agent -->
   <section class="agent" aria-label="The guide">
     <div class="agent-head">
-      <h2>Your guide</h2>
+      <h2>Your guide<span id="guideHelp"></span></h2>
       <span id="mockTag" class="tag mock" hidden>practice run</span>
       <span class="spacer"></span>
       <button type="button" class="sm ghost model-chip" id="modelChip" title="Which model the guide talks through"><span>…</span></button>
@@ -406,6 +421,7 @@ let jobLog = [];                    // the search's console
 let testTimer = null, verifyTimer = null;
 let testForm = null;                // the last GET /jobs/{id}/test: how many blends tested
 let verifyLog = [];                 // the verification's console
+let helpBlocks = {};                // GET /agent/help: the blocks with a question mark
 
 // One id per conversation, sent with every call: a provider that routes and
 // caches by conversation (OpenCode Go's x-opencode-session) is told which one.
@@ -693,6 +709,77 @@ function setStage(stage) {
   S.stamps[STAGE_OF[stage] || stage] = S.stamps[STAGE_OF[stage] || stage] || Date.now();
   save();
   drawAction(); drawBoard();
+}
+
+// --- "what is this?" ------------------------------------------------------------------------
+//
+// A question mark on every block the guide can explain -- the ones GET
+// /agent/help lists (ui_help.py), so none is drawn with nothing behind it.
+// Pressing one asks POST /agent/help about that block, with the text it shows
+// right now, and the answer lands in the conversation like any other.
+
+const QM_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true">' +
+  '<circle cx="8" cy="8" r="7" fill="currentColor" opacity=".12"/>' +
+  '<circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
+  '<path d="M6.2 6.3a1.85 1.85 0 1 1 2.6 1.7c-.5.25-.8.6-.8 1.15v.35" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+  '<circle class="qm-dot" cx="8" cy="11.5" r=".95" fill="currentColor"/></svg>';
+
+// What the person is taken to have asked: the button's tooltip, and their line.
+const helpQuestion = (block, title) => block === "controls" ? `What do I do at “${title}”?` : `What is “${title}”?`;
+
+function qm(block, title) {
+  if (!helpBlocks[block]) return null;
+  const question = helpQuestion(block, title);
+  return el("button", { type: "button", class: "qm", "data-help": block, title: question,
+                        "aria-label": question, disabled: busy, html: QM_SVG,
+                        onclick: (e) => { e.stopPropagation(); explain(block, title, e.currentTarget); } });
+}
+
+// A card with its question mark in the heading.
+function helped(block, node) {
+  const head = node.querySelector(".card-head h3");
+  const button = head && qm(block, head.textContent);
+  if (button) head.append(button);
+  return node;
+}
+
+// A heading inside a card, with its own question mark.
+function sub(block, title, style = "margin-bottom:8px", ...extra) {
+  return el("h3", { style }, title, ...extra, qm(block, [title, ...extra].map((one) => one.textContent ?? one).join("")));
+}
+
+// The part of the page a question mark belongs to, and the text it shows:
+// a card, a heading and what follows it up to the next heading, the step's
+// controls, or the guide's own header.
+function helpBox(button) {
+  const inside = (selector) => button.closest(selector);
+  if (inside(".card-head")) return [inside("section.card")];
+  if (inside(".ask")) return [$("action")];
+  if (inside(".agent-head")) return [inside(".agent-head")];
+  const heading = inside("h3"), parent = heading.parentElement;
+  if (!parent.classList.contains("card")) return [parent];
+  const nodes = [heading];
+  for (let next = heading.nextElementSibling; next && next.tagName !== "H3"; next = next.nextElementSibling) nodes.push(next);
+  return nodes;
+}
+
+function explain(block, title, button) {
+  if (busy || !config) return;
+  const nodes = helpBox(button);
+  // A chart's numbers are in its hover titles, which innerText leaves out.
+  const shown = nodes.map((node) => [node.innerText || node.textContent || "",
+    ...[...node.querySelectorAll("svg title")].map((one) => one.textContent.replace(/\n/g, " · "))].join("\n")).join("\n").trim();
+  for (const node of nodes) { node.classList.remove("explained"); void node.offsetWidth; node.classList.add("explained"); }
+  setTimeout(() => nodes.forEach((node) => node.classList.remove("explained")), 1900);
+  const past = pastTurns();
+  userSays(helpQuestion(block, title));
+  // On a narrow screen the guide sits above the board: bring the answer into view.
+  if (window.matchMedia("(max-width: 960px)").matches) $("transcript").scrollIntoView({ behavior: "smooth", block: "start" });
+  event(`what is ${block}?`);
+  step(async () => {
+    const reply = await api("POST", "/agent/help", { agent: agentChoice(), block, title, shown, stage: S.stage, history: past });
+    agentSays(reply.message);
+  });
 }
 
 // --- the steps --------------------------------------------------------------------------
@@ -1526,7 +1613,8 @@ function drawAction() {
   const box = $("action");
   if (!key || !config) return box.replaceChildren();
   const lock = busy;
-  const ask = (text) => el("div", { class: "ask" }, text, busy ? el("span", { class: "typing" }, el("i"), el("i"), el("i")) : null);
+  const ask = (text) => el("div", { class: "ask" }, text, qm("controls", text),
+    busy ? el("span", { class: "typing" }, el("i"), el("i"), el("i")) : null);
   const stage = S.stage;
   let content = [];
   if (!S.transcript.length) content = [];
@@ -1880,27 +1968,28 @@ async function readFile(file) {
 function drawBoard() {
   if (!key) return $("board").replaceChildren(card("Nothing yet", null, el("div", { class: "empty-state" },
     el("b", {}, "Waiting for your API key"), el("p", {}, "Paste it on the left to begin."))));
-  const cards = [pipelineCard()];
+  const cards = [helped("pipeline", pipelineCard())];
+  const addCard = (block, node) => cards.push(helped(block, node));
   if (RELEASE_STAGES.includes(S.stage)) {
     const R = S.release;
-    if (R.live) cards.push(liveCard());
-    if (R.verification) cards.push(verificationCard());
-    if (R.found) cards.push(blendsCard());
-    if (R.testing) cards.push(testingCard());
-    if (S.blend.result) cards.push(bestBlendCard());
-    if (S.blend.job) cards.push(searchCard());
+    if (R.live) addCard("live", liveCard());
+    if (R.verification) addCard("verification", verificationCard());
+    if (R.found) addCard("blends", blendsCard());
+    if (R.testing) addCard("testing", testingCard());
+    if (S.blend.result) addCard("best_blend", bestBlendCard());
+    if (S.blend.job) addCard("search", searchCard());
   } else if (BLEND_STAGES.includes(S.stage)) {
-    if (S.blend.job) cards.push(searchCard());
-    if (S.blend.result) cards.push(bestBlendCard());
-    cards.push(blendPlanCard());
+    if (S.blend.job) addCard("search", searchCard());
+    if (S.blend.result) addCard("best_blend", bestBlendCard());
+    addCard("blend_plan", blendPlanCard());
   }
-  if (S.loras.length) cards.push(trainingCard());
-  if (S.stage === "done" || S.loras.some((one) => (details[one.id] || {}).status === "ready")) cards.push(resultsCard());
-  if (S.preview) cards.push(previewCard());
-  if (S.plan || S.choices || changes().length) cards.push(planCard());
-  if (S.analysis) cards.push(datasetCard());
-  if (!S.analysis && !BLEND_STAGES.includes(S.stage)) cards.push(welcomeCard());
-  cards.push(activityCard());
+  if (S.loras.length) addCard("training", trainingCard());
+  if (S.stage === "done" || S.loras.some((one) => (details[one.id] || {}).status === "ready")) addCard("results", resultsCard());
+  if (S.preview) addCard("preview", previewCard());
+  if (S.plan || S.choices || changes().length) addCard("plan", planCard());
+  if (S.analysis) addCard("dataset", datasetCard());
+  if (!S.analysis && !BLEND_STAGES.includes(S.stage)) addCard("welcome", welcomeCard());
+  addCard("activity", activityCard());
   // Keep the log's scroll position when it is redrawn every second and a half.
   const log = document.querySelector("pre.log");
   const stuck = log ? log.scrollTop + log.clientHeight >= log.scrollHeight - 20 : true;
@@ -2007,11 +2096,11 @@ function searchCard() {
       el("code", {}, "run_api_worker.bat"), " (or ", el("code", {}, "python -m async_api.worker"), ").") : null,
     st.job.error ? el("div", { class: "note-box" }, st.job.error) : null,
     el("div", { class: "grid2", style: "margin-top:16px" },
-      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Score per round — best and mean"),
+      el("div", {}, sub("search.fitness", "Score per round — best and mean"),
         history.length ? fitnessChart(history) : el("div", { class: "empty-state", style: "padding:40px 10px" }, "Waiting for the first round to be scored…"),
         el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:var(--c1)" }), "best"),
           el("span", {}, el("i", { style: "background:var(--c2)" }), "mean"))),
-      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Log"),
+      el("div", {}, sub("search.log", "Log"),
         el("pre", { class: "log" }, jobLog.length ? jobLog.join("\n") : "(nothing logged yet — the worker writes here once it starts the search)"))));
 }
 
@@ -2064,7 +2153,7 @@ function blendsCard() {
   const tested = f.blends.filter((one) => one.tested !== null);
   return card("The blends", f.mock ? "practice run — the scores are random" : `${f.evaluator || "the judge"} · 0 to 1`,
     tested.length ? el("div", { class: "grid2" },
-      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Search score against tested score"),
+      el("div", {}, sub("blends.scatter", "Search score against tested score"),
         el("div", { style: "max-width:380px" }, scoreScatter(f.blends, picked)),
         el("p", { class: "help" }, "Above the diagonal: better on new questions than on the ones the search chose it by.")),
       el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Why test"),
@@ -2110,10 +2199,10 @@ function verificationCard() {
     el("div", { class: "meter big" + (done ? (row.status === "done" ? " done" : " stopped") : " live") }, el("i", { style: `width:${done ? 100 : 40}%` })),
     row.error ? el("div", { class: "note-box" }, row.error) : null,
     rep ? el("div", { class: "grid2", style: "margin-top:12px" },
-      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Average score"),
+      el("div", {}, sub("verification.means", "Average score"),
         meansChart([{ name: `blend #${S.release.report.individual}`, mean: rep.blend_mean, blend: true }]
           .concat(rep.against.map((a) => ({ name: a.lora + " alone", mean: a.mean }))))),
-      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Question by question"),
+      el("div", {}, sub("verification.table", "Question by question"),
         el("table", {}, el("thead", {}, el("tr", {}, ["Against", "Won", "Tied", "Lost", "p", ""].map((h, i) => el("th", { class: i && i < 5 ? "num" : "" }, h)))),
           el("tbody", {}, rep.against.map((a) => el("tr", {}, el("td", {}, a.lora), el("td", { class: "num" }, a.wins),
             el("td", { class: "num" }, a.ties), el("td", { class: "num" }, a.losses), el("td", { class: "num" }, fmt(a.p, 2)),
@@ -2145,7 +2234,7 @@ function liveCard() {
     el("div", { class: "note-box" }, el("b", {}, "Its key, shown once: "), el("code", {}, L.token), " ",
       el("button", { class: "sm", type: "button", onclick: () => navigator.clipboard && navigator.clipboard.writeText(L.token) }, "Copy"),
       el("div", { class: "small", style: "margin-top:6px" }, "Anyone with it can ask this blend. Take it down on the left to revoke it.")),
-    el("h3", { style: "margin:14px 0 6px" }, "From anywhere else"),
+    sub("live.curl", "From anywhere else", "margin:14px 0 6px"),
     el("pre", { class: "log", style: "height:auto" }, curl),
     L.prompt ? [el("h3", { style: "margin:14px 0 6px" }, "You asked"), el("div", { class: "sample-q" }, L.prompt),
       el("div", { class: "sample-a" }, L.answer || (L.asking ? "…" : ""))] : null);
@@ -2181,12 +2270,12 @@ function datasetCard() {
       el("div", { class: "tile" }, el("span", {}, name), el("b", {}, value), el("small", { title: sub }, sub)))),
     a.problems.length ? el("div", { class: "note-box" }, el("ul", { class: "problems" }, a.problems.map((p) => el("li", {}, p)))) : null,
     el("div", { class: "grid2", style: "margin-top:16px" },
-      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "How long the answers are"), histogramChart(a.histogram),
+      el("div", {}, sub("dataset.lengths", "How long the answers are"), histogramChart(a.histogram),
         el("p", { class: "help" }, "Words per assistant answer — what each LoRA learns to write.")),
-      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "What it talks about"),
+      el("div", {}, sub("dataset.keywords", "What it talks about"),
         a.keywords.length ? el("div", { class: "chips" }, a.keywords.map((k) => el("span", { class: "chip" }, k.word, el("i", {}, k.count))))
           : el("p", { class: "muted" }, "No recurring words."))),
-    el("h3", { style: "margin:16px 0 8px" }, `Samples (${a.samples.length} of ${a.records})`),
+    sub("dataset.samples", `Samples (${a.samples.length} of ${a.records})`, "margin:16px 0 8px"),
     el("div", { class: "scroll" }, el("table", {},
       el("thead", {}, el("tr", {}, el("th", {}, "User"), el("th", {}, "Assistant — what the LoRA learns"))),
       el("tbody", {}, a.samples.map((s) => el("tr", {}, el("td", { class: "clip" }, el("div", { title: s.user }, s.user)),
@@ -2219,17 +2308,17 @@ function previewCard() {
 function planCard() {
   const rows = [];
   const changed = changes();
-  if (changed.length) rows.push(el("h3", { style: "margin-bottom:8px" }, "What you changed in the chat"),
+  if (changed.length) rows.push(sub("plan.changes", "What you changed in the chat"),
     el("div", { class: "chips", style: "margin-bottom:14px" }, changed.map(([name, value]) =>
       el("span", { class: "chip", title: value }, el("b", {}, name + ": "), value))));
   if (S.choices) {
     const longest = Math.max(...S.choices.map((c) => c.estimate.seconds), 1);
-    rows.push(el("h3", { style: "margin-bottom:8px" }, "The wait, option by option"),
+    rows.push(sub("plan.wait", "The wait, option by option"),
       waitChart(S.choices, longest));
   }
   if (S.plan && S.estimate) {
     const e = S.estimate;
-    rows.push(el("h3", { style: "margin:16px 0 8px" }, "The LoRAs to train"),
+    rows.push(sub("plan.loras", "The LoRAs to train", "margin:16px 0 8px"),
       el("div", { class: "scroll" }, el("table", {},
         el("thead", {}, el("tr", {}, ["LoRA", "Rank", "Epochs", "Steps", "Est. time"].map((h, i) => el("th", { class: i ? "num" : "" }, h)))),
         el("tbody", {}, S.plan.map((p, i) => el("tr", {},
@@ -2279,10 +2368,10 @@ function trainingCard() {
       el("thead", {}, el("tr", {}, el("th", {}, "LoRA"), el("th", {}, "Status"), el("th", {}, "Progress"), el("th", { class: "num" }, "Loss"), el("th", { class: "num" }, "Time"))),
       el("tbody", {}, lines))),
     el("div", { class: "grid2", style: "margin-top:16px" },
-      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Loss — how wrong each LoRA still is on your examples"),
+      el("div", {}, sub("training.loss", "Loss — how wrong each LoRA still is on your examples"),
         series.some((s) => s.points.length) ? lossChart(series) : el("div", { class: "empty-state", style: "padding:40px 10px" }, "Waiting for the first logged step…"),
         el("div", { class: "legend" }, series.map((s) => el("span", {}, el("i", { style: `background:${s.colour}` }), s.name)))),
-      el("div", {}, el("h3", { style: "margin-bottom:8px" }, "Log · ", el("span", { class: "muted" }, logName)),
+      el("div", {}, sub("training.log", "Log · ", "margin-bottom:8px", el("span", { class: "muted" }, logName)),
         el("pre", { class: "log" }, logLines.length ? logLines.join("\n") : "(nothing logged yet — the worker writes here once it starts this LoRA)"))));
 }
 
@@ -2538,6 +2627,9 @@ async function useKey(value) {
     key = "";
     return keyGate(error.status === 401 ? "That key is not known to this server." : error.message);
   }
+  // A server older than this page has no /agent/help: no question marks, nothing else lost.
+  try { helpBlocks = (await api("GET", "/agent/help")).blocks || {}; } catch (_) { helpBlocks = {}; }
+  $("guideHelp").replaceChildren(...[qm("guide", "Your guide")].filter(Boolean));
   rememberKey(key);
   $("changeKey").hidden = false;
   $("composer").hidden = false;

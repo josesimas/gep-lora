@@ -22,6 +22,12 @@ App and the user, like an App method, and returns (status, payload).
                                                                  tools changed
     POST /agent/debrief             {agent, loras: [id], mock, history}
 
+  what the page shows (ui_help.py)
+    GET  /agent/help                every block with a question mark: {key: {where, title}}
+    POST /agent/help                {agent, block, title?, shown?, stage?, history}
+                                                              -> what that block is, and
+                                                                 what it shows now
+
   combining them (blending.py)
     POST /agent/blend/intro         {agent, session, prefer?: [id], history, quiet?}
                                                               -> the user's ready LoRAs,
@@ -76,6 +82,7 @@ from async_api_agent import prompts
 from async_api_agent import providers
 from async_api_agent import release
 from async_api_agent import settings
+from async_api_agent import ui_help
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -304,6 +311,23 @@ def debrief(app, user, body):
                               bool((body or {}).get("mock")))
 
 
+# --- what the page shows ------------------------------------------------------
+
+
+def help_blocks(app, user):
+    return 200, {"blocks": ui_help.blocks()}
+
+
+def explain(app, user, body):
+    body = body or {}
+    try:
+        found = ui_help.explain(body.get("block"), body.get("title"), body.get("shown"),
+                                body.get("stage"), _choice(body), _history(body))
+    except ui_help.HelpError as error:
+        raise AgentError(400, str(error))
+    return 200, found
+
+
 # --- combining the LoRAs ------------------------------------------------------
 
 
@@ -452,6 +476,8 @@ ROUTES = [
     ("POST", r"/agent/started", started, ("body",)),
     ("POST", r"/agent/chat", chat, ("body",)),
     ("POST", r"/agent/debrief", debrief, ("body",)),
+    ("GET", r"/agent/help", help_blocks, ()),
+    ("POST", r"/agent/help", explain, ("body",)),
     ("POST", r"/agent/blend/intro", blend_intro, ("body",)),
     ("POST", r"/agent/blend/plan", blend_plan, ("body",)),
     ("POST", r"/agent/blend/started", blend_started, ("body",)),

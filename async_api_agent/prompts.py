@@ -1,12 +1,15 @@
 """
 prompts.py - Every word the LoRA agent says, in one place.
 
-Two kinds of text live here:
+Three kinds of text live here:
 
   * the **system prompts** -- what the model behind the chat box is told for
     each step of the conversation. `system(step)` is the one way to get one:
     the shared PERSONA first, then the step's own instructions. A model never
     sees a prompt that is not built here.
+  * **what each block of the page is** (UI_BLOCKS) -- what ui_help.py tells
+    the model a block is when someone presses its question mark, and says
+    itself when no model answers.
   * the **fallback wording** -- what the agent says for each step when no
     model answers (none configured, unreachable, no key, a refusal). Plain
     templates filled from the same facts the model is handed, so a step reads
@@ -262,6 +265,20 @@ live, that the key to reach it is shown on the right once and must be kept \
 in the box on the left to try it. The first answer takes longer, while the \
 model loads."""
 
+HELP = """\
+The person pressed the question mark on one block of the page, asking what \
+it is. FACTS.title is the block's heading as they see it, FACTS.where which \
+half of the page it is on, FACTS.about what the block is and how to read it, \
+and FACTS.shown the text it shows right now (numbers, labels, table rows, \
+log lines; it may be cut short). FACTS.stage is the step we are on and \
+FACTS.step_instructions what that step asks of them. Explain the block in \
+two to four short sentences: what it is for and how to read it, with a \
+technical word explained simply. When FACTS.shown has numbers worth \
+pointing at, say what they mean now ("your loss fell from 2.1 to 0.8, so \
+..."), using only the numbers it shows. If it shows nothing yet, say what \
+will appear there. Do not tell them to do anything unless it is about this \
+block and FACTS.step_instructions says so."""
+
 
 STEPS = {
     "intro": INTRO,
@@ -277,6 +294,7 @@ STEPS = {
     "test_debrief": TEST_DEBRIEF,
     "verify_debrief": VERIFY_DEBRIEF,
     "live": LIVE,
+    "help": HELP,
 }
 
 
@@ -671,6 +689,143 @@ BLEND_HINT = ("You can also ask me in words: \u201conly poem-r8 and poem-r16\u20
               "rounds\u201d, \u201c12 blends each\u201d, \u201cjudge on 20 questions\u201d…")
 CHAT_HINT = ("You can also ask me in words: \u201conly use the first 20\u201d, \u201cdrop the ones "
              "about X\u201d, \u201cone LoRA at rank 32\u201d, \u201ca lower learning rate\u201d…")
+
+# ---------------------------------------------------------------------------
+# What each block of the page is
+# ---------------------------------------------------------------------------
+#
+# Every block the page puts a question mark on, by the key agent-ui.html
+# names it with: (which half of the page, its title, what it is). ui_help.py
+# hands the model the "what" as a fact and says it itself when no model
+# answers, so a block missing here gets no question mark. A key with a dot is
+# one part of the block before the dot.
+
+UI_BLOCKS = {
+    # The left half.
+    "guide": ("left", "Your guide", (
+        "This is our conversation: I explain each step here, and you can ask me anything or "
+        "tell me what to change in the box at the bottom — I can change the plan for you. "
+        "The chip at the top says which model writes my words; click it to pick another, or "
+        "to turn on a **practice run** that trains nothing. **Start over** forgets this "
+        "conversation.")),
+    "controls": ("left", "What this step asks", (
+        "The controls for the step we are on: the buttons to go on and the choices to pick "
+        "from. They change as we go, and you can always type what you want instead.")),
+    # The right half.
+    "pipeline": ("right", "Where we are", (
+        "Every step from your dataset to a blend put live, in order: a tick is a step done, "
+        "the glowing dot the one we are on, and the time under a step when it began. The "
+        "tiles below sum up the part we are in — the dataset, the plan and the time while "
+        "training; the LoRAs, the search's size and its best score while blending; and the "
+        "blends tested, picked, verified and live after that.")),
+    "welcome": ("right", "What you'll see here", (
+        "A placeholder until there is something to show: once you give me a dataset, its "
+        "statistics appear on this side, and then the plan, the training and the blending "
+        "as they happen.")),
+    "dataset": ("right", "Your dataset", (
+        "Your dataset as I read it: how many conversations, how long the questions and the "
+        "answers are (the *median* is the middle value, then the shortest and longest), "
+        "exact repeats, system prompts and any problems. If you chose to train on only part "
+        "of it, everything here describes that part.")),
+    "dataset.lengths": ("right", "How long the answers are", (
+        "A histogram of the assistant's answers by length: each bar counts the answers whose "
+        "word count falls in its band. The LoRAs learn to write answers like these, so it is "
+        "a fair preview of how long the trained model's answers will be.")),
+    "dataset.keywords": ("right", "What it talks about", (
+        "The words that come up most in your dataset, common filler words left out, each with "
+        "how many times it appears — a quick look at what the LoRAs will learn to talk "
+        "about.")),
+    "dataset.samples": ("right", "Samples", (
+        "A few records as they will be trained on: what the user says, and the assistant's "
+        "answer the LoRA learns to give. Hover over a cell to read it whole.")),
+    "preview": ("right", "Records you asked about", (
+        "The records you asked me to show in the chat, each with its number in the dataset "
+        "and how many words its answer has. Showing them changes nothing.")),
+    "plan": ("right", "The plan", (
+        "The training plan: what you changed in the chat, the wait options with their times, "
+        "and the LoRAs that will be trained.")),
+    "plan.changes": ("right", "What you changed in the chat", (
+        "What you asked for in the chat that differs from the defaults: the part of the "
+        "dataset, the ranks, training options, a name or a test prompt.")),
+    "plan.wait": ("right", "The wait, option by option", (
+        "Each wait option as a bar of its estimated time. An *epoch* is one pass over your "
+        "data: more epochs learn more, and take longer.")),
+    "plan.loras": ("right", "The LoRAs to train", (
+        "The LoRAs about to be trained, one per rank. A *rank* is how much an adapter can "
+        "hold: higher learns more detail but takes more memory. *Steps* are the training "
+        "updates each makes, and the time is an estimate — from LoRAs trained on this "
+        "machine when there are some.")),
+    "training": ("right", "Training", (
+        "The training as it runs: each LoRA's status, how many of its steps are done, its "
+        "latest loss and the time it has taken. The LoRAs train one after another. Click a "
+        "row to see that LoRA's log.")),
+    "training.loss": ("right", "Loss", (
+        "*Loss* is how wrong a LoRA still is on your examples — lower is better. Each line "
+        "is one LoRA, over its training steps: it should fall quickly, then level off. A "
+        "line that levels off high has learned what it can at that rank.")),
+    "training.log": ("right", "Log", (
+        "The worker's own log for the LoRA picked in the table: what it loaded, each logged "
+        "step and any error. Click another row to switch.")),
+    "results": ("right", "Results", (
+        "Each finished LoRA: its final loss, steps and time, and its answer to the first "
+        "question of your dataset — a quick taste of what each one learned. The path is "
+        "where its weights are kept on the server.")),
+    "blend_plan": ("right", "The search", (
+        "What the search will blend. A blend has five places (L1–L5), each filled by one of "
+        "your LoRAs — with fewer than five, some take more than one. The search tries ways "
+        "to stack, merge or mix them and at what strength; a LoRA's rank decides which of "
+        "those can be built.")),
+    "search": ("right", "Search", (
+        "The search as it runs. Each round builds a set of blends, has each one answer the "
+        "questions, and a judge scores the answers from 0 to 1. The best blends are kept and "
+        "varied for the next round.")),
+    "search.fitness": ("right", "Score per round", (
+        "The best and the mean score of each round of the search, from 0 to 1. The best line "
+        "rising means the search is finding better blends; the mean shows how the whole set "
+        "is doing.")),
+    "search.log": ("right", "Log", (
+        "The worker's log of the search: each step of each round as it runs.")),
+    "best_blend": ("right", "Best blend", (
+        "The blend that scored best: its formula (how the LoRAs are combined and each one's "
+        "strength), its score, its tested score if it has one, and the chromosome — the "
+        "blend as the search writes it. *Blocked* counts blends that could not be built: "
+        "mixing needs LoRAs of the same rank.")),
+    "testing": ("right", "Testing", (
+        "Every blend answering questions the search never saw, and scored on them. A "
+        "search score flatters a blend, since the search picked blends by those very "
+        "questions; the tested score is the fairer one.")),
+    "blends": ("right", "The blends", (
+        "Every blend of the search: its formula, the LoRAs it uses, its search score, its "
+        "tested score and the difference between the two (Δ). Click a row to pick that "
+        "blend.")),
+    "blends.scatter": ("right", "Search score against tested score", (
+        "Each dot is a blend: across is its search score, up its tested score. On the "
+        "diagonal the two agree; above it the blend did better on new questions. The larger "
+        "dot is the one picked.")),
+    "verification": ("right", "Verification", (
+        "The blend you picked, checked against each of its LoRAs used alone at full "
+        "strength, on the same questions. If the blend is not clearly better, combining "
+        "them did not pay off.")),
+    "verification.means": ("right", "Average score", (
+        "The average score of the blend and of each of its LoRAs alone on the same "
+        "questions, from 0 to 1.")),
+    "verification.table": ("right", "Question by question", (
+        "How many questions the blend won, tied and lost against each LoRA, and *p* — how "
+        "likely a difference that large is by luck alone. Below 0.05 it is unlikely to be "
+        "luck.")),
+    "live": ("right", "Live", (
+        "The blend being served. Its key is shown once, and anyone who has it can ask the "
+        "blend. The first answer is slower while the model loads.")),
+    "live.curl": ("right", "From anywhere else", (
+        "The command to ask the live blend from any other program with curl; the answer "
+        "streams back as it is written.")),
+    "activity": ("right", "Activity", (
+        "Every call this page makes to the API server, oldest first: when, the method, the "
+        "address, and the reply's status and time. A 2xx status is fine; 4xx or 5xx is an "
+        "error.")),
+}
+
+FALLBACK_HELP = "**{title}** — {about}"
 
 # The note shown under a message the fallback wrote, and why.
 FALLBACK_NOTE = "Written without a model: {reason}"
