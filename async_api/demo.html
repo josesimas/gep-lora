@@ -132,6 +132,10 @@
   .viewnav button { border: 0; background: transparent; min-height: 28px; padding: 0 12px; color: var(--muted); }
   .viewnav button:hover:not(:disabled) { background: var(--panel); color: var(--ink); }
   .viewnav button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+  .toplink { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; font-size: 13px;
+             color: var(--ink); text-decoration: none; border: 1px solid var(--line-2); border-radius: 8px;
+             white-space: nowrap; }
+  .toplink:hover { background: var(--panel-2); }
   .spacer { flex: 1; }
   .health { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
             max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -415,6 +419,8 @@
     <button type="button" data-view="infer">Inference</button>
   </nav>
   <div class="spacer"></div>
+  <a class="toplink" href="/runs.html" title="Every search you have run">Your runs</a>
+  <a class="toplink" href="/agent" title="The LoRA guide">LoRA guide</a>
   <span id="health" class="health"></span>
   <div class="keybox">
     <input id="key" type="password" autocomplete="off" placeholder="API key"
@@ -894,6 +900,19 @@ async function useKey() {
   resumeView = null;
   await loadDatasets();
   await Promise.all([loadForm(), loadLoraForm(), refreshJobs(), refreshLive()]);
+  // /demo?job=N (the runs page links here): that job, if it is one of the
+  // user's -- another's is a 404 from the API, and said so, not shown.
+  const linked = Number(new URLSearchParams(location.search).get("job"));
+  if (Number.isInteger(linked) && linked > 0) {
+    try {
+      await api("GET", `/jobs/${linked}/status`);
+      select(linked);
+      return;
+    } catch (error) {
+      setView("new");
+      say("submitMsg", `Cannot open job ${linked}: ${error.message}.`, "err");
+    }
+  }
   // Back to the job that was on screen last time, if it is still there.
   const last = Number(recall("job"));
   if (selected === null && last) select(last);

@@ -386,6 +386,17 @@ class Catalog:
             return conn.execute("SELECT * FROM loras WHERE folder = ?",
                                 (stored_folder(folder),)).fetchone()
 
+    def slot_names(self, slots, owner):
+        """{slot: LoRA name} for a sweep's LORA_SLOTS ({slot: folder}): the
+        catalogue name where the folder is one of `owner`'s rows, else the
+        folder's own name -- so nobody learns another user's names this way."""
+        names = {}
+        for slot, folder in sorted((slots or {}).items()):
+            row = self.by_folder(absolute(folder))
+            names[slot] = row["name"] if row is not None and row["owner"] == owner \
+                else os.path.basename(str(folder).rstrip("/\\"))
+        return names
+
     def by_name(self, name, owner=None):
         """The row called `name` among `owner`'s (None: among the unowned)."""
         with self._connect() as conn:

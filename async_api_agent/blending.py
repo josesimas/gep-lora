@@ -35,7 +35,6 @@ adapter.
 
 import json
 import math
-import os
 import re
 
 from adapters import catalog as lora_catalog
@@ -350,12 +349,7 @@ def formula(chromosome, names, weights=None):
 def slot_names(conf, catalog, user):
     """{slot: LoRA name} for a sweep's LORA_SLOTS -- the user's own catalogue
     name where the folder is one of theirs, else the folder's."""
-    names = {}
-    for slot, folder in (conf.get("LORA_SLOTS") or {}).items():
-        row = catalog.by_folder(lora_catalog.absolute(folder))
-        names[slot] = row["name"] if row is not None and row["owner"] == user["name"] \
-            else os.path.basename(str(folder).rstrip("/\\"))
-    return names
+    return catalog.slot_names(conf.get("LORA_SLOTS"), user["name"])
 
 
 def outcome(registry, job, user, catalog):

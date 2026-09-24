@@ -2810,6 +2810,7 @@ are refused with a 400 before anything is queued.
 | `GET /jobs[?status=]` | the user's jobs, each with its best individual |
 | `GET /jobs/{id}` | the job and its results: population, best, fitness history, testing, costs |
 | `GET /jobs/{id}/status` | status, queue position, generations scored so far |
+| `GET /runs` | every search of the user's, newest first, each with the LoRAs it blended (by the user's own catalogue names), how many of its blends were tested, its verifications and what of it is live -- one read for the runs page |
 | `GET /jobs/{id}/log` | the tail of `job.log` |
 | `GET /jobs/{id}/database` | the job's `job.sqlite3`, as a consistent snapshot (sqlite's backup), even while it runs |
 | `GET /jobs/{id}/individuals/{n}` | one individual and its transcript |
@@ -3284,6 +3285,20 @@ requests, sent by the page:
    guide is told the deployment, never the key. A box on the left asks the
    blend through `POST /infer`, the answer streaming in; *Take it down* is
    `DELETE /live/{id}`.
+
+**Every run has an address, and a page of them.** The guide keeps the search
+on screen in its address -- `/agent?job=12` -- so a reload, a bookmark or a
+link brings that search back into the conversation: finished, it is read back
+and offers its next step; still running, it is watched. **`/runs.html`**
+(*Your runs* in the guide's top bar) lists every search of the user's from
+`GET /runs`: status, when, rounds and blends, the LoRAs, the best score, and
+tags for tested, verified and live, with a filter and a search box, and on
+each *Open in the guide* and *Open in Console* -- the console takes
+`/demo?job=12` too, opening that job's detail when it is the caller's own. Both are **private to the key**: the pages are
+static and every row comes from the API, which answers only with the caller's
+own jobs -- someone else's `?job=` is "no search of yours" -- and the guide's
+saved conversation is kept per key (under a hash of it), so two people
+sharing a browser never see each other's.
 
 All three need a search that **finished** (the API refuses the rest). A search
 that was stopped, cancelled or failed gets **Resume the search** instead

@@ -314,6 +314,7 @@
   </div>
   <div class="spacer"></div>
   <span id="health" class="health" title="The async API server"></span>
+  <a class="button" href="/runs.html" title="Every search you have run">Your runs</a>
   <a class="button" href="/demo" target="_blank" rel="noopener">Console ↗</a>
   <button type="button" class="sm ghost" id="changeKey" hidden>Change key</button>
 </header>
@@ -476,12 +477,58 @@ function recall(name, parse = false) {
 function recallKey() { try { return localStorage.getItem("gep-api-key") || ""; } catch (_) { return ""; } }
 function rememberKey(value) { try { localStorage.setItem("gep-api-key", value); } catch (_) { /* private mode */ } }
 
+// The conversation is kept per API key, so two people sharing a browser each
+// get their own back and never see the other's. The name is a hash of the key,
+// not the key: the key itself is only ever stored once, as gep-api-key.
+function sessionName() {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) hash = Math.imul(hash ^ key.charCodeAt(i), 0x01000193) >>> 0;
+  return "session-" + hash.toString(16);
+}
+
 function save() {
   // A pasted dataset over a megabyte is not kept; a restored session before
   // the training asks for it again rather than failing on a missing one.
   const copy = Object.assign({}, S);
   if (copy.dataset && copy.dataset.text && copy.dataset.text.length > 1e6) copy.dataset = Object.assign({}, copy.dataset, { text: null });
-  remember("session", copy);
+  if (key) remember(sessionName(), copy);
+  linkToJob();
+}
+
+// The address says which search is on screen (/agent?job=N), so a reload, a
+// bookmark or the runs page brings it back. Only the owner's key can read it:
+// anyone else's gets "no search of yours".
+function linkToJob() {
+  const url = new URL(location.href), id = S.blend && S.blend.job && S.blend.job.id;
+  if (String(id || "") === (url.searchParams.get("job") || "")) return;
+  if (id) url.searchParams.set("job", id); else url.searchParams.delete("job");
+  history.replaceState(null, "", url);
+}
+
+const linkedJob = () => {
+  const id = Number(new URLSearchParams(location.search).get("job"));
+  return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+// /agent?job=N: that search of the user's, opened here -- read back the way a
+// search that just finished is, or watched if it is still running. The rest
+// of the conversation stays; only the search part is replaced.
+async function openJob(id) {
+  let found;
+  try {
+    found = (await api("GET", `/jobs/${id}`)).job;
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    agentSays(plain(`There is no search ${id} of yours to open.`));
+    return false;
+  }
+  resetBlend();
+  Object.assign(S.blend, { job: { id: found.id, label: found.label, queue_position: found.queue_position || null },
+                           status: { job: found, progress: null }, startedAt: null, finishedAt: null, debriefed: false });
+  marker(`opened search · job ${found.id}${found.label ? " · " + found.label : ""}`);
+  setStage("blending");
+  pollBlend();
+  return true;
 }
 
 const fmt = (value, digits = 3) => (value === null || value === undefined || Number.isNaN(value)) ? "–" : Number(value).toFixed(digits);
@@ -599,8 +646,9 @@ function toolMarker(done) {
 const words = (name) => (config && config.words && config.words[name]) || "";
 const plain = (text) => ({ text, by: "built-in wording", note: null });
 
-// What the model is sent as the conversation so far.
-function history() {
+// What the model is sent as the conversation so far. Not called history():
+// that would hide the browser's own window.history, which linkToJob() needs.
+function pastTurns() {
   return S.transcript.filter((m) => m.who !== "event")
     .map((m) => ({ role: m.who === "me" ? "user" : "assistant", content: m.text }));
 }
@@ -744,7 +792,7 @@ function askWait(again = false) {
 // changed the plan and the options on screen need their times again.
 async function fetchWait(quiet) {
   const reply = await api("POST", "/agent/wait", { agent: agentChoice(), records: S.analysis.records,
-                                                   mock: mock(), history: history(), session: session(), quiet });
+                                                   mock: mock(), history: pastTurns(), session: session(), quiet });
   S.choices = reply.choices;
   S.recommended = reply.recommended;
   if (quiet) return;
@@ -813,7 +861,7 @@ async function queueTraining() {
   marker(`training queued · ${queued.length} LoRA${queued.length === 1 ? "" : "s"}`);
   setStage("training");
   const reply = await api("POST", "/agent/started", { agent: agentChoice(), trainings: queued, epochs: S.epochs,
-                                                      estimate: S.estimate, mock: mock(), history: history() });
+                                                      estimate: S.estimate, mock: mock(), history: pastTurns() });
   agentSays(reply.message);
   poll();
 }
@@ -840,7 +888,7 @@ async function debrief() {
   await step(async () => {
     drawBoard();
     const reply = await api("POST", "/agent/debrief", { agent: agentChoice(), loras: S.loras.map((one) => one.id),
-                                                        mock: mock(), history: history() });
+                                                        mock: mock(), history: pastTurns() });
     // The LoRAs just trained are the ones to offer for blending, not an older pick.
     S.session = Object.assign({}, S.session, { blend: Object.assign({}, S.session.blend || {}, { loras: [] }) });
     agentSays(reply.message);
@@ -893,7 +941,7 @@ function send(text) {
   step(async () => {
     const reply = await api("POST", "/agent/chat", {
       agent: agentChoice(), message: text, stage: S.stage, session: session(),
-      dataset: S.dataset || undefined, context: chatContext(), history: history().slice(0, -1) });
+      dataset: S.dataset || undefined, context: chatContext(), history: pastTurns().slice(0, -1) });
     await applyChat(reply);
   });
 }
@@ -997,7 +1045,7 @@ function goBlend() {
 async function enterBlend(quiet) {
   const prefer = S.loras.filter((one) => (details[one.id] || {}).status === "ready").map((one) => one.id);
   const reply = await api("POST", "/agent/blend/intro", { agent: agentChoice(), session: session(), prefer,
-                                                          history: history(), quiet });
+                                                          history: pastTurns(), quiet });
   S.blend.available = reply.available;
   S.blend.estimate = reply.estimate;
   S.session = Object.assign({}, S.session, { blend: reply.blend });
@@ -1075,7 +1123,7 @@ async function queueBlend() {
   marker(`search queued · job ${reply.job.id}`);
   setStage("blending");
   const said = await api("POST", "/agent/blend/started", { agent: agentChoice(), job: S.blend.job, plan,
-                                                           history: history() });
+                                                           history: pastTurns() });
   agentSays(said.message);
   pollBlend();
 }
@@ -1129,7 +1177,7 @@ async function blendDebrief() {
   marker("search finished");
   await step(async () => {
     const reply = await api("POST", "/agent/blend/debrief", { agent: agentChoice(), job: S.blend.job.id,
-                                                              history: history() });
+                                                              history: pastTurns() });
     S.blend.result = reply.result;
     // What comes after is about this search: the chat's tools read its blends.
     setRelease({ job: S.blend.job.id, individual: null, questions: null, count: null });
@@ -1192,7 +1240,7 @@ async function startTesting() {
   testForm = null; jobLog = [];
   marker(`testing queued · job ${job}`);
   setStage("testing");
-  const said = await api("POST", "/agent/test/started", { agent: agentChoice(), history: history(),
+  const said = await api("POST", "/agent/test/started", { agent: agentChoice(), history: pastTurns(),
                                                           job: { id: job, queue_position: reply.job.queue_position } });
   agentSays(said.message);
   pollTest();
@@ -1252,7 +1300,7 @@ function skipTesting() {
 // Every blend of the search, tested or not, and the one to start from.
 async function loadBlends() {
   const reply = await api("POST", "/agent/test/debrief", { agent: agentChoice(), job: releaseJob(),
-                                                           session: session(), history: history() });
+                                                           session: session(), history: pastTurns() });
   S.release.found = reply.result;
   S.session = Object.assign({}, S.session, { release: reply.release });
   agentSays(reply.message);
@@ -1318,7 +1366,7 @@ async function verifyDebrief() {
   marker("verification finished");
   await step(async () => {
     const reply = await api("POST", "/agent/verify/debrief", { agent: agentChoice(), verification: V.id,
-                                                               history: history() });
+                                                               history: pastTurns() });
     S.release.report = reply.result;
     agentSays(reply.message);
     setStage("verified");
@@ -1346,7 +1394,7 @@ async function goLive() {
                      prompt: "", answer: null, asking: false };
   marker(`blend #${reply.deployment.individual} is live · deployment ${reply.deployment.id}`);
   setStage("live");
-  const said = await api("POST", "/agent/live/started", { agent: agentChoice(), history: history(),
+  const said = await api("POST", "/agent/live/started", { agent: agentChoice(), history: pastTurns(),
                                                           deployment: reply.deployment.id });
   S.release.live.formula = said.formula;
   agentSays(said.message);
@@ -2494,7 +2542,14 @@ async function useKey(value) {
   $("changeKey").hidden = false;
   $("composer").hidden = false;
   fillProviders();
-  const saved = recall("session", true);
+  let saved = recall(sessionName(), true);
+  if (!saved) {
+    // Kept under one name for everyone before it was kept per key: the first
+    // key to arrive takes it over, and it is gone from the shared name.
+    saved = recall("session", true);
+    try { localStorage.removeItem("gep-agent-session"); } catch (_) { /* private mode */ }
+  }
+  const wanted = linkedJob();
   if (saved && saved.transcript && saved.transcript.length) {
     S = Object.assign(fresh(), saved);
     drawTranscript(); drawAction(); drawBoard();
@@ -2507,9 +2562,13 @@ async function useKey(value) {
     if (S.release.testing && S.stage === "testing") { marker("reconnected — watching the testing again"); pollTest(); }
     if (S.release.verification && S.stage === "verifying") { marker("reconnected — watching the verification again"); pollVerify(); }
     if (S.release.live) S.release.live.asking = false;
+    if (wanted && !(S.blend.job && S.blend.job.id === wanted)) await openJob(wanted);
+    else linkToJob();
   } else {
-    drawBoard();
-    intro();
+    S = fresh();
+    drawTranscript(); drawBoard();
+    // A link to a search that is not theirs is said so, then the welcome.
+    if (!wanted || !(await openJob(wanted))) intro();
   }
 }
 

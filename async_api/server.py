@@ -81,9 +81,13 @@ LoRAs (the user's own rows of the catalogue a search draws its slots from)
 Other
     GET    /judge/models[?base_url=]       the chat models a judge endpoint lists (default:
                                            settings.py's JUDGE_BASE_URL), asked from here
+    GET    /runs                           every search of the user's, newest first, each with
+                                           the LoRAs it blended, how many of its blends were
+                                           tested, its verifications and what of it is live
     GET    /settings                       settings.py's values and the choices, for a form
     GET    /datasets                       shared dataset files a submission may name
     GET    /  or  /demo                    a test page that drives all of the above
+    GET    /runs.html                      the user's runs as a page (reads GET /runs)
 
 The LoRA agent (async_api_agent/routes.py)
     GET    /agent                          the agent page: a guide that trains LoRAs
@@ -130,7 +134,12 @@ DEMO_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo.html"
 
 # The agent page, served at /agent: the same API driven by a guide that walks a
 # user through training LoRAs (async_api_agent/). Same origin, same key.
+# /agent?job=N opens that search of the user's in it.
 AGENT_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-ui.html")
+
+# Every run of the user's on one page, served at /runs.html. Static like the
+# others: what it shows comes from GET /runs, which needs the user's key.
+RUNS_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs.html")
 
 
 class FileReply:
@@ -276,6 +285,28 @@ class App:
         except submit.SubmissionError as error:
             raise ApiError(400, str(error))
         return 201, {"job": job_json(self, job)}
+
+    def list_runs(self, user):
+        """Every search of the user's, and what came after it, in one read.
+
+        Only their own: the jobs, verifications and deployments are all read
+        by the user's id, and a slot's LoRA is named only when it is one of
+        their catalogue rows. The folders behind the slots stay here."""
+        verifications, live = {}, {}
+        for row in self.registry.verifications(user_id=user["id"]):
+            verifications.setdefault(row["job_id"], []).append(verification_json(row))
+        for row in self.registry.deployments(user_id=user["id"]):
+            live.setdefault(row["job_id"], []).append(deployment_json(row))
+        runs = []
+        for job in self.registry.jobs(user["id"]):
+            out = job_json(self, job, with_summary=True)
+            summary = out.get("summary") or {}
+            names = self.catalog.slot_names(summary.pop("slots", None), user["name"])
+            out["loras"] = sorted(set(names.values()))
+            out["verifications"] = verifications.get(job["id"], [])
+            out["live"] = live.get(job["id"], [])
+            runs.append(out)
+        return 200, {"runs": runs}
 
     def list_jobs(self, user, query):
         status = (query.get("status") or [None])[0]
@@ -794,6 +825,7 @@ ROUTES = [
     ("POST", r"/jobs/(\d+)/live", "set_live", ("body",)),
     ("GET", r"/jobs/(\d+)/live", "job_live", ()),
     ("DELETE", r"/jobs/(\d+)/live", "unset_job", ()),
+    ("GET", r"/runs", "list_runs", ()),
     ("GET", r"/settings", "submission_form", ()),
     ("GET", r"/datasets", "list_datasets", ()),
     ("GET", r"/judge/models", "judge_models", ("query",)),
@@ -885,6 +917,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._page(DEMO_PAGE)
             if path in ("/agent", "/agent-ui", "/agent-ui.html") and self.command == "GET":
                 return self._page(AGENT_PAGE)
+            if path == "/runs.html" and self.command == "GET":
+                return self._page(RUNS_PAGE)
             if path == "/health" and self.command == "GET":
                 return self._send(200, {"ok": True, "models": self.app.cache.status()})
             if path == "/infer" and self.command == "POST":

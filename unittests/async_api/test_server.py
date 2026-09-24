@@ -277,6 +277,24 @@ class ResumeTests(ServerTestCase):
         finally:
             conn.close()
 
+    def test_the_runs_are_the_users_own(self):
+        job_id, job = self.stopped_job()
+        status, reply = self.call("GET", "/runs")
+        self.assertEqual(status, 200, reply)
+        run, = reply["runs"]
+        self.assertEqual((run["id"], run["status"]), (job_id, reg.STOPPED))
+        # Named by the user's own catalogue, and no folder goes out.
+        self.assertEqual(run["loras"], sorted("slot-" + slot for slot in self.slots))
+        self.assertNotIn("slots", run["summary"])
+        self.assertEqual((run["verifications"], run["live"]), ([], []))
+        bob = self.registry.add_user("bob")
+        self.assertEqual(self.call("GET", "/runs", key=bob), (200, {"runs": []}))
+        self.assertEqual(self.call("GET", "/runs", key="nope")[0], 401)
+        # The page itself is served to anyone; what it shows needs the key.
+        status, headers, body = self.download("/runs.html", key="nope")
+        self.assertEqual(status, 200)
+        self.assertIn(b"GET /runs", body)
+
     def test_only_a_finished_search_is_tested(self):
         job_id, job = self.stopped_job()
         self.assertFalse(self.call("GET", "/jobs/%d" % job_id)[1]["job"]["can_test"])

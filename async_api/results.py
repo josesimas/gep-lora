@@ -174,9 +174,14 @@ def summary(db_path, run_id):
     try:
         conf = store.get_settings(conn, run_id)
         top = best(population(conn, run_id))
+        tested = store.test_summary(conn, run_id)
         return {"settings": {name: conf.get(name) for name in SUMMARY_SETTINGS if name in conf},
                 "best": None if top is None else {
-                    key: top[key] for key in ("number", "chromosome", "fitness", "quality")}}
+                    key: top[key] for key in ("number", "chromosome", "fitness", "quality")},
+                # How many blends the testing passes ran cleanly, and on how many
+                # questions in all: whether "test" is still a step to take.
+                "tested": sum(row["ok"] for row in tested),
+                "slots": conf.get("LORA_SLOTS") or {}}
     finally:
         conn.close()
 

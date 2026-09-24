@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your runs</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f3f4f7; --panel: #ffffff; --panel-2: #f8f9fb; --ink: #161a23; --ink-2: #394150;
+    --muted: #626b7a; --faint: #8b93a1; --line: #e3e6eb; --line-2: #d2d7df;
+    --accent: #4c5fd5; --accent-ink: #ffffff; --accent-soft: #eceffd;
+    --ok: #1e8449; --warn: #b45309; --bad: #c8322f; --code: #f1f3f6;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .06);
+    --radius: 12px; --top: 56px;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #0e1117; --panel: #161a22; --panel-2: #1b2029; --ink: #e7eaf0; --ink-2: #c3c9d4;
+      --muted: #99a2b1; --faint: #6f7888; --line: #262c38; --line-2: #343b4a;
+      --accent: #8b9cff; --accent-ink: #0c0f1f; --accent-soft: #1f2547;
+      --ok: #5fd08a; --warn: #f0b454; --bad: #ff7b72; --code: #1d222c;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  h1 { font-size: 20px; margin: 0; }
+  h3 { font-size: 13px; margin: 0; font-weight: 600; }
+  p { margin: 0 0 8px; }
+  a { color: var(--accent); }
+  code { font-family: var(--mono); font-size: 12px; background: var(--code); padding: 1px 5px; border-radius: 5px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  input { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line-2);
+          border-radius: 8px; padding: 6px 10px; min-height: 34px; width: 100%; }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  button, a.button { font: inherit; font-weight: 500; border: 1px solid var(--line-2); background: var(--panel);
+           color: var(--ink); border-radius: 8px; padding: 0 12px; min-height: 32px; cursor: pointer; white-space: nowrap;
+           display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-size: 13px; }
+  button:hover, a.button:hover { background: var(--panel-2); }
+  button:focus-visible, a.button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .primary { background: var(--accent) !important; color: var(--accent-ink) !important; border-color: var(--accent) !important; }
+  .ghost { border-color: transparent !important; background: transparent !important; }
+
+  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 9px 1px 7px; border-radius: 999px;
+          font-size: 12px; font-weight: 500; line-height: 1.6; color: var(--muted);
+          background: color-mix(in srgb, currentColor 11%, transparent); white-space: nowrap; }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .s-done { color: var(--ok); } .s-failed, .s-cancelled, .s-deleted { color: var(--bad); }
+  .s-stopped { color: var(--warn); } .s-running, .s-preparing { color: var(--accent); } .s-queued { color: var(--muted); }
+  .s-running::before { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .tag { display: inline-block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+         padding: 1px 6px; border-radius: 5px; color: var(--muted); background: var(--code); vertical-align: 1px; }
+  .tag.mock { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+  .tag.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+  .tag.live { color: var(--accent); background: var(--accent-soft); }
+
+  .topbar { height: var(--top); display: flex; align-items: center; gap: 10px; padding: 0 18px;
+            background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand svg { width: 26px; height: 26px; flex: none; }
+  .brand b { display: block; font-size: 14px; line-height: 1.1; }
+  .brand span { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
+  .spacer { flex: 1; }
+  .topbar a.button { min-height: 28px; padding: 0 10px; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 22px 18px 48px; display: grid; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
+  .tiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); }
+  .tile span { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .tile b { display: block; font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tile small { display: block; font-size: 11px; color: var(--faint); }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
+  .seg button { border: 0; background: transparent; min-height: 26px; color: var(--muted); }
+  .seg button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+  .controls input { max-width: 280px; }
+
+  .run { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .run:last-child { border-bottom: 0; }
+  .run-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+  .run-head b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .run-actions { display: flex; gap: 6px; align-items: flex-start; grid-row: span 3; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { font-size: 12px; padding: 1px 9px; border-radius: 999px; background: var(--code); color: var(--ink-2); }
+  .score { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+  .meter { width: 140px; height: 6px; border-radius: 6px; background: var(--code); overflow: hidden; flex: none; }
+  .meter i { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
+  .chromosome { font: 12px var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .error { color: var(--bad); font-size: 12px; }
+  .empty { text-align: center; padding: 40px 10px; color: var(--muted); }
+  .empty b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 4px; }
+  .gate { max-width: 420px; margin: 60px auto; }
+  .gate form { display: flex; gap: 8px; margin-top: 12px; }
+  @media (max-width: 640px) {
+    .run { grid-template-columns: minmax(0, 1fr); }
+    .run-actions { grid-row: auto; }
+    .brand span { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 26 26" aria-hidden="true">
+      <rect width="26" height="26" rx="7" fill="var(--accent)"/>
+      <path d="M7 16.5c2.2-5 4.2-7.5 6-7.5s3.8 2.5 6 7.5" stroke="var(--accent-ink)" stroke-width="1.7" fill="none" stroke-linecap="round"/>
+      <circle cx="13" cy="9" r="2.3" fill="var(--accent-ink)"/>
+      <circle cx="7" cy="17" r="2" fill="var(--accent-ink)"/>
+      <circle cx="19" cy="17" r="2" fill="var(--accent-ink)"/>
+    </svg>
+    <div><b>Your runs</b><span>every search you have run, and what came of it</span></div>
+  </div>
+  <div class="spacer"></div>
+  <a class="button" href="/agent">LoRA guide</a>
+  <a class="button" href="/demo">Console</a>
+  <button type="button" class="ghost" id="changeKey" hidden>Change key</button>
+</header>
+
+<main id="main"></main>
+
+<script>
+"use strict";
+
+// The page holds nothing of its own: every run comes from GET /runs, which
+// answers with the caller's own searches only -- the key decides whose. The
+// key is the one the guide and the console use, kept in this browser.
+
+const $ = (id) => document.getElementById(id);
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs)) {
+    if (value === null || value === undefined || value === false) continue;
+    if (name === "class") node.className = value;
+    else if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
+    else node.setAttribute(name, value === true ? "" : value);
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : String(child));
+  }
+  return node;
+}
+const fmt = (value, digits = 3) => value === null || value === undefined ? "–" : Number(value).toFixed(digits);
+const when = (text) => text ? text.replace("T", " ").slice(0, 16) : "–";
+function duration(from, to) {
+  if (!from) return null;
+  const seconds = Math.max(0, (new Date(to || Date.now()) - new Date(from)) / 1000);
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+let key = "";
+let runs = null;
+let filter = "all", query = "";
+let timer = null;
+const ACTIVE = ["queued", "preparing", "running"];
+const FILTERS = [["all", "All"], ["active", "Running"], ["done", "Finished"], ["unfinished", "Stopped or failed"]];
+
+function recallKey() { try { return localStorage.getItem("gep-api-key") || ""; } catch (_) { return ""; } }
+function rememberKey(value) { try { localStorage.setItem("gep-api-key", value); } catch (_) { /* private mode */ } }
+
+async function api(path) {
+  let response;
+  try {
+    response = await fetch(path, { headers: { "Authorization": "Bearer " + key } });
+  } catch (_) {
+    throw new Error("The API server cannot be reached. Is it running? (run_api_server.bat)");
+  }
+  let data = null;
+  try { data = await response.json(); } catch (_) { /* empty */ }
+  if (!response.ok) {
+    const error = new Error((data && data.error) || response.status + " " + response.statusText);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+function keyGate(message) {
+  clearTimeout(timer);
+  $("changeKey").hidden = true;
+  $("main").replaceChildren(el("section", { class: "card gate" },
+    el("h3", {}, "Your API key"),
+    el("p", { class: "muted small" }, "Runs are private: this page shows only the searches of the key you give it. ",
+      "It is the key the LoRA guide and the console use, kept in this browser."),
+    el("form", { onsubmit: (e) => { e.preventDefault(); useKey($("keyInput").value.trim()); } },
+      el("input", { id: "keyInput", type: "password", autocomplete: "off", placeholder: "paste it here", "aria-label": "API key" }),
+      el("button", { class: "primary", type: "submit" }, "Show my runs")),
+    message ? el("p", { class: "error", style: "margin-top:8px" }, message) : null));
+  setTimeout(() => $("keyInput") && $("keyInput").focus(), 0);
+}
+
+async function useKey(value) {
+  key = value;
+  if (!key) return keyGate("Paste a key first.");
+  try {
+    runs = (await api("/runs")).runs;
+  } catch (error) {
+    key = "";
+    return keyGate(error.status === 401 ? "That key is not known to this server." : error.message);
+  }
+  rememberKey(key);
+  $("changeKey").hidden = false;
+  draw();
+  refresh();
+}
+
+// Every few seconds while something of theirs is still queued or running.
+function refresh() {
+  clearTimeout(timer);
+  if (!runs || !runs.some((run) => ACTIVE.includes(run.status))) return;
+  timer = setTimeout(async () => {
+    try { runs = (await api("/runs")).runs; draw(); } catch (_) { /* try again */ }
+    refresh();
+  }, 4000);
+}
+
+function shown() {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return runs.filter((run) => {
+    if (filter === "active" && !ACTIVE.includes(run.status)) return false;
+    if (filter === "done" && run.status !== "done") return false;
+    if (filter === "unfinished" && !["stopped", "failed", "cancelled"].includes(run.status)) return false;
+    const text = [run.id, run.label, run.status, ...run.loras].join(" ").toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+}
+
+function draw() {
+  const done = runs.filter((run) => run.status === "done");
+  const tested = runs.filter((run) => (run.summary || {}).tested);
+  const verified = runs.filter((run) => run.verifications.some((v) => v.status === "done"));
+  const live = runs.reduce((sum, run) => sum + run.live.length, 0);
+  const tile = (name, value, sub) => el("div", { class: "tile" }, el("span", {}, name), el("b", {}, value), el("small", {}, sub));
+  const list = shown();
+  $("main").replaceChildren(
+    el("div", {}, el("h1", {}, "Your runs"),
+      el("p", { class: "muted small", style: "margin-top:4px" }, "Every search of yours, newest first. Open one in the guide to test its blends, verify one and put it live.")),
+    el("div", { class: "tiles" },
+      tile("Searches", runs.length, `${runs.filter((run) => ACTIVE.includes(run.status)).length} running or queued`),
+      tile("Finished", done.length, "can be tested and put live"),
+      tile("Tested", tested.length, "blends tried on new questions"),
+      tile("Verified", verified.length, "a blend against its LoRAs"),
+      tile("Live", live, live === 1 ? "deployment" : "deployments")),
+    el("section", { class: "card" },
+      el("div", { class: "controls" },
+        el("div", { class: "seg", role: "tablist" }, FILTERS.map(([id, label]) =>
+          el("button", { type: "button", class: filter === id ? "active" : "", "aria-pressed": String(filter === id),
+                         onclick: () => { filter = id; draw(); } }, label))),
+        el("input", { id: "query", type: "search", value: query, placeholder: "Find by label, LoRA or number…", "aria-label": "Find a run",
+                      oninput: (e) => { query = e.target.value; drawList(); } }),
+        el("span", { class: "muted small", id: "count" })),
+      el("div", { id: "list" })));
+  drawList(list);
+}
+
+function drawList(list = shown()) {
+  $("count").textContent = list.length === runs.length ? `${runs.length} run(s)` : `${list.length} of ${runs.length}`;
+  if (!runs.length) return $("list").replaceChildren(el("div", { class: "empty" }, el("b", {}, "No runs yet"),
+    "Start one in the ", el("a", { href: "/agent" }, "LoRA guide"), ": train some LoRAs, then blend them."));
+  if (!list.length) return $("list").replaceChildren(el("div", { class: "empty" }, "Nothing matches."));
+  $("list").replaceChildren(...list.map(runRow));
+}
+
+function runRow(run) {
+  const s = run.summary || {}, conf = s.settings || {}, best = s.best;
+  const mock = conf.TEMPLATE === "template_code_mocked.py";
+  const took = duration(run.started_at, run.finished_at);
+  const verifications = run.verifications, lastCheck = verifications[0];
+  return el("article", { class: "run" },
+    el("div", { class: "run-head" },
+      el("span", { class: "muted", style: "font-variant-numeric:tabular-nums" }, `#${run.id}`),
+      el("b", { title: run.label || "" }, run.label || "no label"),
+      el("span", { class: "pill s-" + run.status }, run.status + (run.task !== "search" && ACTIVE.includes(run.status) ? ` · ${run.task}` : "")),
+      mock ? el("span", { class: "tag mock" }, "practice") : null,
+      s.tested ? el("span", { class: "tag ok", title: "blends tested on questions the search never saw" }, `tested ${s.tested}`) : null,
+      verifications.length ? el("span", { class: "tag" + (lastCheck.status === "done" ? " ok" : ""),
+        title: `last: blend #${lastCheck.number}, ${lastCheck.status}` }, `verified ×${verifications.length}`) : null,
+      run.live.length ? el("span", { class: "tag live", title: run.live.map((d) => `blend #${d.individual} · deployment ${d.id}`).join("\n") },
+        `live ×${run.live.length}`) : null),
+    el("div", { class: "run-actions" },
+      el("a", { class: "button primary", href: `/agent?job=${run.id}` }, "Open in the guide"),
+      el("a", { class: "button", href: `/demo?job=${run.id}`,
+                title: "The job's full detail: population, testing, verification, log, live" }, "Open in Console")),
+    el("div", { class: "run-meta" },
+      el("span", {}, `started ${when(run.created_at)}`),
+      run.finished_at ? el("span", {}, `ended ${when(run.finished_at)}${took ? ` · took ${took}` : ""}`) : null,
+      conf.COUNT ? el("span", {}, `${1 + (conf.GENERATIONS || 0)} rounds × ${conf.COUNT} blends`) : null,
+      conf.BASE_MODEL ? el("span", {}, conf.BASE_MODEL) : null,
+      conf.EVALUATOR ? el("span", {}, `judged by ${conf.EVALUATOR}`) : null),
+    el("div", {},
+      run.loras.length ? el("div", { class: "chips", style: "margin:6px 0" }, run.loras.map((name) => el("span", { class: "chip" }, name))) : null,
+      best ? el("div", { class: "score" }, el("span", {}, "best"),
+        el("span", { class: "meter", title: `blend #${best.number}` }, el("i", { style: `width:${Math.max(2, (best.fitness || 0) * 100)}%` })),
+        el("b", { style: "color:var(--ink)" }, fmt(best.fitness)), el("span", { class: "chromosome", title: best.chromosome }, `#${best.number} ${best.chromosome}`))
+        : el("div", { class: "muted small" }, run.status === "deleted" ? "its results were deleted" : "no blend scored yet"),
+      run.error ? el("div", { class: "error" }, run.error) : null));
+}
+
+$("changeKey").addEventListener("click", () => keyGate());
+const stored = recallKey();
+if (stored) useKey(stored); else keyGate();
+</script>
+</body>
+</html>

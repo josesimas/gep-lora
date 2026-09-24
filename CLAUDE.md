@@ -51,7 +51,8 @@ tools/        test.py, combination.py, compare_servers.py -- dev aids, not
 async_api/    server, worker, submit, registry, results, golive, inference,
               users, verify, evaluate, testpass, train -- the search as a web
               service. See "The async API" below. agent-ui.html is the LoRA guide
-              page (/agent).
+              page (/agent, /agent?job=N opens a search); runs.html lists the
+              user's runs (/runs.html, from GET /runs).
 async_api_agent/  settings, prompts, providers, analysis, selection, planner, blending,
               release, tools, commands, agent, routes -- the chat model behind
               /agent that walks a user to trained LoRAs, a search that blends
@@ -1039,6 +1040,16 @@ change to it. These rules hold it together:
   that is the question a verification answers; `slots: "all"` asks for every slot.
   Results go in `verify<id>/` inside the job's folder, so deleting the run takes
   them with it -- a reading of a sweep is worth nothing without the sweep.
+
+- **Every page is static and private by the key.** `/agent`, `/runs.html` and
+  `/demo` are served to anyone; what they show comes from endpoints that read by
+  the caller's user id (`GET /runs`, `GET /jobs/{id}` -- another's is a 404),
+  and a slot's LoRA is named only from the caller's own catalogue rows
+  (`Catalog.slot_names`). The guide's saved conversation is per key
+  (`sessionName()`), and its address carries the search on screen (`?job=N`); the console takes
+  `/demo?job=N` the same way.
+  Its conversation-so-far helper is `pastTurns()`, not `history()`, which would
+  hide `window.history`.
 
 - **Testing a finished job's blends is a job task too** (`task: "test"`,
   `POST /jobs/{id}/test`, `async_api/testpass.py`), but the worker runs
