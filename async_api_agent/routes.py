@@ -48,6 +48,13 @@ App and the user, like an App method, and returns (status, payload).
                                                               -> the blend beside its LoRAs
     POST /agent/live/started        {agent, deployment: id, history}
 
+  the journey so far (create_summary.py)
+    POST /agent/summary             {agent, stage, mock, dataset?: the page's analysis,
+                                     loras?: [id], job?, verification?, deployment?,
+                                     transcript?: [{who, text}]}
+                                                              -> {title, markdown, charts,
+                                                                 journey, facts, by, note}
+
 `agent` is the page's choice of model -- {"provider", "model", "base_url",
 "conversation"}, the last an id per conversation for the providers that route
 by one --
@@ -77,6 +84,7 @@ from async_api import settings as api_settings
 from async_api_agent import agent
 from async_api_agent import analysis
 from async_api_agent import blending
+from async_api_agent import create_summary
 from async_api_agent import planner
 from async_api_agent import prompts
 from async_api_agent import providers
@@ -464,6 +472,15 @@ def live_started(app, user, body):
                  "deployment": shown, "formula": formula}
 
 
+# --- the journey so far -------------------------------------------------------------
+
+
+def summary(app, user, body):
+    """The illustrated summary of everything so far (create_summary.py)."""
+    return 200, create_summary.create(app.registry, app.catalog, user, body or {},
+                                      _choice(body))
+
+
 # (method, path pattern, handler, extras) -- the shape of server.ROUTES, with
 # a function where the server's own routes name an App method.
 ROUTES = [
@@ -487,4 +504,5 @@ ROUTES = [
     ("POST", r"/agent/verify/plan", verify_plan, ("body",)),
     ("POST", r"/agent/verify/debrief", verify_debrief, ("body",)),
     ("POST", r"/agent/live/started", live_started, ("body",)),
+    ("POST", r"/agent/summary", summary, ("body",)),
 ]

@@ -20,6 +20,8 @@ then combining them, served by the async API beside the demo page.
     agent.py       the conversation: each step's facts, phrased by the model,
                    and the chat's tool loop
     ui_help.py     "what is this?" for a block of the page, from what it shows
+    create_summary.py  the journey so far, as a short illustrated story the
+                   page shows in an overlay and prints to a PDF
     routes.py      the /agent endpoints the async API serves
 
 The agent **proposes and the API does**: nothing here trains, queues or stores

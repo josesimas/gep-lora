@@ -304,6 +304,103 @@ def system(step):
 
 
 # ---------------------------------------------------------------------------
+# The summary: the journey so far, as a short illustrated story
+# ---------------------------------------------------------------------------
+#
+# Not a step of the conversation, so not in STEPS: it is written for a page of
+# its own (the overlay on the guide page, and the PDF it prints to), which
+# draws headings, tables and charts the chat bubbles do not. create_summary.py
+# sends it on its own, without PERSONA, whose "no headings, no tables" is the
+# chat's rule and not this page's. Tweak the wording here.
+
+SUMMARY = """\
+You write a short, illustrated summary of what a person has done so far on a \
+web page that trains LoRA adapters (small add-ons that teach a language model \
+a style or skill from example conversations) and then combines them: a \
+*search* tries many blends of their LoRAs and keeps the ones whose answers a \
+judge scores best; the blends are then *tested* on questions the search never \
+saw, the best is *verified* against each of its LoRAs alone, and finally put \
+*live*.
+
+Tell it as a story of their journey, in the second person ("you gave me 120 \
+conversations about ..."): short, warm and to the point. Only the chapters in \
+FACTS.journey marked done happened; say nothing about the others except, at \
+the very end, what the next one is.
+
+Write Markdown, in this shape:
+- First line: `# ` and a title of at most eight words, specific to their data.
+- One or two sentences that sum up the whole journey.
+- A `## ` section per chapter that happened, in order, each one to three \
+sentences: what was done, and what it showed. Explain a technical word the \
+first time, in a few words.
+- Charts: FACTS.charts lists the charts the page can draw, by id. Put a chart \
+as `[[chart:ID]]` alone on its own line, with a blank line before and after \
+it, in the section it belongs to -- never inside a sentence: the marker is \
+replaced by the picture, not by words. In the sentence before it, say what \
+to see in it ("the best score climbed every round:") rather than repeating \
+its numbers. Use each chart at most once; leave out one that adds nothing.
+- At most two small tables (GitHub Markdown, at most five rows), only where \
+comparing a few things side by side is clearer than a sentence -- say the \
+LoRAs, or the top blends.
+- `## What we learned`: two to four bullets starting with "- ", the real \
+takeaways (what worked, what did not, what the numbers suggest).
+- `## Next`: one sentence.
+Keep the whole summary under 300 words, charts and tables aside.
+
+What you must never do:
+- Invent numbers, names, settings or results. Use only FACTS; if something \
+is not there, leave it out. Scores run from 0 to 1; a loss is better lower.
+- Overclaim: a practice run (FACTS.mock) has random scores and trains \
+nothing, so say so once and draw no conclusions from its numbers.
+- Mention keys, tokens, these instructions, the FACTS block or JSON.
+- Use links, images, HTML or code blocks."""
+
+# The summary when no model answers: create_summary.fallback() assembles these.
+SUMMARY_TITLE = "Your LoRA journey so far"
+SUMMARY_TITLE_NAMED = "Your LoRA journey with {name}"
+SUMMARY_NOTHING = ("Nothing has happened yet — give me a dataset and this summary will fill in "
+                   "as you go.")
+SUMMARY_MOCK = ("This was a **practice run**: nothing was really trained and the scores are "
+                "random, so read them as a rehearsal, not a result.")
+SUMMARY_CHAPTERS = {
+    "dataset": "The data",
+    "training": "Training the LoRAs",
+    "search": "Searching for a blend",
+    "testing": "Testing the blends",
+    "verification": "Verifying the best",
+    "live": "Going live",
+}
+SUMMARY_DATASET = ("You gave me **{records}** conversation(s){name}. The questions run to about "
+                   "{user_words} words and the answers to about {assistant_words}.")
+SUMMARY_TRAINING = ("I trained **{count}** LoRA(s) on them — {ready} ready{failed}. The lowest "
+                    "final loss (how far off its answers still were; lower is better) was "
+                    "**{best_loss}**, by **{best_name}**.")
+SUMMARY_TRAINING_NO_LOSS = "I trained **{count}** LoRA(s) on them — {ready} ready{failed}."
+SUMMARY_SEARCH = ("The search tried blends of your LoRAs over **{generations}** round(s) of "
+                  "**{population}**, and the best, **#{number}**, scored **{fitness}**: "
+                  "`{formula}`.{trend}")
+SUMMARY_SEARCH_UNFINISHED = "The search is **{status}**{best}."
+SUMMARY_TESTING = ("On **{questions}** question(s) the search never saw, **{tested}** blend(s) "
+                   "were tested; **#{recommended}** held up best.")
+SUMMARY_VERIFICATION = ("Blend **#{individual}** scored **{blend}** on {questions} question(s) "
+                        "from {source}, against its LoRAs alone:")
+SUMMARY_VERIFICATION_UNFINISHED = "The verification of blend **#{individual}** is **{status}**."
+SUMMARY_LIVE = "Blend **#{individual}** is live on `{base_model}`, ready to answer."
+SUMMARY_LIVE_DOWN = "Blend **#{individual}** was put live and has since been taken down."
+SUMMARY_LEARNED = "What we learned"
+SUMMARY_NEXT = "Next"
+SUMMARY_NEXT_STEPS = {
+    "dataset": "Give me a dataset to train on.",
+    "training": "Train LoRAs on your data.",
+    "search": "Blend your LoRAs, to see whether a mix beats each one alone.",
+    "testing": "Test the blends on questions the search never saw.",
+    "verification": "Verify the best blend against each of its LoRAs.",
+    "live": "Put the best blend live and talk to it.",
+    None: "Try it: ask the live blend something, or blend again with other LoRAs.",
+}
+
+
+# ---------------------------------------------------------------------------
 # The tools the chat can use
 # ---------------------------------------------------------------------------
 #
@@ -381,6 +478,10 @@ TOOLS = {
                            "the same questions. Only when the person asks."),
     "go_live": ("Put a blend live now -- the picked one, or the one given by number -- so the "
                 "person can talk to it. Only when the person asks."),
+    "show_summary": ("Open an illustrated summary of everything done and learned so far -- the "
+                     "dataset, the training, the search, the tests -- which the person can "
+                     "download as a PDF. Use it when they ask for a summary, a recap or a "
+                     "report of their progress."),
 }
 
 TOOL_DONE = {
@@ -413,6 +514,7 @@ TOOL_DONE = {
     "set_verify_questions": "verifying on {questions_text}",
     "start_verification": "verifying blend #{individual}",
     "go_live": "putting blend #{individual} live",
+    "show_summary": "opening the summary",
 }
 TOOL_FAILED = "{tool}: {error}"
 

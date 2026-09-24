@@ -3225,6 +3225,7 @@ model's `<think>` block is stripped from an OpenAI-compatible reply.
 | `POST /agent/live/started` | what the guide says once a blend is live -- sent the deployment's id, never its token |
 | `GET /agent/help` | every block of the page that can be explained (`ui_help.py`), `{key: {where, title}}` -- the page draws a question mark on these and no others |
 | `POST /agent/help` | `{agent, block, title, shown, stage, history}`: what that block is and what it shows now, as a message for the conversation |
+| `POST /agent/summary` | `{agent, stage, mock, dataset, loras, job, verification, deployment, transcript}`: the journey so far as a short illustrated story (`create_summary.py`) -- `{title, markdown, charts, journey, facts, by, note}` |
 
 **Every block can be asked about.** Each card on the right, the charts and
 tables inside them, the step's controls and the guide itself carry a small
@@ -3237,6 +3238,26 @@ model as a fact to point at ("2 answers of 7-8 words"), cut to
 `ui_help.SHOWN_CHARS`. With no model, the block's own description is the
 answer. A new block is a key in `UI_BLOCKS` and a `helped()`/`sub()` call in
 the page; a test checks the two name the same blocks.
+
+**The journey so far, as a story.** *Summary* in the top bar (or "a recap",
+"summarise what we learned" in the chat -- the `show_summary` tool) opens a
+centred overlay: the six chapters (data, training, search, testing,
+verification, live) drawn as stops on a road, then a short story of what was
+done and what it showed, with charts and small tables, ending in what was
+learned and what is next. `POST /agent/summary` (`create_summary.py`) is sent
+the ids the page holds and the dataset's numbers, and reads the rest as the
+user -- a LoRA, search, verification or deployment of someone else's is left
+out. The numbers are ours: the charts come back as *data* (`charts()`: answer
+lengths, each LoRA's final loss, the search round by round, the top blends
+before and after testing, the blend beside its LoRAs) and the page draws them
+with the board's own chart code; the model only writes the story, placing a
+chart with `[[chart:ID]]`, and one it leaves out is drawn at the end. Its
+prompt is `prompts.SUMMARY` -- sent without `PERSONA`, whose "no headings, no
+tables" is the chat bubbles' rule -- which is where to tweak what it writes.
+With no model, `create_summary.fallback()` tells the same story in the
+`SUMMARY_*` wording. *Download PDF* is the browser's own "Save as PDF" of the
+overlay alone (the page's print styles hide the rest and force light
+colours); *Markdown* saves the text.
 
 **The second half: blending them.** A search needs adapters, and the first
 half has just made some, so the guide carries on: *Blend them* (or "blend
@@ -3663,6 +3684,7 @@ async_api_agent/  the LoRA guide behind /agent: prompts, providers, tools, a dat
 | `async_api_agent/settings.py` | which provider and model the guide talks through, and what it plans |
 | `async_api_agent/tools.py` | what the guide's chat can do: choose part of the dataset, change ranks, epochs and options, switch dataset, start and stop |
 | `async_api_agent/ui_help.py` | "what is this?" for each block of the page: the blocks that can be explained, and one explained from what it shows |
+| `async_api_agent/create_summary.py` | the journey so far: the user's own facts, the charts as data, the story in the model's words or built-in ones |
 
 ### The adapters, and the dev aids
 

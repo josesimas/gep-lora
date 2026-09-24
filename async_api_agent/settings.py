@@ -104,6 +104,12 @@ MODELS_TIMEOUT = 6
 # How many earlier turns of the conversation go with a free-form question.
 HISTORY_TURNS = 12
 
+# The summary (create_summary.py): how many of the conversation's latest turns
+# it reads, how much of each, and the most blends its tables and charts show.
+SUMMARY_TURNS = 40
+SUMMARY_TURN_CHARS = 400
+SUMMARY_TOP_BLENDS = 5
+
 # --- what the agent reads of a dataset --------------------------------------
 
 # Records shown to the model when it summarises a dataset, and how much of

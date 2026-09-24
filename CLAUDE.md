@@ -54,7 +54,7 @@ async_api/    server, worker, submit, registry, results, golive, inference,
               page (/agent, /agent?job=N opens a search); runs.html lists the
               user's runs (/runs.html, from GET /runs).
 async_api_agent/  settings, prompts, providers, analysis, selection, planner, blending,
-              release, tools, commands, agent, ui_help, routes -- the chat model behind
+              release, tools, commands, agent, ui_help, create_summary, routes -- the chat model behind
               /agent that walks a user to trained LoRAs, a search that blends
               them, and then testing, verifying and putting a blend live, and
               acts on what they ask in the chat
@@ -1134,7 +1134,13 @@ change to it. These rules hold it together:
   question marks are `ui_help.py` (`GET`/`POST /agent/help`): a block is a key in
   `prompts.UI_BLOCKS` (where, title, what it is -- the fallback too) and a
   `helped()`/`sub()`/`qm()` call in the page, and a test checks the two agree. What
-  the block shows is sent as text, a fact to point at, never a description of it. A tool's parameters
+  the block shows is sent as text, a fact to point at, never a description of it.
+  The *Summary* overlay is `create_summary.py` (`POST /agent/summary`, the
+  `show_summary` tool): the facts are read as the user from the ids the page sends,
+  the charts are data it computes and the page draws, and the model only writes the
+  story around `[[chart:ID]]` slots -- under `prompts.SUMMARY`, sent without
+  `PERSONA` because the overlay has headings and tables. PDF is the browser's print
+  of the overlay alone (`body.printing`). A tool's parameters
   are in `tools.SPECS` (with the stages it may run in), its description in
   `prompts.TOOLS` and its one-line summary in `prompts.TOOL_DONE` -- a new tool
   needs all three (a test checks). A selection is keys applied on the way

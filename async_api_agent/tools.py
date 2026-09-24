@@ -158,6 +158,7 @@ SPECS = {
     "go_live": ({
         "individual": dict(_INT, description="the blend's number; default the one picked"),
     }, [], False, PICKING, False),
+    "show_summary": ({}, [], False, STAGES, False),
 }
 
 
@@ -653,3 +654,8 @@ class Toolbox:
         return {"individual": number,
                 "next": "the page puts it live right after your reply and shows its key; never "
                         "say or invent a key yourself"}
+
+    def _show_summary(self):
+        self.actions.append({"type": "summary"})
+        return {"next": "the page opens the summary right after your reply; say it is on its "
+                        "way in one short sentence and do not write the summary yourself"}

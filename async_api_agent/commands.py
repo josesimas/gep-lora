@@ -238,12 +238,19 @@ def _release(said, stage, demo_files, names):
     return calls
 
 
+# "a summary", "recap", "what have we done so far", "what did we learn".
+_SUMMARY = (r"\bsummar(?:y|ise|ize)\b|\brecap\b|"
+            r"\bwhat (?:have|did) (?:we|i) (?:done|do|learn\w*)\b")
+
+
 def parse(message, stage, demo_files=(), lora_names=()):
     """The tool calls a plain request asks for. -> [(name, arguments)].
 
     `lora_names` are the person's own ready LoRAs, so naming one ("blend
     poem-r8 and poem-r16") chooses it without a model."""
     said = _clean(message)
+    if re.search(_SUMMARY, said):
+        return [("show_summary", {})]
     if stage in RELEASE_STAGES:
         calls = _release(said, stage, demo_files, lora_names)
         if calls or stage != "blended":

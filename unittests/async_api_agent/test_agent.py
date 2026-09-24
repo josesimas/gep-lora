@@ -1085,3 +1085,130 @@ class ReleaseToolboxTests(JobsTestCase):
                 ("5 rounds", "blended", [("set_blend_search", {"generations": 5})]),
                 ("5 epochs", "tested", [])):
             self.assertEqual(commands.parse(said, stage, demo, ["poem-r8"]), calls, said)
+
+
+class SummaryTests(ReleaseEndpointTests):
+    """The journey so far (create_summary.py): told from the user's own rows,
+    with charts as data, in built-in words or a model's."""
+
+    # The release flow is ReleaseEndpointTests' to test; these only reuse
+    # its searched().
+    test_every_blend_tested_one_verified_and_a_model_put_live = None
+    test_the_chat_picks_verifies_and_puts_live = None
+
+    def searched_and_tested(self):
+        """A finished search whose blends were all tested. -> (job id, plan)."""
+        job_id, found = self.searched()
+        self.assertEqual(self.call("POST", "/jobs/%d/test" % job_id, {})[0], 200)
+        self.assertEqual(worker.serve(self.registry, once=True, poll=0.2), 0)
+        return job_id, found
+
+    def test_nothing_yet_is_said_so(self):
+        status, out = self.call("POST", "/agent/summary", {"agent": SCRIPTED})
+        self.assertEqual(status, 200, out)
+        self.assertFalse(any(one["done"] for one in out["journey"]))
+        self.assertEqual(out["charts"], [])
+        self.assertIn(prompts.SUMMARY_NOTHING, out["markdown"])
+
+    def test_the_journey_in_built_in_words_charts_and_tables(self):
+        job_id, found = self.searched_and_tested()
+        ids = [one["id"] for one in found["loras"]]
+        analysis = self.call("POST", "/agent/analyse", {
+            "agent": SCRIPTED, "dataset": {"text": jsonl(RECORDS), "name": "tiny.jsonl"}})[1]
+        body = {"agent": SCRIPTED, "stage": "tested", "mock": True, "loras": ids, "job": job_id,
+                "dataset": analysis["analysis"],
+                "transcript": [{"who": "me", "text": "only the first 20"}]}
+        status, out = self.call("POST", "/agent/summary", body)
+        self.assertEqual(status, 200, out)
+        done = {one["key"]: one["done"] for one in out["journey"]}
+        self.assertEqual(done, {"dataset": True, "training": True, "search": True,
+                                "testing": True, "verification": False, "live": False})
+        self.assertTrue(out["fallback"])
+        self.assertEqual(out["title"], "Your LoRA journey with tiny")
+        markdown = out["markdown"]
+        for chapter in ("The data", "Training the LoRAs", "Searching for a blend",
+                        "Testing the blends"):
+            self.assertIn("## " + chapter, markdown)
+        self.assertIn(prompts.SUMMARY_MOCK, markdown)
+        self.assertIn(prompts.SUMMARY_NEXT_STEPS["verification"], markdown)
+        self.assertIn("| LoRA | Rank | Final loss | Time |", markdown)
+        # Every chart is data, placed in the story by id.
+        charts = {one["id"]: one for one in out["charts"]}
+        self.assertIn("tested_blends", charts)
+        for key, chart in charts.items():
+            self.assertTrue(chart["placed"], key)
+            self.assertIn("[[chart:%s]]" % key, markdown)
+        rows = charts["tested_blends"]["rows"]
+        self.assertTrue(all("value2" in one for one in rows))
+        self.assertEqual(sum(one["highlight"] for one in rows), 1)
+        # The conversation is read, never handed back.
+        self.assertNotIn("conversation", out["facts"])
+
+        # Another user's ids are nobody else's story.
+        bob = self.registry.add_user("bob")
+        status, theirs = self.call("POST", "/agent/summary", dict(body, dataset=None), key=bob)
+        self.assertEqual(status, 200, theirs)
+        self.assertFalse(any(one["done"] for one in theirs["journey"]))
+
+    def test_a_models_story_places_only_the_charts_there_are(self):
+        job_id, found = self.searched_and_tested()
+        told = ("```markdown\n# A tiny journey\n\nYou trained two LoRAs.\n\n"
+                "[[chart:training_loss]]\n\n[[chart:training_loss]]\n\n[[chart:made_up]]\n"
+                "\n## Next\n\nVerify it.\n```")
+        with mock.patch.object(providers, "chat", return_value=(told, "stand-in")) as chat:
+            status, out = self.call("POST", "/agent/summary", {
+                "agent": {"provider": "lmstudio"}, "loras": [one["id"] for one in found["loras"]],
+                "job": job_id, "mock": True})
+        self.assertEqual(status, 200, out)
+        system, turns = chat.call_args[0][1], chat.call_args[0][2]
+        self.assertEqual(system, prompts.SUMMARY)
+        facts = json.loads(turns[0]["content"].split("FACTS:\n", 1)[1].rsplit("\n\n", 1)[0])
+        self.assertEqual({one["id"] for one in facts["charts"]},
+                         {one["id"] for one in out["charts"]})
+        self.assertFalse(out["fallback"])
+        self.assertEqual(out["by"].split(" · ")[-1], "stand-in")
+        self.assertEqual(out["title"], "A tiny journey")
+        self.assertFalse(out["markdown"].startswith("```"))
+        self.assertEqual(out["markdown"].count("[[chart:training_loss]]"), 1)
+        self.assertNotIn("made_up", out["markdown"])
+        placed = {one["id"]: one["placed"] for one in out["charts"]}
+        self.assertTrue(placed["training_loss"])
+        self.assertFalse(placed["tested_blends"])
+
+    def test_a_chart_inside_a_sentence_is_lifted_onto_its_own_line(self):
+        from async_api_agent import create_summary
+        pictures = [{"id": "search_progress", "title": "The search, round by round"},
+                    {"id": "tested_blends", "title": "The top blends"}]
+        told = ("You tested all eight blends on ten unseen questions. [[chart:search_progress]] "
+                "shows how the best score improved each round. [[chart:tested_blends]]\n\n"
+                "As [[chart:search_progress]] shows, it rose.\n\n## Next\n\nVerify it.")
+        lines = create_summary.clean(told, pictures).split("\n")
+        self.assertEqual(lines[:5], [
+            "You tested all eight blends on ten unseen questions. *The search, round by "
+            "round* (below) shows how the best score improved each round.",
+            "", "[[chart:search_progress]]", "[[chart:tested_blends]]", ""])
+        # Each chart is drawn once: a second mention is only words.
+        self.assertIn("As *the search, round by round* (above) shows, it rose.", lines)
+        self.assertEqual(sum(line.startswith("[[chart:") for line in lines), 2)
+        # One alone on its line that was drawn already, or does not exist, just goes.
+        self.assertEqual(create_summary.clean("A.\n\n[[chart:nope]]\n\nB [[chart:nope]] c.",
+                                              pictures), "A.\n\nB the chart c.")
+
+    def test_a_model_that_fails_leaves_the_built_in_story(self):
+        with mock.patch.object(providers, "chat", side_effect=providers.ProviderError("down")):
+            out = self.call("POST", "/agent/summary", {
+                "agent": {"provider": "lmstudio"},
+                "dataset": {"name": "x.jsonl", "records": 12}})[1]
+        self.assertTrue(out["fallback"])
+        self.assertIn("down", out["note"])
+        self.assertIn("**12** conversation(s)", out["markdown"])
+
+    def test_asked_for_in_the_chat(self):
+        for said in ("give me a summary", "recap please", "what have we done so far?",
+                     "summarise what we learned"):
+            for stage in ("training", "blended", "live"):
+                self.assertEqual(commands.parse(said, stage), [("show_summary", {})],
+                                 (said, stage))
+        reply = self.call("POST", "/agent/chat", {"agent": SCRIPTED, "message": "a recap please",
+                                                  "stage": "dataset", "session": {}})[1]
+        self.assertEqual(reply["actions"], [{"type": "summary"}])
