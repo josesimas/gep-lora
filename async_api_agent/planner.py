@@ -34,6 +34,7 @@ import math
 import os
 import re
 import statistics
+import time
 
 from adapters import catalog as lora_catalog
 from async_api import settings as api_settings
@@ -298,6 +299,25 @@ def stem_of(name):
     return (stem or "my-data")[:40]
 
 
+def model_tag(base_model):
+    """A base model's id as part of a LoRA's name:
+    'unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit' -> 'qwen2.5-1.5b-instruct'."""
+    tag = str(base_model or "").rstrip("/").rsplit("/", 1)[-1].lower()
+    tag = re.sub(r"(-unsloth)?(-bnb-4bit)?$", "", tag)
+    tag = re.sub(r"[^a-z0-9._-]+", "-", tag).strip("-._")
+    return (tag or "model")[:24].strip("-._")
+
+
+def lora_name(stem, base_model, rank, day=None):
+    """A new LoRA's name, by settings.LORA_NAME: what it learned, on what, when.
+
+    The parts are clipped so the name, with a -NN from free_name(), stays in
+    train.NAME's 64 characters."""
+    return settings.LORA_NAME.format(
+        stem=stem[:20].strip("-._") or "my-data", model=model_tag(base_model),
+        date=day or time.strftime("%Y%m%d"), rank=rank)
+
+
 def free_name(catalog, user, wanted, taken):
     """`wanted`, or wanted-2, -3 ... -- free in the user's catalogue and on disk."""
     candidate, number = wanted, 2
@@ -324,9 +344,11 @@ def plan(catalog, user, analysis, epochs, mock=False, shared_file=None, session=
                and not analysis["stats"]["skipped"] and not analysis.get("selection"))
     dataset = {"file": shared_file} if as_file else "\n".join(analysis["lines"])
     stem = session["name"] or stem_of(analysis.get("name"))
+    base_model = recipe()["base_model"]
+    day = time.strftime("%Y%m%d")
     taken, bodies = set(), []
     for rank in session["ranks"]:
-        name = free_name(catalog, user, settings.LORA_NAME.format(stem=stem, rank=rank), taken)
+        name = free_name(catalog, user, lora_name(stem, base_model, rank, day), taken)
         wanted = dict(session["options"], epochs=float(epochs), rank=int(rank))
         if prompt:
             wanted["prompt"] = prompt

@@ -36,6 +36,7 @@ adapter.
 import json
 import math
 import os
+import re
 
 from adapters import catalog as lora_catalog
 from async_api import results
@@ -301,8 +302,11 @@ def plan(catalog, registry, user, session, mock=False, dataset=None, prefer=()):
         datasets["testing"] = "\n".join(testing)
     if validation:
         datasets["validation"] = "\n".join(validation)
-    label = blend["label"] or settings.BLEND_LABEL.format(
-        stem=planner.stem_of(first["name"]).rsplit("-r", 1)[0], loras=len(rows))
+    # The first LoRA's name without its rank (and -NN): what it learned, on
+    # what, and when -- see settings.LORA_NAME. Not stem_of(): the model's
+    # version has dots in it, which that would take for a file's extension.
+    stem = re.sub(r"-r\d+(-\d+)?$", "", first["name"]) or "my"
+    label = blend["label"] or settings.BLEND_LABEL.format(stem=stem, loras=len(rows))
     # No testing pass at the end of the search: testing is a step of its own
     # (POST /jobs/{id}/test), which tests every blend rather than the ones
     # above TESTING_MIN_QUALITY, so the person can choose between them.

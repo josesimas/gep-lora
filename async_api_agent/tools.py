@@ -47,7 +47,7 @@ from async_api_agent import settings
 # blends, verifying one and putting one live.
 STAGES = ("intro", "dataset", "analysis", "wait", "confirm", "training", "done",
           "blend", "blend_confirm", "blending", "blended",
-          "testing", "tested", "verifying", "verified", "live")
+          "testing", "tested", "verifying", "verified", "live", "searches")
 
 # Stages in which the training plan may change (not while a training runs,
 # nor once the person has moved on to blending).

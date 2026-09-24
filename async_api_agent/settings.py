@@ -128,9 +128,12 @@ LORA_RANKS = [8, 16]
 # after another on the worker, so this also caps what one sentence can queue.
 MAX_LORAS = 5
 
-# The name each LoRA gets: the dataset's stem and the rank, made free in the
-# user's catalogue by adding -2, -3 ... when taken.
-LORA_NAME = "{stem}-r{rank}"
+# The name each LoRA gets: the dataset's stem, the base model it is trained on,
+# the day it was planned (YYYYMMDD) and the rank -- so a name alone says what
+# the adapter learned, on what, and when. Made free in the user's catalogue by
+# adding -2, -3 ... when taken; the person may edit it before it starts.
+# Keep "-r{rank}" last: the blend's label is the name with it cut off.
+LORA_NAME = "{stem}-{model}-{date}-r{rank}"
 
 # How long the user can wait, offered as choices. Each is a number of epochs
 # -- passes over the dataset -- and the page shows the time each would take

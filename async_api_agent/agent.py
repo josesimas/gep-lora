@@ -385,7 +385,13 @@ def blend_debrief(registry, catalog, user, job, choice=None, history=None):
     """How the search went, from the user's own job."""
     facts = blending.outcome(registry, job, user, catalog)
     best = facts.get("best")
-    if best is None:
+    if facts["status"] != "done":
+        # Not finished: nothing to test, verify or put live until it is.
+        fallback = prompts.FALLBACK_BLEND_DEBRIEF_UNFINISHED.format(
+            status=facts["status"], error=": " + facts["error"] if facts.get("error") else "",
+            best=("; the best blend so far is **%s**, scoring **%.3f**"
+                  % (best["formula"], best["fitness"] or 0.0)) if best else "")
+    elif best is None:
         fallback = prompts.FALLBACK_BLEND_DEBRIEF_NONE.format(
             status=facts["status"], error=": " + facts["error"] if facts.get("error") else "")
     else:

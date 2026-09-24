@@ -138,12 +138,16 @@ class PlannerTests(JobsTestCase):
 
     def test_the_plan_is_one_lora_per_rank_with_free_names(self):
         catalog = self.registry.catalog
-        catalog.add("poem-r%d" % settings.LORA_RANKS[0], os.path.join(self.folder, "taken"),
+        # Named for the dataset, the base model, the day and the rank.
+        first = planner.lora_name("poem", planner.recipe()["base_model"], settings.LORA_RANKS[0])
+        self.assertRegex(first, r"^poem-[a-z0-9._-]+-\d{8}-r%d$" % settings.LORA_RANKS[0])
+        self.assertIn(planner.model_tag(planner.recipe()["base_model"]), first)
+        catalog.add(first, os.path.join(self.folder, "taken"),
                     "ready", "trained", owner=self.user["name"])
         found = analysis.analyse(jsonl(RECORDS), "poem_lora_dataset.json")
         bodies = planner.plan(catalog, self.user, found, 4, mock=True)
         self.assertEqual([body["settings"]["rank"] for body in bodies], settings.LORA_RANKS)
-        self.assertEqual(bodies[0]["name"], "poem-r%d-2" % settings.LORA_RANKS[0])
+        self.assertEqual(bodies[0]["name"], first + "-2")
         self.assertEqual(bodies[0]["settings"]["prompt"], "What is question 1?")
         self.assertEqual(bodies[0]["dataset"], jsonl(RECORDS))
         self.assertTrue(all(body["mock"] for body in bodies))
@@ -488,7 +492,8 @@ class ToolboxTests(JobsTestCase):
                                       "name": "verse", "prompt": "Say hi"})
         bodies = planner.plan(self.registry.catalog, self.user, found, 2, True,
                               "poem_lora_dataset.json", session)
-        self.assertEqual([body["name"] for body in bodies], ["verse-r4"])
+        self.assertEqual([body["name"] for body in bodies],
+                         [planner.lora_name("verse", planner.recipe()["base_model"], 4)])
         self.assertEqual(bodies[0]["settings"], {"learning_rate": 1e-4, "epochs": 2.0,
                                                  "rank": 4, "prompt": "Say hi"})
         # Part of a shared file goes as its lines: the whole file is not what it trains on.
@@ -651,6 +656,32 @@ class BlendingTests(JobsTestCase):
                          [self.b["id"]])
         self.assertEqual({row["id"] for row in blending.default_pick(self.catalog, self.user)},
                          {self.a["id"], self.b["id"]})
+
+    def test_the_label_keeps_the_names_dots(self):
+        named = lora(self.catalog, "poem-qwen3.5-0.8b-20260923-r8-2")
+        session = planner.session_of({"blend": {"loras": [named["id"]], "questions": 3}})
+        found = blending.plan(self.catalog, self.registry, self.user, session,
+                              dataset=(jsonl(RECORDS), "x.jsonl", None))
+        self.assertEqual(found["label"], "poem-qwen3.5-0.8b-20260923-blend")
+
+    def test_an_unfinished_search_is_not_offered_for_testing(self):
+        class Gone:
+            def database(self, job):
+                return os.path.join("C:/nowhere", "job.sqlite3")
+        for status in ("stopped", "cancelled", "failed"):
+            said = agent.blend_debrief(Gone(), self.catalog, self.user,
+                                       {"status": status, "error": None, "run_id": 1},
+                                       SCRIPTED)
+            self.assertIn("Resume the search", said["message"]["text"])
+            self.assertNotIn("Test all blends", said["message"]["text"])
+
+    def test_a_base_model_in_a_name(self):
+        self.assertEqual(planner.model_tag("unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"),
+                         "qwen2.5-1.5b-instruct")
+        self.assertEqual(planner.model_tag("unsloth/Qwen3.5-0.8B"), "qwen3.5-0.8b")
+        name = planner.lora_name("x" * 40, "org/" + "m" * 60, 256, "20260923")
+        self.assertLessEqual(len(name + "-99"), 64)
+        self.assertTrue(name.endswith("-20260923-r256"))
 
     def test_a_chromosome_in_words(self):
         said = blending.formula("CAT.SVD.L3.L1.L2.w1.w2.w3", {"L1": "a", "L2": "b", "L3": "c"},

@@ -3122,7 +3122,10 @@ The Python behind it is `async_api_agent/`, mounted into the server as the
 trains, queues or stores anything. `/agent/plan` hands the page one
 `POST /loras` body per rank in `LORA_RANKS` (8 and 16 by default -- more than
 one because a search blends adapters of different ranks), named for the
-dataset and made free in the user's catalogue, with the dataset's first
+dataset, the base model, the day and the rank (`LORA_NAME`:
+`poem-qwen3.5-0.8b-20260923-r8`) and made free in the user's catalogue --
+each name editable on the page before the training starts, and kept if the
+plan is read back again -- with the dataset's first
 question as the smoke-test prompt so a finished LoRA's sample answer is on its
 own subject. The page sends them to the ordinary `POST /loras`, and watches
 them through `GET /loras/{id}` and its log -- the same endpoints and checks as
@@ -3281,6 +3284,12 @@ requests, sent by the page:
    guide is told the deployment, never the key. A box on the left asks the
    blend through `POST /infer`, the answer streaming in; *Take it down* is
    `DELETE /live/{id}`.
+
+All three need a search that **finished** (the API refuses the rest). A search
+that was stopped, cancelled or failed gets **Resume the search** instead
+(`POST /jobs/{id}/resume`), and **Use a finished search** -- on the blend step
+too -- lists the user's `done` jobs (`GET /jobs?status=done`) so any of them
+can be tested, verified and put live, not only the latest.
 
 What the person chose -- which search, which blend, which questions, how many
 -- is the session's `release` part (`release.release_of()`), so the chat can do

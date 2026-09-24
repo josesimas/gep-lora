@@ -200,7 +200,11 @@ there, say whether it held up. If FACTS.best is missing, say that no blend \
 scored and, from FACTS.error if there is one, why. Then suggest the next \
 step: testing every blend on questions the search never saw (the **Test all \
 blends** button), so they can pick the best on answers it was not chosen \
-for. Never call a practice run's scores meaningful."""
+for. But if FACTS.status is not "done", the search did not finish -- it was \
+stopped, cancelled or failed -- and its blends cannot be tested yet: say so, \
+and suggest **Resume the search** to carry it on from where it stopped, or \
+**Use a finished search** to test, verify and put live one that did finish. \
+Never call a practice run's scores meaningful."""
 
 TEST_START = """\
 The testing step has just been queued: every blend the search built \
@@ -540,6 +544,13 @@ FALLBACK_BLEND_DEBRIEF_NONE = """\
 The search is over ({status}), but no blend scored{error}. Try again with \
 more rounds or other LoRAs."""
 
+FALLBACK_BLEND_DEBRIEF_UNFINISHED = """\
+The search did not finish ({status}{error}){best}. Its blends can only be \
+tested, verified and put live once it has.
+
+Press **Resume the search** to carry it on from where it stopped, or **Use a \
+finished search** to work with one of your searches that did finish."""
+
 FALLBACK_BLEND_DEBRIEF_MOCK = " This was a practice run: the scores are random."
 
 FALLBACK_TEST_START = """\
@@ -606,7 +617,8 @@ STEP_INSTRUCTIONS = {
                 "datasets, then press **Analyse**."),
     "analysis": "Press **Use this dataset** to go on, or **Choose another**.",
     "wait": "Pick how long to wait from the options, or type it (\"about an hour\").",
-    "confirm": "Press **Start training** to begin, or **Change** to pick another wait.",
+    "confirm": ("Edit the LoRAs' names if you like, then press **Start training** to begin, "
+                "or **Change** to pick another wait."),
     "training": "Nothing to do — the training runs on its own. You can stop it with **Stop**.",
     "done": "Press **Blend them** to combine the LoRAs, or **Train again**.",
     "blend": ("Tick the LoRAs to blend on the left and press **Plan the search**, or tell me "
@@ -614,7 +626,10 @@ STEP_INSTRUCTIONS = {
     "blend_confirm": "Press **Start the search** to begin, or **Change** to go back.",
     "blending": "Nothing to do — the search runs on its own. You can stop it with **Stop**.",
     "blended": ("Press **Test all blends** to test every blend on questions the search never "
-                "saw, or **Search again**."),
+                "saw, or **Search again**. A search that did not finish can be carried on "
+                "with **Resume the search**; **Use a finished search** picks another."),
+    "searches": ("Pick one of your finished searches on the left and press **Use this "
+                 "search**: its blends can then be tested, verified and put live."),
     "testing": "Nothing to do — the testing runs on its own. You can stop it with **Stop**.",
     "tested": ("Pick the blend you think is best on the left, choose the questions to check it "
                "on, and press **Verify it** — or **Go live** straight away."),
@@ -643,7 +658,11 @@ ASK_DATASET = ("Great! First I need some example conversations — the kind of a
 ANOTHER_DATASET = "No problem — give me another dataset. " + STEP_INSTRUCTIONS["dataset"]
 STOPPED = "I've asked the worker to stop the training. Whatever finished stays in your catalogue."
 BLEND_STOPPED = ("I've asked the worker to stop the search. Every round it finished stays in "
-                 "the job, and the console can resume it.")
+                 "the job, and **Resume the search** carries it on from there.")
+BLEND_RESUMED = "The search is queued again, and carries on from where it stopped."
+PICK_SEARCH = ("Here are your finished searches. Pick one and press **Use this search** — "
+               "its blends can then be tested, verified and put live.")
+NO_SEARCHES = "You have no finished searches yet — run one first."
 TEST_STOPPED = ("I've asked the worker to stop the testing. The blends it finished keep their "
                 "scores.")
 RELEASE_HINT = ("You can also ask me in words: \u201cverify #7\u201d, \u201con the testing "

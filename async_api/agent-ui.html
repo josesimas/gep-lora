@@ -379,13 +379,13 @@ const STAGES = [
   ["wait", "How long"], ["training", "Training"], ["done", "Trained"],
   ["blend", "Blend"], ["blending", "Search"], ["blended", "Best blend"],
   ["testing", "Test"], ["verifying", "Verify"], ["live", "Live"]];
-const STAGE_OF = { confirm: "wait", blend_confirm: "blend", tested: "testing", verified: "verifying" };
+const STAGE_OF = { confirm: "wait", blend_confirm: "blend", searches: "blend", tested: "testing", verified: "verifying" };
 const FINAL = ["ready", "failed", "cancelled", "missing"];
 // A job that will not change again on its own (registry.FINISHED).
 const JOB_FINAL = ["done", "failed", "cancelled", "stopped", "deleted"];
 // After the search: testing its blends, verifying one, putting one live.
 const RELEASE_STAGES = ["testing", "tested", "verifying", "verified", "live"];
-const BLEND_STAGES = ["blend", "blend_confirm", "blending", "blended", ...RELEASE_STAGES];
+const BLEND_STAGES = ["blend", "blend_confirm", "blending", "blended", "searches", ...RELEASE_STAGES];
 
 let key = "";
 let config = null;
@@ -420,6 +420,8 @@ function fresh() {
            choices: null, recommended: null, epochs: null, estimate: null, plan: null,
            loras: [], startedAt: null, finishedAt: null, stamps: {}, mock: null, agent: null,
            debriefed: false, readyLoras: 0,
+           nameEdits: {},              // rank -> a LoRA name the person typed
+           searches: null, searchesFrom: null,   // the user's finished jobs, to pick one
            // What the chat has set up (planner.session_of): the part of the
            // dataset in use, ranks, epochs, options, and `blend` -- which of
            // the user's LoRAs a search combines, and its size. The server
@@ -763,6 +765,11 @@ async function planFor(epochs) {
   S.session = Object.assign({}, S.session, { epochs: reply.epochs });
   S.estimate = reply.estimate;
   S.plan = reply.trainings;
+  // Names the person already edited stay theirs across a plan read back again.
+  for (const body of S.plan) {
+    const edited = (S.nameEdits || {})[body.settings.rank];
+    if (edited && !S.plan.some((other) => other !== body && other.name === edited)) body.name = edited;
+  }
   agentSays(reply.message);
   setStage("confirm");
 }
@@ -894,6 +901,8 @@ function send(text) {
 // What a chat reply changed, carried out in order -- through the same calls
 // the buttons make, so the chat can do nothing a button could not.
 async function applyChat(reply) {
+  // A name asked for in the chat replaces the ones edited by hand.
+  if (reply.session && reply.session.name !== (S.session || {}).name) S.nameEdits = {};
   S.session = reply.session || S.session;
   for (const done of reply.steps || []) toolMarker(done);
   if (reply.analysis) S.analysis = reply.analysis;
@@ -1176,7 +1185,7 @@ async function startTesting() {
   } catch (error) {
     if (error.status !== 400 && error.status !== 409) throw error;
     agentSays(plain(`I can't test the blends: ${error.message}`));
-    if (!S.release.found) await loadBlends();
+    if (!S.release.found && searchFinished()) await loadBlends();
     return;
   }
   S.release.testing = { startedAt: Date.now(), finishedAt: null, debriefed: false, job: reply.job };
@@ -1492,6 +1501,7 @@ function drawAction() {
         el("span", { class: "sub" }, `${choice.epochs} epochs · ${choice.estimate.steps} steps per LoRA — ${choice.blurb}`)))),
     el("p", { class: "help" }, "…or type your own answer below, like “about an hour” or “5 epochs”.")];
   else if (stage === "confirm") content = [ask("Start the training?"),
+    nameControls(lock),
     el("div", { class: "buttons" },
       el("button", { class: "primary lg", onclick: startTraining, disabled: lock }, "Start training"),
       el("button", { class: "lg", onclick: changeWait, disabled: lock }, "Change")),
@@ -1520,12 +1530,19 @@ function drawAction() {
       el("div", { class: "meter big live" }, el("i", { style: `width:${Math.max(2, fraction * 100)}%` })),
       el("div", { class: "buttons" },
         el("button", { class: "danger", onclick: stopBlendNow, disabled: lock }, "Stop the search"))];
-  } else if (stage === "blended") content = [ask("What next?"),
+  } else if (stage === "blended") content = searchFinished() ? [ask("What next?"),
     el("div", { class: "buttons" },
-      el("button", { class: "primary lg", onclick: testAll, disabled: lock || !S.blend.job }, "Test all blends"),
-      el("button", { class: "lg", onclick: skipTesting, disabled: lock || !S.blend.job }, "Skip testing"),
+      el("button", { class: "primary lg", onclick: testAll, disabled: lock }, "Test all blends"),
+      el("button", { class: "lg", onclick: skipTesting, disabled: lock }, "Skip testing"),
       el("button", { class: "lg", onclick: blendAgain, disabled: lock }, "Search again"),
-      el("button", { class: "lg ghost", onclick: newDataset, disabled: lock }, "Train more LoRAs"))];
+      el("button", { class: "lg ghost", onclick: pickSearch, disabled: lock }, "Use another search"))]
+    // A search that did not finish has nothing to test yet: carry it on, or use one that did.
+    : [ask(`The search is ${(S.blend.status || { job: {} }).job.status || "not finished"}`),
+    el("div", { class: "buttons" },
+      el("button", { class: "primary lg", onclick: resumeSearch, disabled: lock || !S.blend.job }, "Resume the search"),
+      el("button", { class: "lg", onclick: pickSearch, disabled: lock }, "Use a finished search"),
+      el("button", { class: "lg", onclick: blendAgain, disabled: lock }, "Search again"))];
+  else if (stage === "searches") content = searchPicker(lock, ask);
   else if (stage === "testing") {
     const f = testForm || {};
     const fraction = f.blends ? (f.tested || 0) / f.blends : 0;
@@ -1566,6 +1583,83 @@ function drawAction() {
       el("p", { class: "help" }, "Ctrl+Enter asks. The answer streams in on the right.")];
   }
   box.replaceChildren(...content);
+}
+
+// Whether the search on screen got to its end -- only then can its blends be
+// tested, verified and put live (the API refuses anything else).
+const searchFinished = () => Boolean(S.blend.job && S.blend.status && S.blend.status.job.status === "done");
+
+// The user's finished searches, any of which the rest of the guide can work on.
+function searchPicker(lock, ask) {
+  const jobs = S.searches || [];
+  if (!jobs.length) return [ask("Your finished searches"), el("p", { class: "muted" }, words("no_searches")),
+    el("div", { class: "buttons" }, el("button", { class: "lg", onclick: backFromSearches, disabled: lock }, "Back"))];
+  const chosen = drawAction.search ?? jobs[0].id;
+  return [ask("Which search?"),
+    el("div", { class: "options scroll", style: "max-height:300px" }, jobs.map((job) => {
+      const best = (job.summary || {}).best, conf = (job.summary || {}).settings || {};
+      return el("label", { class: "option" },
+        el("input", { type: "radio", name: "search", checked: job.id === chosen, disabled: lock,
+                      onchange: () => { drawAction.search = job.id; } }),
+        el("b", {}, `job ${job.id} · ${job.label || "no label"}`,
+          conf.TEMPLATE === "template_code_mocked.py" ? el("span", { class: "tag mock", style: "margin-left:6px" }, "mock") : null),
+        el("span", { class: "side" }, best ? `best ${fmt(best.fitness)}` : "no score"),
+        el("span", { class: "sub" }, `finished ${(job.finished_at || "").replace("T", " ").slice(0, 16)}` +
+          ` · ${1 + (conf.GENERATIONS || 0)} rounds × ${conf.COUNT ?? "?"} blends`));
+    })),
+    el("div", { class: "buttons" },
+      el("button", { class: "primary lg", onclick: () => useSearch(drawAction.search ?? jobs[0].id), disabled: lock }, "Use this search"),
+      el("button", { class: "lg", onclick: backFromSearches, disabled: lock }, "Back"))];
+}
+
+function pickSearch() {
+  userSays("Let me pick one of my finished searches.");
+  step(async () => {
+    S.searchesFrom = S.stage;
+    S.searches = (await api("GET", "/jobs?status=done")).jobs.filter((job) => job.summary);
+    drawAction.search = null;
+    agentSays(plain(words(S.searches.length ? "pick_search" : "no_searches")));
+    setStage("searches");
+  });
+}
+
+function backFromSearches() {
+  setStage(S.searchesFrom && S.searchesFrom !== "searches" ? S.searchesFrom : "blend");
+}
+
+// Adopt one of the user's jobs as the search on screen, then read it back the
+// way a search that just finished is: the watch sees it done and debriefs it.
+function useSearch(id) {
+  const job = (S.searches || []).find((one) => one.id === id);
+  if (!job) return;
+  userSays(`Use search ${job.id}${job.label ? " (" + job.label + ")" : ""}.`);
+  resetBlend();
+  Object.assign(S.blend, { job: { id: job.id, label: job.label, queue_position: null },
+                           status: { job, progress: null }, startedAt: null, finishedAt: null, debriefed: false });
+  marker(`using search · job ${job.id}`);
+  setStage("blending");
+  pollBlend();
+}
+
+// POST /jobs/{id}/resume: a stopped, cancelled or failed search carried on.
+function resumeSearch() {
+  userSays("Resume the search.");
+  step(async () => {
+    const job = S.blend.job;
+    try {
+      await api("POST", `/jobs/${job.id}/resume`);
+    } catch (error) {
+      if (error.status !== 409) throw error;
+      agentSays(plain(`I can't resume it: ${error.message}`));
+      return;
+    }
+    resetRelease();
+    Object.assign(S.blend, { result: null, debriefed: false, finishedAt: null, startedAt: S.blend.startedAt || Date.now() });
+    marker(`search resumed · job ${job.id}`);
+    agentSays(plain(words("blend_resumed")));
+    setStage("blending");
+    pollBlend();
+  });
 }
 
 // A testing pass could still add scores: some blend that ran has none yet.
@@ -1618,6 +1712,40 @@ function verifyQuestions(lock) {
                                        setRelease({ count: e.target.value === "" ? null : v >= 1 && v <= limits.max_questions ? v : r.count }); } })));
 }
 
+// The planned LoRAs' names, each editable before the training starts. The
+// guide's name says what it learned, on what and when (settings.LORA_NAME);
+// an edit is kept by rank, so a plan read back again keeps it.
+const LORA_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+function nameControls(lock) {
+  if (!S.plan || !S.plan.length) return null;
+  const rows = S.plan.map((body, i) => {
+    const input = el("input", { id: "lname" + i, value: body.name, disabled: lock, autocomplete: "off", spellcheck: "false",
+                                style: "font-family: var(--mono); font-size: 12px", "aria-label": `Name of the rank ${body.settings.rank} LoRA` });
+    input.addEventListener("change", (e) => renameLora(i, e.target));
+    return el("div", {}, el("label", { for: "lname" + i }, `Rank ${body.settings.rank}`), input);
+  });
+  return el("div", {}, el("div", { class: "knobs", style: "grid-template-columns: minmax(0, 1fr)" }, rows),
+    el("p", { class: "help", id: "nameHelp" }, "The names are yours to change: letters, digits, '.', '_' or '-', up to 64."));
+}
+
+function renameLora(index, input) {
+  const name = input.value.trim(), body = S.plan[index];
+  const clash = S.plan.some((other, i) => i !== index && other.name === name);
+  if (!LORA_NAME.test(name) || clash) {
+    $("nameHelp").textContent = clash ? `Two LoRAs cannot both be called ${name}.`
+      : "A name is 1–64 letters, digits, '.', '_' or '-', starting with a letter or digit.";
+    $("nameHelp").className = "help error";
+    input.value = body.name;
+    return;
+  }
+  if (name === body.name) return;
+  event(`renamed ${body.name} → ${name}`);
+  body.name = name;
+  S.nameEdits = Object.assign({}, S.nameEdits, { [body.settings.rank]: name });
+  save();
+  drawAction(); drawBoard();
+}
+
 // The blend step's controls: the user's ready LoRAs to tick (one base model,
 // at most five), and the search's size.
 function blendControls(lock, ask) {
@@ -1646,6 +1774,7 @@ function blendControls(lock, ask) {
       knob("questions", "Questions judged on", 1, limits.max_questions)),
     el("div", { class: "buttons" },
       el("button", { class: "primary lg", onclick: planBlendNow, disabled: lock || !b.loras.length }, "Plan the search"),
+      el("button", { class: "lg", onclick: pickSearch, disabled: lock }, "Use a finished search"),
       el("button", { class: "lg ghost", onclick: newDataset, disabled: lock }, "Train more LoRAs")),
     el("p", { class: "help" }, words("blend_hint"))];
 }
