@@ -236,13 +236,18 @@ Settings for a complete run live in `settings.py`:
 
 ```python
 COUNT = 10
-SEED = 42      # an int repeats the same population; None grows a fresh one
+SEED = None    # None grows a fresh one (and records it); an int repeats it
 UNIQUE = True
 TEMPLATE = "template_code_mocked.py"
 ```
 
 `SEED` controls the *chromosomes* only. Each individual's LoRA blend weights come
-from its own seed — see `WEIGHT_MASTER_SEED`.
+from its own seed — see `WEIGHT_MASTER_SEED`. All five of the search's seeds
+(`SEED`, `WEIGHT_MASTER_SEED`, `SELECTION_MASTER_SEED`, `MUTATION_MASTER_SEED`,
+`WEIGHT_MUTATION_MASTER_SEED`) default to `None`: each is drawn when a sweep is
+created and stored in its settings, so every sweep searches differently and any
+one of them can still be repeated from what it recorded. Set an int to make
+sweeps repeat from the start.
 
 Every upper-case name in `settings.py` is snapshotted into the sweep when it
 starts, so a knob added there is a knob recorded — and a resumed sweep reads the
@@ -3356,7 +3361,9 @@ behind the three "how long can you wait?" answers, the create_lora recipe
 (learning rate, alpha, dropout, batch, scheduler, ...) and whether a practice
 run is ticked; for blending, the generations, the blends per generation, the
 questions each is judged on, how many are kept back for testing and for
-verification, the evaluator and the judge model; and the size of a
+verification, the evaluator and the judge model, and (under *More blending
+options*) the search's five seeds -- a number repeats that part of a search,
+empty draws one when the search is made; and the size of a
 verification asked of a file. Each model box has a drop-down of what its
 endpoint lists beside it, and once a model is chosen, a **Thinking** checkbox:
 on, off, or (its third, indeterminate state) the model's own habit.

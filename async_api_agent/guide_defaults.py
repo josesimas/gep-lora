@@ -68,7 +68,8 @@ def _providers():
 # for; `option` the create_lora option (a POST /loras settings key) a training
 # default is; `job` the sweep setting a blend default becomes. `server` is a
 # callable, so the server's value is read when asked, after any GEP_AGENT_
-# override. Kinds: int, float, bool, text, choice, ranks, and tristate -- on,
+# override. Kinds: int, float, bool, text, choice, ranks, seed -- a whole
+# number, or "" for random (None) -- and tristate -- on,
 # off, or "" for the model's own habit (None). `attach` names the field a
 # default is drawn beside rather than on a row of its own: a thinking switch
 # belongs to the model it switches.
@@ -171,6 +172,26 @@ FIELDS = [
      "help": "Whether the judge thinks before it grades. Off is most of a reasoning "
              "judge's time saved; unset leaves it to the model."},
 
+    # The search's own seeds: an int repeats that part of a search exactly, ""
+    # (None) draws one when the search is made -- and records it, so even a
+    # random search can be repeated afterwards from its stored settings.
+    {"key": "seed", "group": "blend", "label": "Seed: the first population", "kind": "seed",
+     "job": "SEED", "server": lambda: config.SEED, "more": True,
+     "help": "Which chromosomes the first generation starts from."},
+    {"key": "weight_seed", "group": "blend", "label": "Seed: the blend weights", "kind": "seed",
+     "job": "WEIGHT_MASTER_SEED", "server": lambda: config.WEIGHT_MASTER_SEED, "more": True,
+     "help": "The weights w1-w5 each blend is drawn under."},
+    {"key": "selection_seed", "group": "blend", "label": "Seed: selection", "kind": "seed",
+     "job": "SELECTION_MASTER_SEED", "server": lambda: config.SELECTION_MASTER_SEED,
+     "more": True, "help": "The roulette wheel that picks which blends are copied."},
+    {"key": "mutation_seed", "group": "blend", "label": "Seed: mutation", "kind": "seed",
+     "job": "MUTATION_MASTER_SEED", "server": lambda: config.MUTATION_MASTER_SEED,
+     "more": True, "help": "Which symbols of a chromosome change."},
+    {"key": "weight_mutation_seed", "group": "blend", "label": "Seed: weight mutation",
+     "kind": "seed", "job": "WEIGHT_MUTATION_MASTER_SEED",
+     "server": lambda: config.WEIGHT_MUTATION_MASTER_SEED, "more": True,
+     "help": "Which blend weights are swapped for others."},
+
     # --- after the search
     {"key": "verify_questions", "group": "release", "label": "Verification questions from a file",
      "kind": "int", "low": 1, "high": settings.MAX_VERIFY_QUESTIONS,
@@ -180,6 +201,9 @@ FIELDS = [
 ]
 
 BY_KEY = {field["key"]: field for field in FIELDS}
+
+# The largest seed a search takes: start_run's own limit on the seeds it draws.
+SEED_LIMIT = 2 ** 31 - 1
 _SETTING = {field["setting"]: field["key"] for field in FIELDS if field.get("setting")}
 
 _CURRENT = contextvars.ContextVar("guide_defaults", default=None)
@@ -214,6 +238,11 @@ def _one(field, value):
             return train._number(field["option"], value)
         except train.TrainError as error:
             raise DefaultsError(str(error))
+    if kind == "seed":
+        if isinstance(value, bool) or not isinstance(value, (int, float))                 or value != int(value) or not 0 <= value <= SEED_LIMIT:
+            raise DefaultsError("%s must be a whole number from 0 to %d, or empty for random"
+                                % (label, SEED_LIMIT))
+        return int(value)
     if kind in ("int", "float"):
         whole = kind == "int"
         if isinstance(value, bool) or not isinstance(value, (int, float)) \
@@ -250,7 +279,7 @@ def check(values):
         if value is None:
             continue
         if isinstance(value, str) and not value.strip():
-            if (field.get("optional") and field["kind"] == "text") or field["kind"] == "tristate":
+            if (field.get("optional") and field["kind"] == "text")                     or field["kind"] in ("tristate", "seed"):
                 out[key] = ""
             continue
         out[key] = _one(field, value)
@@ -312,7 +341,10 @@ def form(saved=None, updated_at=None):
     fields = []
     for field in FIELDS:
         entry = {name: field[name] for name in ("key", "group", "label", "kind", "low", "high",
-                                                "optional", "help", "attach") if name in field}
+                                                "optional", "help", "attach", "more")
+                 if name in field}
+        if field["kind"] == "seed":
+            entry.update(low=0, high=SEED_LIMIT)
         if field.get("choices"):
             found = field["choices"]() if callable(field["choices"]) else field["choices"]
             entry["choices"] = [one if isinstance(one, dict) else {"value": one, "label": one}

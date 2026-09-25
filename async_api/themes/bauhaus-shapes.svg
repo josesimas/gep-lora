@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 480">
+  <!-- Flat geometric blocks in the poster's colours: a background image, so the colours are fixed. -->
+  <polygon points="400,0 400,480 150,480" fill="#1c1b19"/>
+  <polygon points="80,480 250,120 400,480" fill="#8f8a82"/>
+  <polygon points="190,480 300,210 330,480" fill="#efe7d6"/>
+  <polygon points="260,480 400,300 400,480" fill="#4a4743"/>
+  <rect x="330" y="40" width="70" height="200" fill="#b9b3a8"/>
+  <path d="M300 0 A100 100 0 0 0 400 100 L400 0 Z" fill="#1c1b19"/>
+  <!-- the flower: pink petals, mustard wedge, black centre, black stem -->
+  <polygon points="130,150 250,90 330,170 240,230" fill="#e39a98"/>
+  <polygon points="150,190 300,230 190,265" fill="#e6b43c"/>
+  <rect x="226" y="165" width="12" height="160" fill="#1c1b19"/>
+  <circle cx="222" cy="170" r="26" fill="#1c1b19"/>
+  <polygon points="20,480 120,380 160,480" fill="#e39a98"/>
+</svg>

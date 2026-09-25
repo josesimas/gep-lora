@@ -1,0 +1,150 @@
+/* Bloom -- a mid-century print: cream, deep teal, coral, mustard, pink, olive.
+ *
+ * Heavy rounded geometric type, coral headlines, thin olive rules, round
+ * shapes -- pill buttons, circular markers -- and a flat flower behind the
+ * bottom-right corner of the page.
+ *
+ * Every rule is under html[data-theme="bloom"], which outranks the pages' own
+ * :root, and inside @media screen, so printing keeps the page's own print
+ * colours. */
+
+@media screen {
+
+html[data-theme="bloom"] {
+  color-scheme: light;
+  --bg: #f7f3e8; --panel: #fcf9f1; --panel-2: #f1ebdb; --ink: #14323a; --ink-2: #2b4a52;
+  --muted: #5f6f6c; --faint: #97a09a; --line: #e4dcc7; --line-2: #c9c0a8;
+  --coral: #ef6a45; --mustard: #f6b01e; --pink: #ec8bb0; --olive: #6f7a2c;
+  --accent: #ef6a45; --accent-ink: #ffffff; --accent-soft: #fde2d8;
+  --ok: #5d6a1f; --warn: #b87a06; --bad: #c8412a;
+  --code: #efe8d6; --log-bg: #14323a; --log-ink: #f1ebdb;
+  --c1: #ef6a45; --c2: #14323a; --c3: #f6b01e; --c4: #ec8bb0; --c5: #6f7a2c;
+  --best: #ef6a45; --mean: #6f7a2c; --worst: #d9d0b8;
+  --op: #14323a; --slot: #ef6a45; --wt: #6f7a2c;
+  --me: #14323a; --me-ink: #f7f3e8;
+  --shadow: none;
+  --radius: 18px;
+  --display: "Poppins", "Montserrat", "Futura", "Century Gothic", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="bloom"] {
+    color-scheme: dark;
+    --bg: #0f2328; --panel: #142c32; --panel-2: #1a353c; --ink: #f4efe2; --ink-2: #d9d3c3;
+    --muted: #a4b0ab; --faint: #6f807c; --line: #22434a; --line-2: #325a62;
+    --accent: #f5805f; --accent-ink: #0f2328; --accent-soft: #3d2a23;
+    --ok: #b3c25a; --warn: #f6b01e; --bad: #ff8a70;
+    --code: #1a353c; --log-bg: #0a191c; --log-ink: #f1ebdb;
+    --c1: #f5805f; --c2: #f4efe2; --c3: #f6b01e; --c4: #ec8bb0; --c5: #b3c25a;
+    --best: #f5805f; --mean: #b3c25a; --worst: #2b4a52;
+    --op: #f4efe2; --slot: #f5805f; --wt: #b3c25a;
+    --me: #f4efe2; --me-ink: #0f2328;
+  }
+}
+
+/* --- the paper, and the flower ------------------------------------------------------------ */
+html[data-theme="bloom"] body { font-family: var(--display); background: var(--bg); }
+html[data-theme="bloom"] body::after {
+  content: ""; position: fixed; right: 0; bottom: 0; width: 400px; height: 480px; pointer-events: none; z-index: 0;
+  background: url("/themes/bloom-flower.svg") no-repeat right bottom / contain;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="bloom"] body::after { opacity: .85; }
+}
+@media (max-width: 960px) {
+  html[data-theme="bloom"] body::after { width: 220px; height: 264px; }
+}
+html[data-theme="bloom"] body > * { position: relative; z-index: 1; }
+html[data-theme="bloom"] .overlay { z-index: 50; }
+
+/* --- type: heavy and rounded; headlines in coral ---------------------------------------------- */
+html[data-theme="bloom"] h1 {
+  font-weight: 800; font-size: 30px; line-height: 1.05; letter-spacing: -.02em; color: var(--coral, #ef6a45);
+}
+html[data-theme="bloom"] h2,
+html[data-theme="bloom"] h3,
+html[data-theme="bloom"] .card-head h3 { font-weight: 800; font-size: 14.5px; letter-spacing: -.005em; color: var(--ink); }
+html[data-theme="bloom"] h4 { font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: #6f7a2c; }
+/* a caption above a field -- not a choice, a checkbox or a drop zone, which are <label>s too */
+html[data-theme="bloom"] label:not(.check):not(.option):not(.drop) {
+  font-weight: 700; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2);
+}
+html[data-theme="bloom"] a { color: var(--accent); font-weight: 600; text-underline-offset: 3px; }
+/* a thin olive rule under a headline, as the poster divides its lines */
+html[data-theme="bloom"] main h1::after,
+html[data-theme="bloom"] .page h1::after {
+  content: ""; display: block; flex-basis: 100%; width: 120px; height: 2px; background: #6f7a2c; margin-top: 10px;
+}
+
+/* --- top bar ------------------------------------------------------------------------------------ */
+html[data-theme="bloom"] .topbar { background: var(--bg); border-bottom: 2px solid #6f7a2c; }
+html[data-theme="bloom"] .brand b { font-weight: 800; font-size: 17px; letter-spacing: -.01em; white-space: nowrap; }
+html[data-theme="bloom"] .brand svg rect { rx: 13px; fill: #f6b01e; }
+html[data-theme="bloom"] .brand svg path { stroke: #14323a; }
+html[data-theme="bloom"] .brand svg circle { fill: #14323a; }
+html[data-theme="bloom"] .topbar a.button,
+html[data-theme="bloom"] .topbar .toplink,
+html[data-theme="bloom"] .viewnav button {
+  border-color: transparent; background: transparent; border-radius: 999px; text-decoration: none;
+  color: var(--ink); font-weight: 700; font-size: 12.5px;
+}
+html[data-theme="bloom"] .viewnav { background: transparent; border: 0; }
+html[data-theme="bloom"] .topbar a.button:hover,
+html[data-theme="bloom"] .topbar .toplink:hover,
+html[data-theme="bloom"] .viewnav button:hover:not(:disabled) { background: var(--accent-soft); color: var(--ink); }
+html[data-theme="bloom"] .viewnav button[aria-current],
+html[data-theme="bloom"] .viewnav button.active,
+html[data-theme="bloom"] .viewnav button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+html[data-theme="bloom"] .theme-pick { border-radius: 999px !important; font-weight: 600; }
+
+/* --- surfaces: soft cream cards, olive rules ------------------------------------------------------- */
+html[data-theme="bloom"] .card,
+html[data-theme="bloom"] .panel {
+  background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--line); box-shadow: none;
+}
+html[data-theme="bloom"] .agent { background: color-mix(in srgb, var(--panel) 96%, transparent); border-right: 2px solid #6f7a2c; }
+html[data-theme="bloom"] .agent-head { border-bottom-color: color-mix(in srgb, #6f7a2c 45%, transparent); }
+html[data-theme="bloom"] .composer { border-top-color: color-mix(in srgb, #6f7a2c 45%, transparent); }
+html[data-theme="bloom"] table th {
+  font-weight: 700; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink);
+  border-bottom: 2px solid #6f7a2c;
+}
+
+/* --- controls: rounded, pill buttons --------------------------------------------------------------- */
+html[data-theme="bloom"] input,
+html[data-theme="bloom"] textarea,
+html[data-theme="bloom"] select { border-radius: 12px; border: 1.5px solid var(--line-2); }
+html[data-theme="bloom"] input:focus,
+html[data-theme="bloom"] textarea:focus,
+html[data-theme="bloom"] select:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, #f6b01e 45%, transparent);
+}
+html[data-theme="bloom"] button { font-weight: 700; border-width: 1.5px; }
+/* pills for buttons; a card that happens to be a button (a choice, a theme tile) stays a card */
+html[data-theme="bloom"] button:not(.option):not(.theme) { border-radius: 999px; }
+html[data-theme="bloom"] button.option,
+html[data-theme="bloom"] button.theme { border-radius: 14px; }
+/* a row of large buttons reads as one set: all set like the primary */
+html[data-theme="bloom"] button.lg { font-weight: 800; font-size: 14px; letter-spacing: .02em; padding: 0 20px; }
+html[data-theme="bloom"] button.primary,
+html[data-theme="bloom"] .primary { font-weight: 800; letter-spacing: .02em; }
+html[data-theme="bloom"] button:not(.primary):not(.ghost):not(.option):not(.theme) { border-color: var(--ink); }
+html[data-theme="bloom"] button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, #14323a); }
+html[data-theme="bloom"] .pill { font-weight: 700; }
+html[data-theme="bloom"] .tag { border-radius: 999px; padding: 1px 8px; }
+html[data-theme="bloom"] .tag.mock { background: #f6b01e; color: #14323a; }
+html[data-theme="bloom"] code { border-radius: 6px; }
+
+/* --- the guide's conversation ------------------------------------------------------------------------ */
+html[data-theme="bloom"] .bubble { border-radius: 4px 18px 18px 18px; background: var(--panel-2); border-color: transparent; }
+html[data-theme="bloom"] .msg.me .bubble { border-radius: 18px 4px 18px 18px; }
+html[data-theme="bloom"] .msg .who { font-weight: 800; }
+html[data-theme="bloom"] .option { border-radius: 14px; }
+
+/* --- pipeline stages: round markers in the poster's colours, in turn ---------------------------------- */
+html[data-theme="bloom"] .stage .dot { font-weight: 800; }
+html[data-theme="bloom"] .stage.done .dot { background: #6f7a2c; color: #fff; border-color: #6f7a2c; }
+html[data-theme="bloom"] .stage::before { height: 2px; }
+html[data-theme="bloom"] .stage.done::before { background: #6f7a2c; }
+html[data-theme="bloom"] .stage b { font-weight: 800; }
+
+}

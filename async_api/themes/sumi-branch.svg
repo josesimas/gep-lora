@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 420">
+  <!-- An ink branch with blossoms, used as a mask: only its shape matters. -->
+  <g fill="#000">
+    <!-- the main limb: a heavy brush stroke, thick at the foot, tapering up-left -->
+    <path d="M360 420 L360 356 C344 334 326 312 304 292 C280 270 262 250 246 226
+             C232 204 222 180 212 154 C204 132 196 108 186 84 C182 74 176 62 170 52
+             C168 48 172 46 175 50 C184 62 192 76 200 94 C212 120 224 146 238 172
+             C252 198 270 222 292 244 C316 268 338 290 360 312 Z" opacity=".95"/>
+    <path d="M360 420 L300 420 C296 392 284 362 262 334 C246 314 228 296 210 280
+             C230 292 252 308 272 330 C298 356 326 386 360 404 Z"/>
+    <!-- dry-brush streaks along the limb -->
+    <path d="M354 380 C330 350 306 326 282 306 C300 316 322 334 342 356 Z" opacity=".55"/>
+    <path d="M242 214 C232 196 224 176 218 158 C228 174 236 192 246 208 Z" opacity=".5"/>
+    <!-- a side shoot, out to the left -->
+    <path d="M256 240 C232 238 206 244 182 256 C162 266 144 280 128 296 C124 300 128 304 132 300
+             C150 284 168 272 188 262 C210 252 234 248 258 250 Z"/>
+    <!-- a thin twig up to the right, and a spray off the shoot -->
+    <path d="M222 170 C232 150 246 132 264 118 C272 112 280 108 288 106 C292 105 292 109 289 110
+             C274 116 260 128 248 144 C240 156 232 170 228 182 Z"/>
+    <path d="M176 260 C166 244 160 226 158 208 C158 204 162 204 162 208 C164 226 172 242 182 256 Z"/>
+    <!-- buds -->
+    <ellipse cx="172" cy="44" rx="7" ry="13" transform="rotate(-24 172 44)"/>
+    <ellipse cx="294" cy="102" rx="6" ry="11" transform="rotate(64 294 102)"/>
+    <ellipse cx="124" cy="302" rx="6" ry="10" transform="rotate(44 124 302)"/>
+    <ellipse cx="158" cy="200" rx="5" ry="9" transform="rotate(-10 158 200)"/>
+  </g>
+  <!-- blossoms: five round petals, outlined, a dark centre with stamens -->
+  <g fill="none" stroke="#000" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+    <g transform="translate(196 118)">
+      <path id="p" d="M0 0 C-14 -12 -12 -34 0 -36 C12 -34 14 -12 0 0 Z"/>
+      <use href="#p" transform="rotate(72)"/><use href="#p" transform="rotate(144)"/>
+      <use href="#p" transform="rotate(216)"/><use href="#p" transform="rotate(288)"/>
+    </g>
+    <g transform="translate(104 262) rotate(20) scale(.8)">
+      <use href="#p"/><use href="#p" transform="rotate(72)"/><use href="#p" transform="rotate(144)"/>
+      <use href="#p" transform="rotate(216)"/><use href="#p" transform="rotate(288)"/>
+    </g>
+    <g transform="translate(270 186) rotate(-30) scale(.62)">
+      <use href="#p"/><use href="#p" transform="rotate(72)"/><use href="#p" transform="rotate(144)"/>
+      <use href="#p" transform="rotate(216)"/><use href="#p" transform="rotate(288)"/>
+    </g>
+  </g>
+  <g fill="#000">
+    <circle cx="196" cy="118" r="5"/><circle cx="104" cy="262" r="4"/><circle cx="270" cy="186" r="3.2"/>
+  </g>
+</svg>

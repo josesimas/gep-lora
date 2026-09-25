@@ -150,6 +150,13 @@ RUNS_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs.html"
 # Static too; it reads and saves through /agent/defaults, under the user's key.
 DEFAULTS_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guide_defaults.html")
 
+# The pages' themes, served at /themes/<file>: themes.js picks one and each is a
+# stylesheet over the pages' own colours. A flat folder of static files, so a
+# name is one path segment of a known type and nothing else is served.
+THEMES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "themes")
+THEME_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+               ".svg": "image/svg+xml"}
+
 
 class FileReply:
     """A download: a file on disk, sent as an attachment and then removed."""
@@ -930,6 +937,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._page(RUNS_PAGE)
             if path in ("/guide_defaults", "/guide_defaults.html") and self.command == "GET":
                 return self._page(DEFAULTS_PAGE)
+            theme = re.fullmatch(r"/themes/([A-Za-z0-9_-]+(\.[a-z]+))", path)
+            if theme and self.command == "GET" and theme.group(2) in THEME_TYPES:
+                return self._page(os.path.join(THEMES_DIR, theme.group(1)), THEME_TYPES[theme.group(2)])
             if path == "/health" and self.command == "GET":
                 return self._send(200, {"ok": True, "models": self.app.cache.status()})
             if path == "/infer" and self.command == "POST":
@@ -982,11 +992,14 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             os.remove(reply.path)
 
-    def _page(self, path):
-        with open(path, "rb") as handle:
-            body = handle.read()
+    def _page(self, path, content_type="text/html; charset=utf-8"):
+        try:
+            with open(path, "rb") as handle:
+                body = handle.read()
+        except FileNotFoundError:
+            raise ApiError(404, "no such file")
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

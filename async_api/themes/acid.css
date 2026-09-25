@@ -1,0 +1,191 @@
+/* Acid -- a screen print: grey stock, black ink, one acid chartreuse.
+ *
+ * Heavy condensed capitals, small monospace labels, crosshair print marks, a
+ * halftone corner, and black blocks with the accent printed on them. A tulip
+ * over an acid disc sits behind the bottom-right corner.
+ *
+ * Every rule is under html[data-theme="acid"], which outranks the pages' own
+ * :root, and inside @media screen, so printing keeps the page's own print
+ * colours. */
+
+@media screen {
+
+html[data-theme="acid"] {
+  color-scheme: light;
+  --bg: #e7e6e1; --panel: #efeeea; --panel-2: #dddcd6; --ink: #161616; --ink-2: #2e2e2c;
+  --muted: #62625e; --faint: #94948e; --line: #cfcec8; --line-2: #161616;
+  --acid: #c9d22b; --acid-ink: #161616;
+  --accent: #161616; --accent-ink: #c9d22b; --accent-soft: #e4e7a6;
+  --ok: #5c7d12; --warn: #a6700f; --bad: #c0392b;
+  --code: #dddcd6; --log-bg: #161616; --log-ink: #d8dd7a;
+  --c1: #161616; --c2: #9aa31a; --c3: #62625e; --c4: #b0b0aa; --c5: #c0392b;
+  --best: #161616; --mean: #9aa31a; --worst: #c6c5bf;
+  --op: #161616; --slot: #7d8514; --wt: #62625e;
+  --me: #161616; --me-ink: #e7e6e1;
+  --shadow: none;
+  --radius: 0;
+  --display: "Bebas Neue", "League Gothic", "Oswald", "Arial Narrow", "Roboto Condensed", Impact, sans-serif;
+  --label: ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="acid"] {
+    color-scheme: dark;
+    --bg: #121212; --panel: #1a1a1a; --panel-2: #222222; --ink: #ecebe6; --ink-2: #cfcec8;
+    --muted: #9a9a94; --faint: #6c6c68; --line: #2c2c2c; --line-2: #ecebe6;
+    --accent: #d4dd35; --accent-ink: #121212; --accent-soft: #2e3110;
+    --ok: #b3d14a; --warn: #e0ae4a; --bad: #ff7a6b;
+    --code: #222222; --log-bg: #0a0a0a; --log-ink: #d8dd7a;
+    --c1: #d4dd35; --c2: #ecebe6; --c3: #9a9a94; --c4: #5d5d5a; --c5: #ff7a6b;
+    --best: #d4dd35; --mean: #9a9a94; --worst: #333333;
+    --op: #ecebe6; --slot: #d4dd35; --wt: #9a9a94;
+    --me: #d4dd35; --me-ink: #121212;
+  }
+}
+
+/* --- the stock: grain, a halftone corner, and the tulip -------------------------------- */
+html[data-theme="acid"] body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(circle, color-mix(in srgb, var(--ink) 70%, transparent) 1.2px, transparent 1.6px),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--ink) 2%, transparent) 0 1px, transparent 1px 3px);
+  background-size: 7px 7px, auto;
+  background-position: 0 0, 0 0;
+  background-repeat: repeat, repeat;
+  background-attachment: fixed;
+}
+html[data-theme="acid"] body::before {
+  /* paper over the dots everywhere but the top-left corner, fading in */
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background: radial-gradient(ellipse 260px 200px at 0 0, transparent 0, var(--bg) 100%);
+}
+html[data-theme="acid"] body::after {
+  content: ""; position: fixed; right: 0; bottom: 0; width: 400px; height: 480px; pointer-events: none; z-index: 0;
+  background: url("/themes/acid-tulip.svg") no-repeat right bottom / contain;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="acid"] body::after { filter: invert(1) hue-rotate(180deg); opacity: .8; }
+}
+@media (max-width: 960px) {
+  html[data-theme="acid"] body::after { width: 220px; height: 264px; }
+}
+html[data-theme="acid"] body > * { position: relative; z-index: 1; }
+html[data-theme="acid"] .overlay { z-index: 50; }
+
+/* --- type: heavy condensed display, monospace labels ------------------------------------ */
+html[data-theme="acid"] h1 {
+  font-family: var(--display); font-weight: 700; font-size: 42px; line-height: .95; letter-spacing: 0;
+  text-transform: uppercase; font-stretch: condensed;
+}
+html[data-theme="acid"] h2,
+html[data-theme="acid"] h3,
+html[data-theme="acid"] .card-head h3 {
+  font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: .03em; text-transform: uppercase;
+  font-stretch: condensed; color: var(--ink);
+}
+html[data-theme="acid"] h4,
+html[data-theme="acid"] label:not(.check):not(.option):not(.drop),
+html[data-theme="acid"] table th,
+html[data-theme="acid"] .msg .who,
+html[data-theme="acid"] .tag,
+html[data-theme="acid"] .pill {
+  font-family: var(--label); text-transform: uppercase; letter-spacing: .06em;
+}
+/* a caption above a field -- not a choice, a checkbox or a drop zone, which are <label>s too */
+html[data-theme="acid"] label:not(.check):not(.option):not(.drop) { font-weight: 600; font-size: 10.5px; color: var(--ink-2); }
+html[data-theme="acid"] label.check { font-family: inherit; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 13px; color: var(--ink); }
+html[data-theme="acid"] a { color: var(--ink); text-decoration-color: var(--acid, #c9d22b); text-decoration-thickness: 3px; text-underline-offset: 2px; }
+/* the poster's short acid bar under a headline */
+html[data-theme="acid"] main h1::after,
+html[data-theme="acid"] .page h1::after {
+  content: ""; display: block; flex-basis: 100%; width: 80px; height: 3px; background: #c9d22b; margin-top: 8px;
+}
+
+/* --- top bar: black ink, the brand on an acid block, crosshair at the end ---------------- */
+html[data-theme="acid"] .topbar { background: var(--bg); border-bottom: 2px solid var(--ink); }
+html[data-theme="acid"] .topbar::after {
+  content: "+"; font: 400 22px/1 var(--label); color: #c9d22b; margin-left: 4px;
+  -webkit-text-stroke: 1px #9aa31a;
+}
+html[data-theme="acid"] .brand b {
+  font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: .02em; text-transform: uppercase;
+}
+html[data-theme="acid"] .brand b { white-space: nowrap; }
+html[data-theme="acid"] .brand span { font-family: var(--label); font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+                                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+@media (max-width: 1100px) { html[data-theme="acid"] .brand span { display: none; } }
+html[data-theme="acid"] .brand svg rect { rx: 0; fill: #c9d22b; }
+html[data-theme="acid"] .brand svg path { stroke: #161616; }
+html[data-theme="acid"] .brand svg circle { fill: #161616; }
+html[data-theme="acid"] .topbar a.button,
+html[data-theme="acid"] .topbar .toplink,
+html[data-theme="acid"] .viewnav button {
+  background: transparent; border: 0; border-radius: 0; color: var(--ink); text-decoration: none;
+  font-family: var(--label); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+}
+html[data-theme="acid"] .viewnav { background: transparent; border: 0; }
+html[data-theme="acid"] .topbar a.button:hover,
+html[data-theme="acid"] .topbar .toplink:hover,
+html[data-theme="acid"] .viewnav button:hover:not(:disabled) { background: #c9d22b; color: #161616; }
+html[data-theme="acid"] .viewnav button[aria-current],
+html[data-theme="acid"] .viewnav button.active,
+html[data-theme="acid"] .viewnav button[aria-selected="true"] { background: #161616; color: #c9d22b; }
+html[data-theme="acid"] .theme-pick { border-radius: 0 !important; border: 2px solid var(--ink) !important; font-family: var(--label) !important; }
+
+/* --- surfaces: thin ink rules, a crosshair in each card's corner -------------------------- */
+html[data-theme="acid"] .card,
+html[data-theme="acid"] .panel {
+  position: relative; background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 0; border-top: 2px solid var(--ink); border-radius: 0; box-shadow: none;
+}
+html[data-theme="acid"] .card::after {
+  content: "+"; position: absolute; top: 6px; right: 10px; font: 300 16px/1 var(--label); color: var(--muted);
+  pointer-events: none;
+}
+html[data-theme="acid"] .agent { background: color-mix(in srgb, var(--panel) 94%, transparent); border-right: 2px solid var(--ink); }
+html[data-theme="acid"] .agent-head { border-bottom: 1px solid var(--ink); }
+html[data-theme="acid"] .composer { border-top: 1px solid var(--ink); }
+html[data-theme="acid"] .sheet { border-radius: 0; border: 2px solid var(--ink); }
+html[data-theme="acid"] table th { font-weight: 600; font-size: 10.5px; color: var(--ink); border-bottom: 1px solid var(--ink); }
+html[data-theme="acid"] code { border-radius: 0; }
+
+/* --- controls: square, black; the primary is a black block printed in acid ----------------- */
+html[data-theme="acid"] input,
+html[data-theme="acid"] textarea,
+html[data-theme="acid"] select { border-radius: 0; border: 1px solid var(--ink); background: var(--panel); }
+html[data-theme="acid"] input:focus,
+html[data-theme="acid"] textarea:focus,
+html[data-theme="acid"] select:focus { box-shadow: 0 0 0 3px #c9d22b; border-color: var(--ink); }
+html[data-theme="acid"] button { border-radius: 0; border: 1px solid var(--ink); font-weight: 600; }
+html[data-theme="acid"] button.ghost { border-color: transparent; }
+/* a row of large buttons reads as one set: all set like the primary */
+html[data-theme="acid"] button.lg {
+  font-family: var(--display); font-size: 17px; letter-spacing: .04em; text-transform: uppercase;
+}
+html[data-theme="acid"] button.primary,
+html[data-theme="acid"] .primary {
+  font-family: var(--display); font-size: 17px; letter-spacing: .04em; text-transform: uppercase;
+  background: #161616 !important; color: #c9d22b !important; border-color: #161616 !important;
+}
+html[data-theme="acid"] button.primary:hover:not(:disabled),
+html[data-theme="acid"] .primary:hover { background: #c9d22b !important; color: #161616 !important; }
+html[data-theme="acid"] .pill { border-radius: 0; font-size: 11px; }
+html[data-theme="acid"] .pill::before { border-radius: 0; }
+html[data-theme="acid"] .tag { border-radius: 0; }
+html[data-theme="acid"] .tag.mock { background: #c9d22b; color: #161616; }
+
+/* --- the guide's conversation ------------------------------------------------------------------ */
+html[data-theme="acid"] .bubble { border-radius: 0; background: var(--bg); border: 0; border-left: 3px solid var(--ink); }
+html[data-theme="acid"] .msg.me .bubble { border-radius: 0; border-left: 0; border-right: 6px solid #c9d22b; }
+html[data-theme="acid"] .msg .who { font-size: 10px; font-weight: 600; }
+html[data-theme="acid"] .msg.event.tool { border-radius: 0; font-family: var(--label); }
+
+/* --- pipeline stages: numbered black squares, the number in acid ---------------------------------- */
+html[data-theme="acid"] .stage .dot { border-radius: 0; font-family: var(--display); font-size: 13px; }
+html[data-theme="acid"] .stage.done .dot,
+html[data-theme="acid"] .stage.now .dot,
+html[data-theme="acid"] .stage.active .dot { background: #161616; color: #c9d22b; }
+html[data-theme="acid"] .stage::before { height: 2px; }
+html[data-theme="acid"] .stage.done::before { background: var(--ink); }
+html[data-theme="acid"] .stage b { font-family: var(--display); font-weight: 700; letter-spacing: .03em; text-transform: uppercase; font-size: 14px; }
+
+}

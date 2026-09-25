@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 480">
+  <!-- A flat mid-century flower: a background image, so the colours are fixed. -->
+  <!-- the sun of a flower head -->
+  <circle cx="280" cy="120" r="100" fill="#f6b01e"/>
+  <!-- stem and stamens -->
+  <rect x="274" y="60" width="7" height="360" fill="#14323a"/>
+  <path d="M277 160 L236 70 M277 160 L277 56 M277 160 L318 70" stroke="#14323a" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="236" cy="68" r="11" fill="#14323a"/>
+  <circle cx="277" cy="54" r="11" fill="#14323a"/>
+  <circle cx="318" cy="68" r="11" fill="#14323a"/>
+  <!-- the coral leaf, left -->
+  <path d="M277 290 C200 290 110 250 60 180 C150 170 240 200 277 290 Z" fill="#ef6a45"/>
+  <!-- the pink leaf, right -->
+  <path d="M277 270 C300 210 350 180 400 180 L400 250 C360 280 320 290 277 270 Z" fill="#ec8bb0"/>
+  <!-- the ground: olive quarter, teal block, pink arch, olive mound -->
+  <path d="M60 300 L260 300 L260 480 L60 480 Z" fill="#6f7a2c"/>
+  <path d="M290 480 L290 340 C330 300 370 290 400 290 L400 480 Z" fill="#14323a"/>
+  <path d="M60 480 L60 420 A110 110 0 0 1 280 420 L280 480 Z" fill="#ec8bb0"/>
+  <path d="M130 480 A40 40 0 0 1 210 480 Z" fill="#14323a"/>
+  <path d="M230 480 C240 420 300 400 340 410 C380 420 400 450 400 480 Z" fill="#6f7a2c"/>
+</svg>

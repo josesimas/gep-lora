@@ -295,7 +295,8 @@
   .result-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
   .result-head .num { margin-left: auto; color: var(--muted); font-size: 12px; }
   .option.blocked { opacity: .5; }
-  .knobs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+  .knobs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px;
+           align-items: end; } /* a caption that wraps must not push its box out of line */
   .knobs label { font-size: 11px; }
   .formula { font: 13px/1.6 var(--mono); background: var(--code); border-radius: 8px; padding: 10px 12px;
              overflow-wrap: anywhere; margin: 0 0 10px; }
@@ -387,6 +388,7 @@
     .story h2 { break-after: avoid; }
   }
 </style>
+<script src="/themes/themes.js"></script>
 </head>
 <body>
 <header class="topbar">
@@ -3106,6 +3108,13 @@ async function useKey(value) {
     try { localStorage.removeItem("gep-agent-session"); } catch (_) { /* private mode */ }
   }
   const wanted = linkedJob();
+  // /agent?new=1 (the runs page's New job): a fresh conversation, as Start over.
+  const url = new URL(location.href);
+  if (url.searchParams.has("new")) {
+    url.searchParams.delete("new");
+    history.replaceState(null, "", url);
+    if (!wanted) return startOver();
+  }
   if (saved && saved.transcript && saved.transcript.length) {
     S = Object.assign(fresh(), saved);
     drawTranscript(); drawAction(); drawBoard();

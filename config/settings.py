@@ -19,7 +19,7 @@ COUNT = 8
 # even that stays repeatable afterwards. Note this is separate from the LoRA
 # blend weights each individual is evaluated under -- those come from
 # WEIGHT_MASTER_SEED below.
-SEED = 42 #None
+SEED = None
 
 # Reject duplicate chromosomes when building the population.
 UNIQUE = True
@@ -265,7 +265,7 @@ LORA_SERVER_RECYCLE_AFTER = 0
 # blends. An int makes a whole sweep reproducible from the start; None draws a
 # master seed at run time and stores it, which is just as repeatable after the
 # fact -- the value used is written to the run's settings either way.
-WEIGHT_MASTER_SEED = 42 #None
+WEIGHT_MASTER_SEED = None
 
 # --- selection -------------------------------------------------------------
 
@@ -276,7 +276,7 @@ WEIGHT_MASTER_SEED = 42 #None
 # draw in it repeatable -- but a second generation still draws its own parents
 # rather than the first one's again. An int makes a sweep reproducible from the
 # start; None draws a master seed at run time and stores it.
-SELECTION_MASTER_SEED = 42 #None
+SELECTION_MASTER_SEED = None
 
 # How many copies a round of selection appends. It also draws one newcomer and
 # culls that many again -- n+1 in, n+1 out -- so the population stays the size
@@ -300,7 +300,7 @@ MUTATION_RATE = 0.1
 # Where the mutation dice come from, on the same terms as the two seeds above:
 # an int makes a sweep reproducible from the start, None draws one at run time
 # and records it.
-MUTATION_MASTER_SEED = 42 #None
+MUTATION_MASTER_SEED = None
 
 # --- weight mutation -------------------------------------------------------
 
@@ -313,7 +313,7 @@ MUTATION_MASTER_SEED = 42 #None
 WEIGHT_MUTATION_RATE = 0.1
 
 # Where that draw comes from, on the same terms as the seeds above.
-WEIGHT_MUTATION_MASTER_SEED = 42 #None
+WEIGHT_MUTATION_MASTER_SEED = None
 
 # --- running the generated scripts -----------------------------------------
 

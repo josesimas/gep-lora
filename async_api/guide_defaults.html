@@ -109,6 +109,22 @@
   .savebar .status { font-size: 13px; color: var(--muted); flex: 1; min-width: 180px; }
   .savebar .status.ok { color: var(--ok); } .savebar .status.bad { color: var(--bad); }
 
+
+  /* Appearance: the page theme, kept in this browser rather than with the defaults. */
+  .above { max-width: 980px; margin: 22px auto 0; padding: 0 18px; }
+  .themes { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-top: 10px; }
+  .theme { display: grid; gap: 8px; text-align: left; padding: 10px; min-height: 0; white-space: normal;
+           border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); cursor: pointer; }
+  .theme:hover { border-color: var(--faint); }
+  .theme[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .theme .preview { height: 64px; border-radius: 6px; border: 1px solid var(--line); overflow: hidden;
+                    display: grid; grid-template-rows: 14px 1fr; }
+  .theme .preview i { display: block; }
+  .theme .preview .body { display: flex; gap: 6px; align-items: center; padding: 6px 8px; }
+  .theme .preview .body i { height: 22px; border-radius: 2px; }
+  .theme b { font-size: 13px; font-weight: 600; display: flex; gap: 6px; align-items: center; }
+  .theme small { font-size: 12px; color: var(--muted); }
+
   .gate { max-width: 420px; margin: 60px auto; }
   .gate form { display: flex; gap: 8px; margin-top: 12px; }
   @media (max-width: 680px) {
@@ -117,6 +133,7 @@
     .topbar .button.wide { display: none; }
   }
 </style>
+<script src="/themes/themes.js"></script>
 </head>
 <body>
 <header class="topbar">
@@ -136,6 +153,16 @@
   <a class="button wide" href="/demo">Console</a>
   <button type="button" class="ghost" id="changeKey" hidden>Change key</button>
 </header>
+
+<div class="above">
+  <section class="card" id="appearance" aria-labelledby="appearanceTitle">
+    <div class="card-head">
+      <h2 id="appearanceTitle">Appearance</h2>
+      <span class="muted small">how every page looks · kept in this browser and applied at once, not saved with the defaults</span>
+    </div>
+    <div class="themes" id="themes" role="group" aria-label="Theme"></div>
+  </section>
+</div>
 
 <main id="main"></main>
 
@@ -200,7 +227,8 @@ const PICKERS = {
 };
 const picked = {};      // key -> { items, note, bad, loading }
 
-// Fields shown under "More training options" rather than at the top.
+// Fields shown under a group's "More … options" rather than at the top (and
+// any field the server marks `more`, such as the search's seeds).
 const ADVANCED = ["alpha", "dropout", "max_seq", "batch_size", "grad_accum", "warmup_steps",
                   "weight_decay", "max_steps", "scheduler", "optim"];
 // The guide page's own remembered choices, which win over a default in that
@@ -278,7 +306,7 @@ function wanted() {
     if (same(value, f.server)) continue;
     if (value === null) {
       // Clearing an optional text is a choice ("none named"); clearing another means the server's.
-      if ((f.optional && f.kind === "text") || f.kind === "tristate") out[f.key] = "";
+      if ((f.optional && f.kind === "text") || ["tristate", "seed"].includes(f.kind)) out[f.key] = "";
       continue;
     }
     out[f.key] = value;
@@ -299,11 +327,11 @@ function parse(f, text) {
     if (parts.some((n) => !Number.isInteger(n) || n < 1)) return { error: "whole numbers, separated by commas: 8, 16" };
     return { value: parts };
   }
-  if (["int", "float", "number"].includes(f.kind)) {
+  if (["int", "float", "number", "seed"].includes(f.kind)) {
     if (!text) return { value: null };
     const n = Number(text);
     if (!Number.isFinite(n)) return { error: "a number" };
-    if (f.kind === "int" && !Number.isInteger(n)) return { error: "a whole number" };
+    if (["int", "seed"].includes(f.kind) && !Number.isInteger(n)) return { error: "a whole number" };
     if (f.low !== undefined && (n < f.low || n > f.high)) return { error: `from ${f.low} to ${f.high}` };
     return { value: n };
   }
@@ -315,8 +343,9 @@ function parse(f, text) {
 function draw() {
   const groups = form.groups.map((g) => {
     const fields = form.fields.filter((f) => f.group === g.id && !f.attach);
-    const top = fields.filter((f) => !ADVANCED.includes(f.key));
-    const more = fields.filter((f) => ADVANCED.includes(f.key));
+    const folded = (f) => ADVANCED.includes(f.key) || f.more;
+    const top = fields.filter((f) => !folded(f));
+    const more = fields.filter(folded);
     const own = form.fields.filter((f) => f.group === g.id && isOwn(f)).length;
     return el("section", { class: "card", id: "group-" + g.id },
       el("div", { class: "card-head" }, el("h2", {}, g.label),
@@ -325,7 +354,7 @@ function draw() {
         el("span", { class: "muted small" }, g.about)),
       el("div", { class: "fields" }, top.map(row)),
       more.length ? el("details", { class: "more", open: more.some(isOwn) || null },
-        el("summary", {}, `More training options (${more.length})`),
+        el("summary", {}, `More ${{ training: "training", blend: "blending" }[g.id] || g.label.toLowerCase()} options (${more.length})`),
         el("div", { class: "fields" }, more.map(row))) : null);
   });
   $("main").replaceChildren(
@@ -356,8 +385,8 @@ function inputFor(f) {
       f.choices.map((c) => el("option", { value: c.value, selected: c.value === value || null, title: c.description || null }, c.label)));
   const shown = f.kind === "ranks" ? (value || []).join(", ") : value ?? "";
   return el("input", { id: "in-" + f.key, value: shown, spellcheck: "false", autocomplete: "off",
-    inputmode: ["int", "float", "number"].includes(f.kind) ? "decimal" : null,
-    placeholder: f.optional ? ({ chat_template: "the base model's own", max_steps: "no limit", lora_count: "one per rank" }[f.key] || "none") : "",
+    inputmode: f.kind === "seed" ? "numeric" : ["int", "float", "number"].includes(f.kind) ? "decimal" : null,
+    placeholder: f.kind === "seed" ? "random" : f.optional ? ({ chat_template: "the base model's own", max_steps: "no limit", lora_count: "one per rank" }[f.key] || "none") : "",
     oninput: (e) => {
       const found = parse(f, e.target.value);
       e.target.classList.toggle("invalid", !!found.error);
@@ -390,6 +419,7 @@ function thinkingSwitch(t, parent) {
 function serverText(f) {
   const v = f.server;
   if (f.kind === "tristate") return v === true ? "on" : v === false ? "off" : "the model's own";
+  if (f.kind === "seed" && (v === null || v === undefined)) return "random";
   if (v === null || v === undefined || v === "") return { chat_template: "the base model's own", lora_count: "one per rank" }[f.key] || "none";
   if (Array.isArray(v)) return v.join(", ");
   if (typeof v === "boolean") return v ? "on" : "off";
@@ -568,6 +598,31 @@ window.addEventListener("beforeunload", (e) => { if (form && changed()) { e.prev
 
 const stored = recallKey();
 if (stored) useKey(stored); else keyGate();
+
+// --- Appearance ----------------------------------------------------------------
+// The themes are themes.js's; this only draws a tile per theme and hands a
+// click back to it, so this page, the top-bar picker and every other page agree.
+function drawThemes() {
+  const themes = window.gepThemes;
+  if (!themes) { $("appearance").hidden = true; return; }
+  const on = themes.current();
+  $("themes").replaceChildren(...themes.list().map((theme) => {
+    const [paper, surface, ink, accent, second] = theme.swatch;
+    const preview = el("span", { class: "preview", style: `background:${paper}` },
+      el("i", { style: `background:${ink}` }),
+      el("span", { class: "body" },
+        el("i", { style: `background:${surface};flex:3;border:1px solid ${ink}22` }),
+        el("i", { style: `background:${accent};flex:1` }),
+        el("i", { style: `background:${second};flex:1` })));
+    return el("button", { type: "button", class: "theme", "aria-pressed": String(theme.id === on),
+                          onclick: () => themes.set(theme.id) },
+      preview,
+      el("b", {}, theme.name, theme.id === on ? el("span", { class: "tag own" }, "in use") : null),
+      el("small", {}, theme.about));
+  }));
+}
+document.addEventListener("gep-theme", drawThemes);
+drawThemes();
 </script>
 </body>
 </html>

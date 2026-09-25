@@ -167,7 +167,11 @@ class RefusalTests(ServerTestCase):
         import http.client
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=30)
         try:
-            body = json.dumps({"history": [{"content": "x" * 5000}]})
+            # The scripted provider, so the one request that is answered asks no
+            # real model -- whichever the judges' endpoint has loaded may take
+            # longer than the timeout to write a welcome.
+            body = json.dumps({"history": [{"content": "x" * 5000}],
+                               "agent": {"provider": "scripted"}})
             for method, path, key, status in (("POST", "/agent/no-such-step", self.key, 404),
                                               ("POST", "/agent/intro", "gep_wrong", 401),
                                               ("DELETE", "/agent/intro", self.key, 405),

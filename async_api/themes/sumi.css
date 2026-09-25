@@ -1,0 +1,176 @@
+/* Sumi -- ink on paper, one vermilion sun.
+ *
+ * Warm off-white paper, near-black ink, a single vermilion accent, hairline
+ * rules instead of boxes, small square corners, and wide-tracked uppercase
+ * headings. A red sun and an ink branch sit behind the page, and the brand mark
+ * becomes a square seal.
+ *
+ * Every rule is under html[data-theme="sumi"], which outranks the pages' own
+ * :root, and inside @media screen, so printing (the summary's PDF) keeps the
+ * page's own print colours. */
+
+@media screen {
+
+html[data-theme="sumi"] {
+  color-scheme: light;
+  --bg: #f4f1ea; --panel: #fbf9f4; --panel-2: #efebe2; --ink: #1d1e21; --ink-2: #3a3b3f;
+  --muted: #6d6b66; --faint: #9c9890; --line: #e2ddd2; --line-2: #cfc9bc;
+  --accent: #e0472e; --accent-ink: #fffaf3; --accent-soft: #fae3dc;
+  --ok: #3f7a4a; --warn: #b5661c; --bad: #c2311d;
+  --code: #ebe6db; --log-bg: #1d1e21; --log-ink: #e6e1d6;
+  --c1: #e0472e; --c2: #1d1e21; --c3: #8c6a3e; --c4: #7a8f86; --c5: #b5661c;
+  --best: #e0472e; --mean: #8a867e; --worst: #cfc9bc;
+  --op: #1d1e21; --slot: #e0472e; --wt: #8c6a3e;
+  --me: #1d1e21; --me-ink: #f4f1ea;
+  --shadow: none;
+  --radius: 3px;
+  --display: "Jost", "Futura", "Century Gothic", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --sun: #e0472e; --branch: #1d1e21;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="sumi"] {
+    color-scheme: dark;
+    --bg: #151517; --panel: #1c1c1f; --panel-2: #232327; --ink: #ece7dc; --ink-2: #cfc9bc;
+    --muted: #9c978c; --faint: #6f6b64; --line: #2b2b2f; --line-2: #3a3a3f;
+    --accent: #f0654b; --accent-ink: #151517; --accent-soft: #3a211c;
+    --ok: #7fbf8a; --warn: #e3a25a; --bad: #ff7a62;
+    --code: #26262a; --log-bg: #0f0f11; --log-ink: #d9d4c8;
+    --c1: #f0654b; --c2: #ece7dc; --c3: #c9a77a; --c4: #9fb5ab; --c5: #e3a25a;
+    --best: #f0654b; --mean: #8a867e; --worst: #3a3a3f;
+    --op: #ece7dc; --slot: #f0654b; --wt: #c9a77a;
+    --me: #ece7dc; --me-ink: #151517;
+    --sun: #d8452c; --branch: #ece7dc;
+  }
+}
+
+/* --- paper, and the sun and branch behind it ------------------------------------ */
+html[data-theme="sumi"] body {
+  font-family: var(--display);
+  letter-spacing: .01em;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--sun) 92%, transparent) 0 69.5%, transparent 70%),
+    radial-gradient(ellipse at 20% 10%, color-mix(in srgb, var(--ink) 3%, transparent), transparent 60%);
+  background-size: 360px 360px, 100% 100%;
+  background-position: calc(100% + 90px) calc(100% + 70px), 0 0;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+html[data-theme="sumi"] body::after {
+  content: ""; position: fixed; right: 0; bottom: 0; width: 360px; height: 420px; pointer-events: none; z-index: 0;
+  opacity: .9;
+  background: var(--branch);
+  -webkit-mask: url("/themes/sumi-branch.svg") no-repeat right bottom / contain;
+          mask: url("/themes/sumi-branch.svg") no-repeat right bottom / contain;
+}
+@media (max-width: 960px) {
+  html[data-theme="sumi"] body { background-size: 220px 220px, 100% 100%;
+                                 background-position: calc(100% + 60px) calc(100% + 50px), 0 0; }
+  html[data-theme="sumi"] body::after { width: 200px; height: 240px; }
+}
+/* the page sits over the art */
+html[data-theme="sumi"] body > * { position: relative; z-index: 1; }
+html[data-theme="sumi"] .overlay { z-index: 50; }
+
+/* --- type ------------------------------------------------------------------------ */
+html[data-theme="sumi"] h1 {
+  font-weight: 400; font-size: 24px; letter-spacing: .22em; text-transform: uppercase;
+}
+html[data-theme="sumi"] h2,
+html[data-theme="sumi"] h3,
+html[data-theme="sumi"] .card-head h3 {
+  font-weight: 500; font-size: 11.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink);
+}
+html[data-theme="sumi"] h4 { font-weight: 500; letter-spacing: .14em; text-transform: uppercase; font-size: 11px; }
+/* a caption above a field -- not a choice, a checkbox or a drop zone, which are <label>s too */
+html[data-theme="sumi"] label:not(.check):not(.option):not(.drop) { font-weight: 500; letter-spacing: .08em; text-transform: uppercase; font-size: 10.5px; color: var(--muted); }
+html[data-theme="sumi"] label.check { text-transform: none; letter-spacing: .01em; font-size: 13px; color: var(--ink); }
+html[data-theme="sumi"] a { color: var(--accent); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+/* a short vermilion rule under the page's headline, as on the poster */
+html[data-theme="sumi"] main h1::after,
+html[data-theme="sumi"] .page h1::after {
+  content: ""; display: block; flex-basis: 100%; width: 36px; height: 1px; background: var(--accent); margin-top: 10px;
+}
+
+/* --- top bar: a line of type on the paper, and a seal ----------------------------- */
+html[data-theme="sumi"] .topbar {
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--line-2);
+}
+html[data-theme="sumi"] .brand b {
+  font-weight: 400; font-size: 15px; letter-spacing: .32em; text-transform: uppercase;
+}
+html[data-theme="sumi"] .brand span { letter-spacing: .06em; }
+html[data-theme="sumi"] .brand svg rect { rx: 1.5px; }
+html[data-theme="sumi"] .topbar a.button,
+html[data-theme="sumi"] .topbar .toplink,
+html[data-theme="sumi"] .viewnav button {
+  border-color: transparent; background: transparent; border-radius: 0; font-size: 11px;
+  letter-spacing: .16em; text-transform: uppercase; color: var(--ink-2); text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+html[data-theme="sumi"] .topbar a.button:hover,
+html[data-theme="sumi"] .topbar .toplink:hover,
+html[data-theme="sumi"] .viewnav button:hover:not(:disabled) {
+  background: transparent; border-bottom-color: var(--accent); color: var(--ink);
+}
+html[data-theme="sumi"] .viewnav button[aria-current],
+html[data-theme="sumi"] .viewnav button.active,
+html[data-theme="sumi"] .viewnav button[aria-selected="true"] {
+  background: transparent; color: var(--accent); border-bottom-color: var(--accent);
+}
+html[data-theme="sumi"] .theme-pick { border-radius: 2px !important; }
+
+/* --- surfaces: hairlines, not cards ------------------------------------------------ */
+html[data-theme="sumi"] .card,
+html[data-theme="sumi"] .panel {
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border: 0; border-top: 1px solid var(--ink); border-radius: 0; box-shadow: none;
+}
+html[data-theme="sumi"] .agent { background: color-mix(in srgb, var(--panel) 94%, transparent); border-right-color: var(--line-2); }
+html[data-theme="sumi"] .sheet { border-radius: 2px; border: 1px solid var(--line-2); }
+html[data-theme="sumi"] table th {
+  font-weight: 500; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+}
+html[data-theme="sumi"] code { border-radius: 2px; }
+
+/* --- controls ---------------------------------------------------------------------- */
+html[data-theme="sumi"] input,
+html[data-theme="sumi"] textarea,
+html[data-theme="sumi"] select { border-radius: 2px; background: var(--panel); }
+html[data-theme="sumi"] input:focus,
+html[data-theme="sumi"] textarea:focus,
+html[data-theme="sumi"] select:focus {
+  box-shadow: 0 1px 0 0 var(--accent); border-color: var(--ink-2);
+}
+html[data-theme="sumi"] button {
+  border-radius: 2px; font-weight: 500; letter-spacing: .06em;
+}
+/* a row of large buttons reads as one set: all set like the primary */
+html[data-theme="sumi"] button.lg,
+html[data-theme="sumi"] button.primary,
+html[data-theme="sumi"] .primary {
+  letter-spacing: .16em; text-transform: uppercase; font-size: 12px;
+}
+html[data-theme="sumi"] button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 86%, #000);
+}
+html[data-theme="sumi"] .pill { border-radius: 2px; letter-spacing: .04em; }
+html[data-theme="sumi"] .tag { border-radius: 1px; letter-spacing: .14em; }
+
+/* --- the guide's conversation -------------------------------------------------------- */
+html[data-theme="sumi"] .bubble {
+  border-radius: 0; background: transparent; border: 0; border-left: 1px solid var(--line-2); padding: 4px 0 4px 14px;
+}
+html[data-theme="sumi"] .msg.me .bubble {
+  border-radius: 0; border-left: 0; padding: 10px 14px;
+}
+html[data-theme="sumi"] .msg .who { letter-spacing: .16em; text-transform: uppercase; font-size: 10px; font-weight: 500; }
+html[data-theme="sumi"] .msg.event.tool { border-radius: 1px; }
+
+/* --- the pipeline's stages: ink dots on a thin line ------------------------------------ */
+html[data-theme="sumi"] .stage::before { height: 1px; top: 11px; }
+html[data-theme="sumi"] .stage b { font-weight: 500; letter-spacing: .1em; text-transform: uppercase; font-size: 11px; }
+
+}

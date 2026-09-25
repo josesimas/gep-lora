@@ -1327,6 +1327,26 @@ class GuideDefaultsTests(JobsTestCase):
                 guide_defaults.check({"lora_count": bad})
 
 
+    def test_the_searchs_seeds_are_a_number_or_random(self):
+        from config import settings as config
+        self.assertIsNone(config.SEED)                   # random unless someone pins one
+        kept = guide_defaults.check({"seed": 42, "weight_seed": "", "selection_seed": None})
+        self.assertEqual(kept, {"seed": 42, "weight_seed": ""})
+        for bad in (-1, 2 ** 31, 1.5, "42", True):
+            with self.assertRaises(guide_defaults.DefaultsError, msg=bad):
+                guide_defaults.check({"mutation_seed": bad})
+        with guide_defaults.applied({"seed": 42, "weight_seed": ""}):
+            self.assertEqual(guide_defaults.job_settings(),
+                             {"SEED": 42, "WEIGHT_MASTER_SEED": None})
+        # A random seed is drawn when the search is made, and recorded.
+        from async_api import submit
+        with mock.patch.object(config, "WEIGHT_MASTER_SEED", 5):
+            conf = submit.settings_for({"SEED": 42, "WEIGHT_MASTER_SEED": None,
+                                        "TEMPLATE": "template_code_mocked.py"})
+        self.assertEqual(conf["SEED"], 42)
+        self.assertIsInstance(conf["WEIGHT_MASTER_SEED"], int)
+
+
 class GuideDefaultsEndpointTests(ServerTestCase):
 
     def test_the_page_is_served(self):

@@ -1,0 +1,183 @@
+/* Bauhaus -- a printed poster: cream stock, black, mustard and dusty pink.
+ *
+ * Tall condensed capitals, thick black rules, square corners, flat blocks of
+ * colour with no shadows, and a cluster of geometric shapes -- triangles, a
+ * half disc, a flower -- behind the bottom-right corner of the page.
+ *
+ * Every rule is under html[data-theme="bauhaus"], which outranks the pages'
+ * own :root, and inside @media screen, so printing keeps the page's own print
+ * colours. */
+
+@media screen {
+
+html[data-theme="bauhaus"] {
+  color-scheme: light;
+  --bg: #ebe3d2; --panel: #f3ecdd; --panel-2: #e3dac6; --ink: #1c1b19; --ink-2: #33312d;
+  --muted: #6a655c; --faint: #9a9488; --line: #d6ccb7; --line-2: #1c1b19;
+  --accent: #1c1b19; --accent-ink: #f3ecdd; --accent-soft: #f2d7d3;
+  --pink: #e39a98; --mustard: #e6b43c;
+  --ok: #4f7a3a; --warn: #b8801a; --bad: #c0463f;
+  --code: #e0d7c3; --log-bg: #1c1b19; --log-ink: #ebe3d2;
+  --c1: #1c1b19; --c2: #e39a98; --c3: #e6b43c; --c4: #8f8a82; --c5: #4a4743;
+  --best: #1c1b19; --mean: #e39a98; --worst: #cfc5b0;
+  --op: #1c1b19; --slot: #c0463f; --wt: #b8801a;
+  --me: #1c1b19; --me-ink: #f3ecdd;
+  --shadow: none;
+  --radius: 0;
+  --display: "Bebas Neue", "League Gothic", "Oswald", "Arial Narrow", "Roboto Condensed", Impact, sans-serif;
+  --body: "Futura", "Century Gothic", "Jost", "Segoe UI", system-ui, sans-serif;
+  --rule: 3px solid var(--ink);
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="bauhaus"] {
+    color-scheme: dark;
+    --bg: #1a1917; --panel: #22211e; --panel-2: #2b2926; --ink: #ebe3d2; --ink-2: #d2c9b6;
+    --muted: #a39c8e; --faint: #756f65; --line: #34322e; --line-2: #ebe3d2;
+    --accent: #e6b43c; --accent-ink: #1a1917; --accent-soft: #3a3022;
+    --ok: #93bf7a; --warn: #e6b43c; --bad: #ec8a83;
+    --code: #2b2926; --log-bg: #0f0f0e; --log-ink: #ebe3d2;
+    --c1: #e6b43c; --c2: #e39a98; --c3: #ebe3d2; --c4: #8f8a82; --c5: #b9b3a8;
+    --best: #e6b43c; --mean: #e39a98; --worst: #3a3834;
+    --op: #ebe3d2; --slot: #e39a98; --wt: #e6b43c;
+    --me: #ebe3d2; --me-ink: #1a1917;
+  }
+}
+
+/* --- the stock, and the shapes on it ------------------------------------------------ */
+html[data-theme="bauhaus"] body {
+  font-family: var(--body);
+  background-color: var(--bg);
+  /* a faint paper grain */
+  background-image:
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--ink) 2.5%, transparent) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--ink) 1.5%, transparent) 0 1px, transparent 1px 4px);
+  background-attachment: fixed;
+}
+html[data-theme="bauhaus"] body::after {
+  content: ""; position: fixed; right: 0; bottom: 0; width: 400px; height: 480px; pointer-events: none; z-index: 0;
+  background: url("/themes/bauhaus-shapes.svg") no-repeat right bottom / contain;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="bauhaus"] body::after { opacity: .75; }
+}
+@media (max-width: 960px) {
+  html[data-theme="bauhaus"] body::after { width: 220px; height: 264px; }
+}
+html[data-theme="bauhaus"] body > * { position: relative; z-index: 1; }
+html[data-theme="bauhaus"] .overlay { z-index: 50; }
+
+/* --- type: tall condensed capitals ----------------------------------------------------- */
+html[data-theme="bauhaus"] h1 {
+  font-family: var(--display); font-weight: 700; font-size: 38px; line-height: 1; letter-spacing: .02em;
+  text-transform: uppercase; font-stretch: condensed;
+}
+html[data-theme="bauhaus"] h2,
+html[data-theme="bauhaus"] h3,
+html[data-theme="bauhaus"] .card-head h3 {
+  font-family: var(--display); font-weight: 700; font-size: 17px; letter-spacing: .06em; text-transform: uppercase;
+  font-stretch: condensed; color: var(--ink);
+}
+html[data-theme="bauhaus"] h4 { font-weight: 700; letter-spacing: .1em; text-transform: uppercase; font-size: 11px; }
+/* a caption above a field -- not a choice, a checkbox or a drop zone, which are <label>s too */
+html[data-theme="bauhaus"] label:not(.check):not(.option):not(.drop) { font-weight: 700; letter-spacing: .1em; text-transform: uppercase; font-size: 10.5px; color: var(--ink-2); }
+html[data-theme="bauhaus"] label.check { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 13px; color: var(--ink); }
+html[data-theme="bauhaus"] a { color: var(--ink); text-decoration-color: var(--pink); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+/* the poster's short heavy bar under a headline, in pink */
+html[data-theme="bauhaus"] main h1::after,
+html[data-theme="bauhaus"] .page h1::after {
+  content: ""; display: block; flex-basis: 100%; width: 64px; height: 4px; background: var(--pink); margin-top: 8px;
+}
+
+/* --- top bar: a black band, like the poster's info strip ------------------------------- */
+html[data-theme="bauhaus"] .topbar {
+  background: var(--ink); color: var(--bg); border-bottom: 4px solid var(--mustard, #e6b43c);
+}
+html[data-theme="bauhaus"] .topbar .brand b {
+  font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--bg);
+}
+html[data-theme="bauhaus"] .topbar .brand span { color: color-mix(in srgb, var(--bg) 65%, var(--ink)); }
+html[data-theme="bauhaus"] .brand svg rect { rx: 0; fill: #e39a98; }
+html[data-theme="bauhaus"] .brand svg path { stroke: #1c1b19; }
+html[data-theme="bauhaus"] .brand svg circle { fill: #1c1b19; }
+html[data-theme="bauhaus"] .topbar .health { color: color-mix(in srgb, var(--bg) 70%, var(--ink)); }
+html[data-theme="bauhaus"] .topbar a.button,
+html[data-theme="bauhaus"] .topbar .toplink,
+html[data-theme="bauhaus"] .topbar button,
+html[data-theme="bauhaus"] .viewnav button {
+  background: transparent; border: 0; border-radius: 0; color: var(--bg); text-decoration: none;
+  font-weight: 700; font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
+}
+html[data-theme="bauhaus"] .viewnav { background: transparent; border: 0; }
+html[data-theme="bauhaus"] .topbar a.button:hover,
+html[data-theme="bauhaus"] .topbar .toplink:hover,
+html[data-theme="bauhaus"] .topbar button:hover:not(:disabled),
+html[data-theme="bauhaus"] .viewnav button:hover:not(:disabled) { background: #e39a98; color: #1c1b19; }
+html[data-theme="bauhaus"] .viewnav button[aria-current],
+html[data-theme="bauhaus"] .viewnav button.active,
+html[data-theme="bauhaus"] .viewnav button[aria-selected="true"] { background: #e6b43c; color: #1c1b19; }
+html[data-theme="bauhaus"] .topbar input { background: var(--bg); color: var(--ink); border-color: var(--bg); }
+html[data-theme="bauhaus"] .theme-pick {
+  border-radius: 0 !important; background: var(--bg) !important; color: var(--ink) !important; border: 0 !important;
+  font-weight: 700;
+}
+
+/* --- surfaces: flat blocks with a heavy rule on top ------------------------------------ */
+html[data-theme="bauhaus"] .card,
+html[data-theme="bauhaus"] .panel {
+  background: var(--panel); border: 0; border-top: 4px solid var(--ink); border-radius: 0; box-shadow: none;
+}
+html[data-theme="bauhaus"] .agent { background: var(--panel); border-right: var(--rule); }
+html[data-theme="bauhaus"] .agent-head { border-bottom: var(--rule); }
+html[data-theme="bauhaus"] .composer { border-top: var(--rule); }
+html[data-theme="bauhaus"] .sheet { border-radius: 0; border: var(--rule); }
+html[data-theme="bauhaus"] table th {
+  font-weight: 700; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink);
+  border-bottom: 2px solid var(--ink);
+}
+html[data-theme="bauhaus"] code { border-radius: 0; }
+
+/* --- controls: square, outlined in ink ----------------------------------------------------- */
+html[data-theme="bauhaus"] input,
+html[data-theme="bauhaus"] textarea,
+html[data-theme="bauhaus"] select { border-radius: 0; border: 2px solid var(--ink); background: var(--panel); }
+html[data-theme="bauhaus"] input:focus,
+html[data-theme="bauhaus"] textarea:focus,
+html[data-theme="bauhaus"] select:focus { box-shadow: 4px 4px 0 0 var(--mustard, #e6b43c); border-color: var(--ink); }
+html[data-theme="bauhaus"] button {
+  border-radius: 0; border: 2px solid var(--ink); font-weight: 700; letter-spacing: .04em;
+}
+html[data-theme="bauhaus"] button.ghost { border-color: transparent; }
+/* a row of large buttons reads as one set: all set like the primary */
+html[data-theme="bauhaus"] button.lg {
+  font-family: var(--display); font-size: 16px; letter-spacing: .08em; text-transform: uppercase;
+}
+html[data-theme="bauhaus"] button.primary,
+html[data-theme="bauhaus"] .primary {
+  font-family: var(--display); font-size: 16px; letter-spacing: .08em; text-transform: uppercase;
+  background: var(--ink); color: var(--bg); border-color: var(--ink);
+}
+html[data-theme="bauhaus"] button.primary:hover:not(:disabled),
+html[data-theme="bauhaus"] .primary:hover {
+  background: #e39a98 !important; color: #1c1b19 !important; border-color: var(--ink) !important;
+}
+html[data-theme="bauhaus"] .pill { border-radius: 0; font-weight: 700; letter-spacing: .04em; }
+html[data-theme="bauhaus"] .pill::before { border-radius: 0; }
+html[data-theme="bauhaus"] .tag { border-radius: 0; letter-spacing: .12em; }
+html[data-theme="bauhaus"] .tag.mock { background: #e6b43c; color: #1c1b19; }
+
+/* --- the guide's conversation --------------------------------------------------------------- */
+html[data-theme="bauhaus"] .bubble {
+  border-radius: 0; background: var(--bg); border: 0; border-left: 6px solid #e39a98;
+}
+html[data-theme="bauhaus"] .msg.me .bubble { border-radius: 0; border-left: 0; border-right: 6px solid #e6b43c; }
+html[data-theme="bauhaus"] .msg .who { letter-spacing: .12em; text-transform: uppercase; font-size: 10px; font-weight: 700; }
+html[data-theme="bauhaus"] .msg.event.tool { border-radius: 0; }
+
+/* --- pipeline stages: square blocks on a heavy line ------------------------------------------ */
+html[data-theme="bauhaus"] .stage .dot { border-radius: 0; }
+html[data-theme="bauhaus"] .stage::before { height: 3px; }
+html[data-theme="bauhaus"] .stage.done::before { background: var(--ink); }
+html[data-theme="bauhaus"] .stage b { font-family: var(--display); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 14px; }
+
+}
