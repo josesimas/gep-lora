@@ -39,6 +39,7 @@ import json
 
 from adapters import catalog as lora_catalog
 from async_api_agent import blending
+from async_api_agent import guide_defaults
 from async_api_agent import commands
 from async_api_agent import planner
 from async_api_agent import prompts
@@ -92,11 +93,12 @@ def intro(choice=None, mock=False, ready=0):
     """The welcome. `ready` is how many ready LoRAs the user already has, so
     one who trained before can go straight to blending them."""
     options = planner.recipe()
-    facts = {"steps": prompts.PROCESS, "loras": len(settings.LORA_RANKS),
-             "ranks": settings.LORA_RANKS, "base_model": options["base_model"],
+    ranks = planner.default_ranks()
+    facts = {"steps": prompts.PROCESS, "loras": len(ranks),
+             "ranks": ranks, "base_model": options["base_model"],
              "mock": bool(mock), "ready_loras": ready}
     fallback = prompts.FALLBACK_INTRO.format(
-        steps=_numbered(prompts.PROCESS), loras=len(settings.LORA_RANKS),
+        steps=_numbered(prompts.PROCESS), loras=len(ranks),
         base_model=options["base_model"], mock=prompts.FALLBACK_INTRO_MOCK if mock else "",
         ready=prompts.FALLBACK_INTRO_READY.format(count=ready) if ready else "")
     return {"message": say("intro", facts, fallback, choice), "facts": facts}

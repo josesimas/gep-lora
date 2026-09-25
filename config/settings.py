@@ -462,6 +462,14 @@ JUDGE_TEMPERATURE = 0.0
 # this needs far more headroom than the answer itself requires.
 JUDGE_MAX_TOKENS = 2000
 
+# Whether a reasoning judge thinks before it grades. None leaves it to the
+# model; False asks it not to, which on a reasoning model is most of the
+# grading time (251 tokens -> 4 for one short answer on LM Studio); True asks
+# it to. On an endpoint this is `reasoning_effort` ("none" / "medium") -- the
+# one control LM Studio honours -- dropped and retried without if the endpoint
+# refuses it; on the unsloth backend it is the chat template's enable_thinking.
+JUDGE_THINKING = None
+
 # Seconds to wait for one grading call, how many times to retry a call that
 # fails for a transient reason (connection dropped, 5xx, rate limit), and how
 # long to wait between tries.

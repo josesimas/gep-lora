@@ -46,6 +46,7 @@ from async_api_agent import agent
 from async_api_agent import analysis
 from async_api_agent import blending
 from async_api_agent import commands
+from async_api_agent import guide_defaults
 from async_api_agent import planner
 from async_api_agent import prompts
 from async_api_agent import providers
@@ -246,6 +247,47 @@ class ProviderTests(JobsTestCase):
         self.assertNotIn("temperature", first)
         self.assertIn("output_config", first)
         self.assertNotIn("output_config", second)     # retried without what it refused
+
+    def test_thinking_is_switched_in_each_wires_own_words(self):
+        self.assertEqual(providers.thinking_fields("openai", None), {})
+        self.assertEqual(providers.thinking_fields("openai", False), {"reasoning_effort": "none"})
+        self.assertEqual(providers.thinking_fields("openai", True), {"reasoning_effort": "medium"})
+        self.assertEqual(providers.thinking_fields("anthropic", False),
+                         {"thinking": {"type": "disabled"}})
+        self.assertEqual(providers.thinking_fields("responses", False),
+                         {"reasoning": {"effort": "none"}})
+        # The page's choice wins over the default; unset leaves the request alone.
+        Stand_in.replies = [(200, {"choices": [{"message": {"content": "a"}}]}),
+                            (422, {"error": {"message": "unknown field reasoning_effort"}}),
+                            (200, {"choices": [{"message": {"content": "b"}}]}),
+                            (200, {"choices": [{"message": {"content": "c"}}]})]
+        off = providers.resolve({"provider": "lmstudio", "base_url": self.url, "model": "m",
+                                 "thinking": False})
+        self.assertEqual(providers.chat(off, "S", [{"role": "user", "content": "q"}])[0], "a")
+        self.assertEqual(Stand_in.seen[-1][3]["reasoning_effort"], "none")
+        # An endpoint that refuses the switch is asked again without it.
+        self.assertEqual(providers.chat(off, "S", [{"role": "user", "content": "q"}])[0], "b")
+        self.assertNotIn("reasoning_effort", Stand_in.seen[-1][3])
+        with guide_defaults.applied({"thinking": True}):
+            left = providers.resolve({"provider": "lmstudio", "base_url": self.url, "model": "m"})
+        providers.chat(left, "S", [{"role": "user", "content": "q"}])
+        self.assertEqual(Stand_in.seen[-1][3]["reasoning_effort"], "medium")
+
+    def test_the_judge_is_asked_to_think_or_not(self):
+        from evaluators import common
+        base = {"backend": "endpoint", "base_url": self.url, "api_key": "", "model": "j",
+                "temperature": 0.0, "max_tokens": 50, "timeout": 10, "retries": 0,
+                "retry_wait": 0, "response_format": None}
+        good = (200, {"choices": [{"message": {"content": '{"quality": 0.5, "reason": "ok"}'}}]})
+        Stand_in.replies = [good, (400, {"error": {"message": "no reasoning_effort"}}), good, good]
+        self.assertEqual(common.ask_judge("S", "U", dict(base, thinking=False))[0], 0.5)
+        self.assertEqual(Stand_in.seen[-1][3]["reasoning_effort"], "none")
+        self.assertEqual(common.ask_judge("S", "U", dict(base, thinking=True))[0], 0.5)
+        self.assertNotIn("reasoning_effort", Stand_in.seen[-1][3])    # refused, so dropped
+        common.ask_judge("S", "U", dict(base, thinking=None))
+        self.assertNotIn("reasoning_effort", Stand_in.seen[-1][3])
+        self.assertIsNone(common.judge_settings({})["thinking"])
+        self.assertFalse(common.judge_settings({"JUDGE_THINKING": False})["thinking"])
 
     def test_opencode_go_picks_the_wire_by_the_model(self):
         Stand_in.replies = [
@@ -1212,3 +1254,145 @@ class SummaryTests(ReleaseEndpointTests):
         reply = self.call("POST", "/agent/chat", {"agent": SCRIPTED, "message": "a recap please",
                                                   "stage": "dataset", "session": {}})[1]
         self.assertEqual(reply["actions"], [{"type": "summary"}])
+
+
+# --- the user's own defaults ------------------------------------------------------------
+
+
+class GuideDefaultsTests(JobsTestCase):
+
+    def test_what_a_page_sends_is_checked_and_only_what_is_set_is_kept(self):
+        kept = guide_defaults.check({"ranks": [4, 32], "learning_rate": 1e-4, "mock": True,
+                                     "blend_population": 12, "model": None, "chat_template": ""})
+        self.assertEqual(kept, {"ranks": [4, 32], "learning_rate": 1e-4, "mock": True,
+                                "blend_population": 12, "chat_template": ""})
+        for bad in ({"ranks": []}, {"ranks": list(range(1, 8))}, {"learning_rate": "fast"},
+                    {"blend_population": 1}, {"scheduler": "sideways"}, {"evaluator": "nope"},
+                    {"nonsense": 1}, {"model": "m"}, {"mock": "yes"}, []):
+            with self.assertRaises(guide_defaults.DefaultsError, msg=bad):
+                guide_defaults.check(bad)
+        # Thinking is on, off, or "" -- the model's own -- and nothing else.
+        self.assertEqual(guide_defaults.check({"thinking": False, "judge_thinking": ""}),
+                         {"thinking": False, "judge_thinking": ""})
+        with self.assertRaises(guide_defaults.DefaultsError):
+            guide_defaults.check({"thinking": "maybe"})
+        with guide_defaults.applied({"judge_thinking": False, "thinking": ""}):
+            self.assertEqual(guide_defaults.job_settings(), {"JUDGE_THINKING": False})
+            self.assertIsNone(guide_defaults.value("THINKING"))
+        # A saved value that no longer checks goes back to the server's.
+        self.assertEqual(guide_defaults.stored({"ranks": [8], "evaluator": "gone"}), {"ranks": [8]})
+        # A chat model is read back with its provider, even beside a value that is dropped.
+        self.assertEqual(guide_defaults.stored({"provider": "lmstudio", "model": "m", "ranks": []}),
+                         {"provider": "lmstudio", "model": "m"})
+        self.assertEqual(guide_defaults.stored({"provider": "lmstudio", "model": "m"}),
+                         {"provider": "lmstudio", "model": "m"})
+
+    def test_saved_defaults_are_what_the_guide_reads_and_only_inside(self):
+        saved = {"ranks": [4], "epochs_quick": 1.5, "blend_generations": 7, "provider": "scripted",
+                 "chat_template": "", "evaluator": "heuristic", "batch_size": 4}
+        with guide_defaults.applied(saved):
+            session = planner.session_of({})
+            self.assertEqual(session["ranks"], [4])
+            self.assertEqual(session["blend"]["generations"], 7)
+            self.assertEqual(guide_defaults.wait_choices()[0]["epochs"], 1.5)
+            self.assertEqual(planner.read_wait("the quick one", 10, 0)[0], 1.5)
+            self.assertIsNone(planner.recipe()["chat_template"])
+            self.assertEqual(planner.recipe()["batch_size"], 4)
+            self.assertEqual(providers.resolve({})["name"], "scripted")
+            self.assertEqual(guide_defaults.job_settings(), {"EVALUATOR": "heuristic"})
+        self.assertEqual(planner.session_of({})["ranks"], settings.LORA_RANKS)
+        self.assertEqual(guide_defaults.wait_choices(), settings.WAIT_CHOICES)
+
+
+    def test_the_number_of_loras_takes_the_ranks_in_turn_each_repeat_its_own_seed(self):
+        self.assertEqual(planner.default_ranks(), settings.LORA_RANKS)     # one per rank
+        with guide_defaults.applied({"ranks": [8, 16], "lora_count": 5}):
+            self.assertEqual(planner.default_ranks(), [8, 16, 8, 16, 8])
+            session = planner.session_of({})
+            self.assertEqual(session["ranks"], [8, 16, 8, 16, 8])
+            found = analysis.analyse(jsonl(RECORDS), "tiny.jsonl")
+            bodies = planner.plan(self.registry.catalog, self.user, found, 1, True, None, session)
+            self.assertEqual(planner.estimate(self.registry.catalog, 10, 1, True,
+                                              session=session)["loras"], 5)
+            # A chat that names its ranks names the LoRAs too.
+            self.assertEqual(planner.session_of({"ranks": [4]})["ranks"], [4])
+        seed = planner.recipe()["seed"]
+        self.assertEqual([body["settings"].get("seed") for body in bodies],
+                         [None, None, seed + 1, seed + 1, seed + 2])
+        self.assertEqual(len({body["name"] for body in bodies}), 5)
+        with guide_defaults.applied({"ranks": [8], "lora_count": 1}):
+            self.assertEqual(planner.default_ranks(), [8])
+        for bad in (0, 6, 2.5):
+            with self.assertRaises(guide_defaults.DefaultsError, msg=bad):
+                guide_defaults.check({"lora_count": bad})
+
+
+class GuideDefaultsEndpointTests(ServerTestCase):
+
+    def test_the_page_is_served(self):
+        status, _, body = self.download("/guide_defaults")
+        self.assertEqual(status, 200)
+        self.assertIn(b"<title>Guide defaults</title>", body)
+
+    def test_defaults_saved_read_back_used_and_forgotten(self):
+        status, form = self.call("GET", "/agent/defaults")
+        self.assertEqual(status, 200, form)
+        self.assertEqual(form["saved"], {})
+        self.assertEqual(form["effective"]["ranks"], settings.LORA_RANKS)
+        self.assertEqual({one["id"] for one in form["groups"]},
+                         {one["group"] for one in form["fields"]})
+
+        status, refused = self.call("PUT", "/agent/defaults", {"values": {"blend_population": 1}})
+        self.assertEqual(status, 400)
+        self.assertIn("Blends per generation", refused["error"])
+
+        wanted = {"ranks": [4, 16], "learning_rate": 1e-4, "base_model": "unsloth/other",
+                  "blend_generations": 2, "blend_population": 6, "blend_questions": 3,
+                  "evaluator": "heuristic", "mock": True, "epochs_balanced": 5}
+        status, form = self.call("PUT", "/agent/defaults", {"values": wanted})
+        self.assertEqual(status, 200, form)
+        self.assertEqual(form["saved"], wanted)
+        self.assertIsNotNone(form["updated_at"])
+        self.assertEqual(self.call("GET", "/agent/defaults")[1]["saved"], wanted)
+
+        # The guide starts from them...
+        config = self.call("GET", "/agent/config")[1]
+        self.assertEqual(config["ranks"], [4, 16])
+        self.assertEqual(config["base_model"], "unsloth/other")
+        self.assertTrue(config["mock"])
+        self.assertEqual((config["blend"]["generations"], config["blend"]["population"]), (2, 6))
+        self.assertEqual(config["wait_choices"][1]["epochs"], 5)
+        self.assertEqual(sorted(config["own_defaults"]), sorted(wanted))
+
+        # ...its plan trains under them, the chat's changes over them...
+        status, plan = self.call("POST", "/agent/plan", {
+            "dataset": {"text": jsonl(RECORDS), "name": "tiny.jsonl"}, "epochs": 1, "mock": True,
+            "session": {"options": {"alpha": 8}}})
+        self.assertEqual(status, 200, plan)
+        self.assertEqual([body["settings"]["rank"] for body in plan["trainings"]], [4, 16])
+        first = plan["trainings"][0]["settings"]
+        self.assertEqual((first["learning_rate"], first["base_model"], first["alpha"]),
+                         (1e-4, "unsloth/other", 8))
+        self.assertIn("-other-", plan["trainings"][0]["name"])
+
+        # ...and its search is judged by the evaluator chosen.
+        lora(self.app.catalog, "mine-r8", owner=self.user["name"], base_model="unsloth/other")
+        status, found = self.call("POST", "/agent/blend/plan", {
+            "session": {}, "dataset": {"file": "poem_lora_dataset.json"}})
+        self.assertEqual(status, 200, found)
+        self.assertEqual(found["job"]["settings"]["EVALUATOR"], "heuristic")
+        self.assertEqual(found["job"]["settings"]["COUNT"], 6)
+        self.assertEqual(found["questions"], 3)
+        # A job may name them (the stand-in LoRA has no folder to submit for real).
+        from async_api import submit
+        submit.check_names(found["job"]["settings"])
+
+        # Another user's defaults are their own.
+        bob = self.registry.add_user("bob")
+        self.assertEqual(self.call("GET", "/agent/defaults", key=bob)[1]["saved"], {})
+        self.assertEqual(self.call("GET", "/agent/config", key=bob)[1]["ranks"],
+                         settings.LORA_RANKS)
+
+        status, form = self.call("DELETE", "/agent/defaults")
+        self.assertEqual((status, form["saved"]), (200, {}))
+        self.assertEqual(self.call("GET", "/agent/config")[1]["ranks"], settings.LORA_RANKS)

@@ -52,7 +52,8 @@ async_api/    server, worker, submit, registry, results, golive, inference,
               users, verify, evaluate, testpass, train -- the search as a web
               service. See "The async API" below. agent-ui.html is the LoRA guide
               page (/agent, /agent?job=N opens a search); runs.html lists the
-              user's runs (/runs.html, from GET /runs).
+              user's runs (/runs.html, from GET /runs); guide_defaults.html
+              is the user's defaults for the guide (/guide_defaults).
 async_api_agent/  settings, prompts, providers, analysis, selection, planner, blending,
               release, tools, commands, agent, ui_help, create_summary, routes -- the chat model behind
               /agent that walks a user to trained LoRAs, a search that blends
@@ -1125,6 +1126,14 @@ change to it. These rules hold it together:
   be repointed from the page, and then without its key. Its knobs are
   `async_api_agent/settings.py` (`GEP_AGENT_<NAME>` overrides), for the same reason
   the API's are not in `config/settings.py`.
+- **A user's defaults sit over those knobs** (`guide_defaults.py`, the page
+  `/guide_defaults`, `GET`/`PUT`/`DELETE /agent/defaults`, the registry's
+  `guide_defaults` table). Every `/agent/*` handler runs inside
+  `guide_defaults.applied()` (`routes._theirs`), so read a default through
+  `guide_defaults.value(NAME)` / `wait_choices()` / `recipe()` rather than
+  `settings.NAME` -- a new default is an entry in `FIELDS` and that read. Only
+  values differing from the server's are stored, and they reach training and a
+  search only through the POST /loras and POST /jobs bodies, never around them.
 - **The chat acts through tools on a session, never on the world.** `/agent/chat`
   runs `agent.chat()`: the model gets `tools.schemas()` and up to `MAX_ROUNDS` of
   calls, each run by a `Toolbox` against the page's session (`planner.session_of()`:

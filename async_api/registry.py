@@ -25,6 +25,9 @@ the API knows, in one place:
                  by adapters/catalog.py, which create_lora.py writes through
                  with no API running, and created here from its SCHEMA so the
                  file is whole whichever opens it first.
+    guide_defaults  one user's defaults for the LoRA guide (see
+                 async_api_agent/guide_defaults.py): a JSON document per
+                 user, holding only the values they set.
 
 It was two files until the LoRAs arrived -- `jobs.sqlite3` here and a
 catalogue under loras/. A registry that finds a `jobs.sqlite3` and no
@@ -147,6 +150,12 @@ CREATE TABLE IF NOT EXISTS trainings (
     pid              INTEGER,
     exit_code        INTEGER,
     error            TEXT
+);
+
+CREATE TABLE IF NOT EXISTS guide_defaults (
+    user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    doc         TEXT NOT NULL DEFAULT '{}',   -- JSON, {key: value}, only what was set
+    updated_at  TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS jobs_by_status ON jobs(status, id);
@@ -291,6 +300,34 @@ class Registry:
         with self._connect() as conn:
             return conn.execute("SELECT * FROM users WHERE key_hash = ?",
                                 (digest(key),)).fetchone()
+
+    # --- the guide's defaults ----------------------------------------------
+
+    def guide_defaults(self, user_id):
+        """-> (the user's saved defaults, when they were saved), or ({}, None)."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT doc, updated_at FROM guide_defaults WHERE user_id = ?",
+                               (user_id,)).fetchone()
+        if row is None:
+            return {}, None
+        try:
+            doc = json.loads(row["doc"])
+        except ValueError:
+            doc = {}
+        return (doc if isinstance(doc, dict) else {}), row["updated_at"]
+
+    def set_guide_defaults(self, user_id, doc):
+        """Replace the user's saved defaults whole; an empty one removes the row."""
+        with self._connect() as conn:
+            if not doc:
+                conn.execute("DELETE FROM guide_defaults WHERE user_id = ?", (user_id,))
+                return None
+            stamp = now()
+            conn.execute("INSERT INTO guide_defaults (user_id, doc, updated_at) VALUES (?, ?, ?) "
+                         "ON CONFLICT(user_id) DO UPDATE SET doc = excluded.doc, "
+                         "updated_at = excluded.updated_at",
+                         (user_id, json.dumps(doc, sort_keys=True), stamp))
+            return stamp
 
     # --- jobs --------------------------------------------------------------
 

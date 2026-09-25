@@ -39,6 +39,7 @@ import time
 from adapters import catalog as lora_catalog
 from async_api import settings as api_settings
 from async_api import train
+from async_api_agent import guide_defaults
 from async_api_agent import selection as picking
 from async_api_agent import settings
 
@@ -61,8 +62,20 @@ class SessionError(ValueError):
 
 
 def recipe():
-    """create_lora.py's defaults as the API would train them."""
-    return train.defaults()
+    """create_lora.py's defaults as the API would train them, under the
+    user's own training defaults (guide_defaults.py) when they set any."""
+    return guide_defaults.recipe()
+
+
+def default_ranks():
+    """The ranks a plan starts from: LORA_RANKS, taken in turn until there are
+    LORA_COUNT of them (the user's own defaults where they set either)."""
+    ranks = list(guide_defaults.value("LORA_RANKS"))
+    count = guide_defaults.value("LORA_COUNT")
+    if not count:
+        return ranks
+    count = max(1, min(int(count), settings.MAX_LORAS))
+    return [ranks[index % len(ranks)] for index in range(count)]
 
 
 def check_ranks(ranks):
@@ -146,7 +159,7 @@ def session_of(raw):
     return {"selection": chosen,
             "blend": blend,
             "release": after,
-            "ranks": check_ranks(raw["ranks"]) if raw.get("ranks") else list(settings.LORA_RANKS),
+            "ranks": check_ranks(raw["ranks"]) if raw.get("ranks") else default_ranks(),
             "epochs": epochs,
             "options": check_options(raw.get("options") or {}),
             "name": check_name(raw.get("name")),
@@ -222,9 +235,10 @@ def estimate(catalog, records, epochs, mock=False, base_model=None, session=None
 
 
 def choices(catalog, records, mock=False, session=None):
-    """settings.WAIT_CHOICES, each with its estimate on this dataset."""
+    """settings.WAIT_CHOICES (with the user's epochs), each with its estimate
+    on this dataset."""
     out = []
-    for choice in settings.WAIT_CHOICES:
+    for choice in guide_defaults.wait_choices():
         found = estimate(catalog, records, choice["epochs"], mock, session=session)
         out.append(dict(choice, estimate=found, time=found["time"]))
     return out
@@ -273,7 +287,7 @@ def read_wait(text, per_epoch_seconds, overhead_seconds):
         epochs = clamp(max(epochs, settings.MIN_EPOCHS))
         return epochs, "a budget of %s" % human(budget).replace("about ", "")
 
-    for choice in settings.WAIT_CHOICES:
+    for choice in guide_defaults.wait_choices():
         names = [choice["id"], choice["label"].lower()] + choice["label"].lower().split()[-1:]
         if any(" %s " % name in said or name in said.strip() for name in names):
             return float(choice["epochs"]), "the option “%s”" % choice["label"]
@@ -281,7 +295,7 @@ def read_wait(text, per_epoch_seconds, overhead_seconds):
                         ("balanced", 1), ("thorough", -1), ("full", -1), ("longest", -1),
                         ("best", -1)):
         if hint in said:
-            choice = settings.WAIT_CHOICES[index]
+            choice = guide_defaults.wait_choices()[index]
             return float(choice["epochs"]), "the option “%s”" % choice["label"]
 
     bare = re.fullmatch(r"\s*" + _NUMBER + r"\s*", said)
@@ -332,7 +346,11 @@ def free_name(catalog, user, wanted, taken):
 def plan(catalog, user, analysis, epochs, mock=False, shared_file=None, session=None):
     """The POST /loras bodies that train the agent's LoRAs. -> [body].
 
-    One per rank in the session, with its options, name and test prompt. The
+    One per rank in the session, with its options, name and test prompt --
+    a rank named twice trains under another seed each time after the first,
+    so the LoRAs differ --
+    the user's saved training defaults under the chat's own changes, so the
+    body trains what the page said it would whatever train.py's are. The
     dataset goes as {"file": name} when it is a shared file sent whole and as
     it is -- so the catalogue records where it came from -- and as the
     normalised lines of the part chosen otherwise.
@@ -346,10 +364,14 @@ def plan(catalog, user, analysis, epochs, mock=False, shared_file=None, session=
     stem = session["name"] or stem_of(analysis.get("name"))
     base_model = recipe()["base_model"]
     day = time.strftime("%Y%m%d")
-    taken, bodies = set(), []
+    taken, bodies, repeats = set(), [], {}
     for rank in session["ranks"]:
         name = free_name(catalog, user, lora_name(stem, base_model, rank, day), taken)
-        wanted = dict(session["options"], epochs=float(epochs), rank=int(rank))
+        wanted = dict(guide_defaults.training(), **session["options"])
+        wanted.update(epochs=float(epochs), rank=int(rank))
+        again = repeats[rank] = repeats.get(rank, -1) + 1
+        if again:
+            wanted["seed"] = recipe()["seed"] + again
         if prompt:
             wanted["prompt"] = prompt
         bodies.append({"name": name, "dataset": dataset, "settings": wanted, "mock": bool(mock)})

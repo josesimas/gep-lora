@@ -353,11 +353,16 @@ def ask_judge(system_prompt, user_content, settings):
         }
         if settings.get("response_format"):
             payload["response_format"] = settings["response_format"]
+        payload.update(thinking_fields(settings.get("thinking")))
         url = settings["base_url"].rstrip("/") + "/chat/completions"
 
     retries = settings["retries"]
     last_error = None
-    for attempt in range(retries + 1):
+    # A field the endpoint refuses is dropped and the call made again at once:
+    # the endpoint answered, so that is not one of the `retries`, which are for
+    # calls that failed. Each field can be dropped only once, so this ends.
+    attempt = 0
+    while attempt <= retries:
         try:
             if local:
                 text = local_model.generate(system_prompt, user_content, settings)
@@ -382,8 +387,14 @@ def ask_judge(system_prompt, user_content, settings):
         except urllib.error.HTTPError as error:
             # Some endpoints reject response_format; the prompt asks for JSON
             # anyway, so drop it and try once more rather than failing.
-            if error.code == 400 and "response_format" in payload:
+            if error.code == 400 and payload.get("response_format"):
                 payload.pop("response_format")
+                last_error = error
+                continue
+            # Nor does every endpoint know reasoning_effort: a grade without
+            # the switch is worth more than no grade.
+            if error.code in (400, 422) and "reasoning_effort" in payload:
+                payload.pop("reasoning_effort")
                 last_error = error
                 continue
             if error.code not in (408, 409, 429) and error.code < 500:
@@ -395,6 +406,7 @@ def ask_judge(system_prompt, user_content, settings):
 
         if attempt < retries:
             time.sleep(settings["retry_wait"])
+        attempt += 1
     if local:
         raise RuntimeError("the local judge produced nothing gradeable: %s" % last_error)
     raise RuntimeError("judge unreachable after %d attempts: %s" % (retries + 1, last_error))
@@ -412,6 +424,17 @@ def backend_of(conf):
         raise SystemExit("JUDGE_BACKEND must be %s, not %r"
                          % (" or ".join(repr(name) for name in BACKENDS), backend))
     return backend
+
+
+def thinking_fields(thinking):
+    """What an OpenAI-compatible request carries to switch a model's thinking
+    on (True) or off (False); nothing for None, the model's own habit.
+    `reasoning_effort` because it is the one field LM Studio honours --
+    chat_template_kwargs, `reasoning` and a /no_think in the prompt were all
+    ignored there -- and OpenAI, Gemini and Ollama take it too."""
+    if thinking is None:
+        return {}
+    return {"reasoning_effort": "medium" if thinking else "none"}
 
 
 def judge_settings(conf, model=None, base_url=None):
@@ -440,6 +463,7 @@ def judge_settings(conf, model=None, base_url=None):
         "retries": conf.get("JUDGE_RETRIES", 2),
         "retry_wait": conf.get("JUDGE_RETRY_WAIT", 3),
         "response_format": conf.get("JUDGE_RESPONSE_FORMAT", {"type": "json_object"}),
+        "thinking": conf.get("JUDGE_THINKING"),
         "max_seq_length": conf.get("JUDGE_LOCAL_MAX_SEQ_LENGTH", 4096),
         "load_in_4bit": conf.get("JUDGE_LOCAL_LOAD_IN_4BIT", True),
         "chat_template": conf.get("JUDGE_LOCAL_CHAT_TEMPLATE"),

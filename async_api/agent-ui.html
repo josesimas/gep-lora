@@ -129,8 +129,11 @@
   .agent-head h2 { font-size: 14px; white-space: nowrap; }
   .agent-head .tag { white-space: nowrap; }
   .model-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 9px; font-size: 12px;
-                max-width: 250px; border-radius: 999px; color: var(--muted); }
-  .model-chip span { overflow: hidden; text-overflow: ellipsis; }
+                max-width: 250px; min-width: 0; flex: 0 1 auto; border-radius: 999px; color: var(--muted); }
+  .model-chip span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  /* the chip is the one thing in the head that gives way: the rest keep their width */
+  .agent-head > :not(.model-chip):not(.spacer) { flex: none; }
+  .agent-head > button, .agent-head .menu > button { white-space: nowrap; }
   .model-chip::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
   .model-chip.up::before { background: var(--ok); }
   .model-chip.down::before { background: var(--warn); }
@@ -314,6 +317,17 @@
   .slot-tag { display: inline-block; min-width: 26px; text-align: center; font: 600 11px var(--mono); padding: 1px 6px;
               border-radius: 5px; background: var(--accent-soft); color: var(--accent); margin-right: 6px; }
 
+  /* A small drop-down menu: the conversation's export formats. */
+  .menu { position: relative; }
+  .menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 230px; display: grid; gap: 2px;
+               padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+               box-shadow: 0 8px 24px rgba(16, 24, 40, .16); animation: arrive .15s ease-out; }
+  .menu-list button { display: grid; text-align: left; border: 0; background: transparent; padding: 6px 10px; min-height: 0;
+                      border-radius: 7px; white-space: normal; font-weight: 400; }
+  .menu-list button:hover:not(:disabled), .menu-list button:focus-visible { background: var(--accent-soft); }
+  .menu-list button b { font-weight: 600; font-size: 13px; }
+  .menu-list button span { font-size: 11.5px; color: var(--muted); }
+
   /* --- the summary: the journey so far, in an overlay (create_summary.py) ---------------------- */
   .overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px 16px;
              background: color-mix(in srgb, var(--ink) 38%, transparent); backdrop-filter: blur(3px);
@@ -390,6 +404,7 @@
   <span id="health" class="health" title="The async API server"></span>
   <button type="button" class="sm" id="summaryButton" title="What you have done and learned so far, as a short illustrated story you can save as a PDF" hidden>Summary</button>
   <a class="button" href="/runs.html" title="Every search you have run">Your runs</a>
+  <a class="button" href="/guide_defaults" title="What a new conversation starts from: training, blending, testing">Defaults</a>
   <a class="button" href="/demo" target="_blank" rel="noopener">Console ↗</a>
   <button type="button" class="sm ghost" id="changeKey" hidden>Change key</button>
 </header>
@@ -402,6 +417,14 @@
       <span id="mockTag" class="tag mock" hidden>practice run</span>
       <span class="spacer"></span>
       <button type="button" class="sm ghost model-chip" id="modelChip" title="Which model the guide talks through"><span>…</span></button>
+      <div class="menu" id="exportMenu" hidden>
+        <button type="button" class="sm ghost" id="exportButton" aria-haspopup="menu" aria-expanded="false"
+                title="Download the whole conversation">Export</button>
+        <div class="menu-list" id="exportList" role="menu" hidden>
+          <button type="button" role="menuitem" data-format="md"><b>Markdown</b><span>to read or share · .md</span></button>
+          <button type="button" role="menuitem" data-format="json"><b>JSON</b><span>everything, with tool calls and times · .json</span></button>
+        </div>
+      </div>
       <button type="button" class="sm ghost" id="restart" title="Forget this conversation and start again">Start over</button>
     </div>
     <div class="settings" id="settings" hidden>
@@ -2305,7 +2328,19 @@ function meansChart(rows) {
 function liveCard() {
   const L = S.release.live, d = L.deployment;
   const origin = location.origin;
-  const curl = `curl -N ${origin}/infer -H "Content-Type: application/json" -d '{"token": "${L.token}", "prompt": "Hello"}'`;
+  // One line per shell: cmd.exe has no single quotes, and PowerShell 5.1 both aliases
+  // curl to Invoke-WebRequest and needs the inner quotes escaped for a native program.
+  const url = `${origin}/infer`, head = `-H "Content-Type: application/json"`;
+  const curl = [
+    "# bash, zsh (macOS, Linux, Git Bash)",
+    `curl -N ${url} ${head} -d '{"token": "${L.token}", "prompt": "Hello"}'`,
+    "",
+    ":: Windows cmd",
+    `curl -N ${url} ${head} -d "{\\"token\\": \\"${L.token}\\", \\"prompt\\": \\"Hello\\"}"`,
+    "",
+    "# Windows PowerShell",
+    `curl.exe -N ${url} ${head} -d '{\\"token\\": \\"${L.token}\\", \\"prompt\\": \\"Hello\\"}'`,
+  ].join("\n");
   return card("Live", `deployment ${d.id} · ${d.engine}${d.engine === "mock" ? " — made-up answers" : ""}`,
     el("p", { class: "formula" }, L.formula || d.chromosome),
     el("div", { class: "muted small" }, `blend #${d.individual} of job ${d.job_id} on ${d.base_model || "?"} — the first answer loads the model`),
@@ -2857,12 +2892,93 @@ function downloadSummary() {
   const charts = Object.fromEntries(summary.charts.map((c) => [c.id, c]));
   const text = summary.markdown.replace(/\[\[chart:([a-z_]+)\]\]/g, (_, id) =>
     charts[id] ? `*[chart: ${charts[id].title} — ${charts[id].caption}]*` : "");
-  const link = el("a", { href: URL.createObjectURL(new Blob([text + "\n"], { type: "text/markdown" })),
-                         download: summaryFileName(".md") });
+  saveFile(summaryFileName(".md"), text + "\n", "text/markdown");
+}
+
+// A file made here, handed to the browser to save.
+function saveFile(name, text, type) {
+  const link = el("a", { href: URL.createObjectURL(new Blob([text], { type: type + ";charset=utf-8" })), download: name });
   document.body.append(link);
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+// --- the conversation, exported -------------------------------------------------------------
+//
+// The whole transcript on the left, as this browser holds it: every message,
+// who wrote it and when, the model behind each of the guide's, its notes, and
+// the tool calls and events between them. Markdown to read, JSON to keep. Only
+// what the conversation already shows goes out -- never the API key, a live
+// blend's key or the dataset itself.
+
+function toggleExport(open = $("exportList").hidden) {
+  $("exportList").hidden = !open;
+  $("exportButton").setAttribute("aria-expanded", String(open));
+  if (open) $("exportList").querySelector("button").focus();
+}
+
+function conversationFileName(extension) {
+  const at = new Date(), pad = (n) => String(n).padStart(2, "0");
+  return `lora-guide-conversation-${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
+         `-${pad(at.getHours())}${pad(at.getMinutes())}${extension}`;
+}
+
+// What the conversation was about: the ids it touched.
+function conversationAbout() {
+  const job = releaseJob(), R = S.release;
+  return { stage: S.stage, practice_run: mock(), conversation: S.conversation,
+           dataset: S.analysis ? { name: S.analysis.name, records: S.analysis.records } : null,
+           loras: S.loras.map((one) => ({ id: one.id, name: one.name })),
+           search_job: job || null, verification: R.verification ? R.verification.id : null,
+           live_deployment: R.live && R.live.deployment ? R.live.deployment.id : null };
+}
+
+function conversationMarkdown() {
+  const about = conversationAbout();
+  const day = (at) => new Date(at).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const stage = STAGES.find(([name]) => name === (STAGE_OF[S.stage] || S.stage));
+  const lines = ["# LoRA guide — conversation", "",
+    `Exported ${new Date().toLocaleString()} · ${S.transcript.filter((m) => m.who !== "event").length} messages · ` +
+    `step: ${stage ? stage[1] : S.stage}` + (about.practice_run ? " · practice run" : "")];
+  const facts = [
+    about.dataset && `- Dataset: ${about.dataset.name || "pasted"} (${about.dataset.records} conversations)`,
+    about.loras.length && `- LoRAs: ${about.loras.map((one) => `${one.name} (#${one.id})`).join(", ")}`,
+    about.search_job && `- Search: job ${about.search_job}`,
+    about.verification && `- Verification: #${about.verification}`,
+    about.live_deployment && `- Live: deployment ${about.live_deployment}`].filter(Boolean);
+  if (facts.length) lines.push("", ...facts);
+  let shownDay = null;
+  for (const m of S.transcript) {
+    if (m.at && day(m.at) !== shownDay) { shownDay = day(m.at); lines.push("", "---", "", `## ${shownDay}`); }
+    const time = m.at ? clock(m.at).slice(0, 5) : "";
+    if (m.who === "event") {
+      lines.push("", m.tool ? `> ⚙ ${m.ok ? "" : "refused: "}${m.text} · ${time}` : `*— ${m.text} · ${time} —*`);
+      continue;
+    }
+    const me = m.who === "me";
+    lines.push("", `**${me ? "You" : "Guide"}** · ${time}${!me && m.by ? ` · ${m.by}` : ""}`, "", String(m.text || "").trim());
+    if (m.note) lines.push("", `> *${m.note}*`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+function conversationJson() {
+  return JSON.stringify(Object.assign({ exported_at: new Date().toISOString(), page: location.origin + location.pathname },
+    conversationAbout(), {
+      messages: S.transcript.map((m) => ({
+        at: m.at ? new Date(m.at).toISOString() : null,
+        who: m.who === "me" ? "you" : m.who === "agent" ? "guide" : m.tool ? "tool" : "event",
+        text: m.text, by: m.by || undefined, note: m.note || undefined,
+        ok: m.tool ? Boolean(m.ok) : undefined })) }), null, 1) + "\n";
+}
+
+function exportConversation(format) {
+  toggleExport(false);
+  if (!S.transcript.length) return;
+  if (format === "json") saveFile(conversationFileName(".json"), conversationJson(), "application/json");
+  else saveFile(conversationFileName(".md"), conversationMarkdown(), "text/markdown");
+  event(`conversation exported (${format})`);
 }
 
 // --- the model the guide talks through ------------------------------------------------------
@@ -2957,6 +3073,7 @@ function keyGate(message) {
   $("composer").hidden = true;
   $("changeKey").hidden = true;
   $("summaryButton").hidden = true;
+  $("exportMenu").hidden = true;
   $("summary").hidden = true;
   summary = null;
   drawBoard();
@@ -2978,6 +3095,7 @@ async function useKey(value) {
   rememberKey(key);
   $("changeKey").hidden = false;
   $("summaryButton").hidden = false;
+  $("exportMenu").hidden = false;
   $("composer").hidden = false;
   fillProviders();
   let saved = recall(sessionName(), true);
@@ -3039,7 +3157,17 @@ $("summaryAgain").addEventListener("click", () => openSummary(true));
 $("summaryPdf").addEventListener("click", printSummary);
 $("summaryMd").addEventListener("click", downloadSummary);
 $("summary").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeSummary(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("summary").hidden) closeSummary(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("exportList").hidden) { toggleExport(false); $("exportButton").focus(); }
+  else if (!$("summary").hidden) closeSummary();
+});
+$("exportButton").addEventListener("click", (e) => { e.stopPropagation(); toggleExport(); });
+$("exportList").addEventListener("click", (e) => {
+  const item = e.target.closest("[data-format]");
+  if (item) exportConversation(item.dataset.format);
+});
+document.addEventListener("click", (e) => { if (!$("exportMenu").contains(e.target)) toggleExport(false); });
 $("changeKey").addEventListener("click", () => {
   clearTimeout(pollTimer); clearTimeout(blendTimer); clearTimeout(testTimer); clearTimeout(verifyTimer); keyGate();
 });

@@ -32,6 +32,7 @@ import urllib.request
 import uuid
 from urllib.parse import urlparse
 
+from async_api_agent import guide_defaults
 from async_api_agent import settings
 
 ANTHROPIC_VERSION = "2023-06-01"
@@ -95,7 +96,7 @@ def resolve(choice=None):
     one made up for this request, so every round of one chat carries the
     same."""
     choice = choice if isinstance(choice, dict) else {}
-    name = choice.get("provider") or settings.PROVIDER
+    name = choice.get("provider") or guide_defaults.value("PROVIDER")
     entry = _entry(name)
     configured = entry["base_url"] or (_judge_base_url() if entry["kind"] == "openai" else "")
     base_url = (choice.get("base_url") or "").strip().rstrip("/")
@@ -112,8 +113,8 @@ def resolve(choice=None):
     else:
         base_url = configured
     model = (choice.get("model") or "").strip() or None
-    if model is None and name == settings.PROVIDER:
-        model = settings.MODEL
+    if model is None and name == guide_defaults.value("PROVIDER"):
+        model = guide_defaults.value("MODEL")
     if model is None:
         model = entry.get("model")
     if entry["kind"] != "scripted" and entry.get("key_env") and not entry.get("local") \
@@ -127,10 +128,13 @@ def resolve(choice=None):
         if not _CONVERSATION.fullmatch(conversation):
             conversation = uuid.uuid4().hex
         session = (entry["session_header"], conversation)
+    thinking = choice.get("thinking")
+    if not isinstance(thinking, bool):
+        thinking = guide_defaults.value("THINKING")
     return {"name": name, "kind": entry["kind"], "label": entry["label"],
             "base_url": base_url, "api_key": api_key, "model": model,
             "temperature": bool(entry.get("temperature")), "wires": entry.get("wires") or {},
-            "session": session}
+            "session": session, "thinking": thinking}
 
 
 def _request(url, payload=None, headers=None, timeout=None):
@@ -157,6 +161,39 @@ def _request(url, payload=None, headers=None, timeout=None):
         raise ProviderError("cannot reach %s (%s)" % (url, getattr(error, "reason", error)))
     except ValueError:
         raise ProviderError("%s did not answer in JSON" % url)
+
+
+def thinking_fields(wire_name, thinking):
+    """What a request in `wire_name` carries to switch thinking on (True) or
+    off (False); nothing for None, the model's own habit.
+
+    The OpenAI format's is `reasoning_effort`, the one control LM Studio was
+    found to honour ("none" took a reasoning model from 251 tokens to 4;
+    chat_template_kwargs, `reasoning` and /no_think changed nothing), and what
+    OpenAI, Gemini and Ollama take. Anthropic's is its `thinking` block, the
+    Responses API's its `reasoning` effort."""
+    if thinking is None:
+        return {}
+    if wire_name == "anthropic":
+        return {"thinking": {"type": "adaptive"} if thinking else {"type": "disabled"}}
+    if wire_name == "responses":
+        return {"reasoning": {"effort": "medium" if thinking else "none"}}
+    return {"reasoning_effort": "medium" if thinking else "none"}
+
+
+def _asking(url, payload, headers, optional):
+    """_request(), and once more without the `optional` fields if the
+    provider refuses the request (400/422) while it carries any: an older
+    model that knows no effort or thinking switch still has a reply worth
+    more than the setting."""
+    try:
+        return _request(url, payload, headers)
+    except ProviderError as error:
+        dropped = [key for key in optional if key in payload]
+        if not dropped or not re.search(r" answered (400|422):", str(error)):
+            raise
+        return _request(url, {key: value for key, value in payload.items()
+                              if key not in dropped}, headers)
 
 
 def wire(resolved, model):
@@ -342,8 +379,10 @@ def _openai_post(resolved, model, system, turns, tools=None):
         payload["temperature"] = settings.TEMPERATURE
     if tools:
         payload["tools"] = tools
-    reply = _request(resolved["base_url"] + "/chat/completions", payload,
-                     _headers(resolved, "openai"))
+    extra = thinking_fields("openai", resolved.get("thinking"))
+    payload.update(extra)
+    reply = _asking(resolved["base_url"] + "/chat/completions", payload,
+                    _headers(resolved, "openai"), extra)
     try:
         message = reply["choices"][0]["message"]
         text = message.get("content") or ""
@@ -371,16 +410,11 @@ def _anthropic_post(resolved, model, system, messages, tools=None):
     # would only refuse it and cost a retry.
     if settings.ANTHROPIC_EFFORT and resolved["kind"] == "anthropic":
         payload["output_config"] = {"effort": settings.ANTHROPIC_EFFORT}
-    url = resolved["base_url"] + "/messages"
-    try:
-        reply = _request(url, payload, _headers(resolved, "anthropic"))
-    except ProviderError as error:
-        # An older model (Haiku 4.5) refuses effort; the reply is worth more
-        # than the setting.
-        if "output_config" not in payload or "400" not in str(error):
-            raise
-        payload.pop("output_config")
-        reply = _request(url, payload, _headers(resolved, "anthropic"))
+    payload.update(thinking_fields("anthropic", resolved.get("thinking")))
+    # An older model (Haiku 4.5) refuses effort, and one may not know adaptive
+    # thinking; the reply is worth more than either setting.
+    reply = _asking(resolved["base_url"] + "/messages", payload,
+                    _headers(resolved, "anthropic"), ("output_config", "thinking"))
     if reply.get("stop_reason") == "refusal":
         raise ProviderError("%s declined to answer" % model)
     blocks = [block for block in reply.get("content") or [] if isinstance(block, dict)]
@@ -398,8 +432,10 @@ def _responses_post(resolved, model, system, messages, tools=None):
                "max_output_tokens": settings.MAX_TOKENS}
     if tools:
         payload["tools"] = tools
-    reply = _request(resolved["base_url"] + "/responses", payload,
-                     _headers(resolved, "responses"))
+    extra = thinking_fields("responses", resolved.get("thinking"))
+    payload.update(extra)
+    reply = _asking(resolved["base_url"] + "/responses", payload,
+                    _headers(resolved, "responses"), extra)
     output = reply.get("output") if isinstance(reply, dict) else None
     if not isinstance(output, list):
         raise ProviderError("%s sent a reply with no output in it" % resolved["base_url"])

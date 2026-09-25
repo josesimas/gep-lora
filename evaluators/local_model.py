@@ -154,9 +154,13 @@ def generate(system_prompt, user_content, settings):
     messages = [{"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content}]
     try:
+        # A reasoning model's template takes enable_thinking (JUDGE_THINKING);
+        # any other ignores the extra variable.
+        switch = ({} if settings.get("thinking") is None
+                  else {"enable_thinking": bool(settings["thinking"])})
         inputs = tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, return_tensors="pt",
-            return_dict=True).to(model.device)
+            return_dict=True, **switch).to(model.device)
         temperature = float(settings["temperature"])
         # do_sample=False is greedy decoding, which is what a temperature of 0
         # means and what grading wants: the same answer graded twice should get

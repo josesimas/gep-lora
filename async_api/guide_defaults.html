@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide defaults</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f3f4f7; --panel: #ffffff; --panel-2: #f8f9fb; --ink: #161a23; --ink-2: #394150;
+    --muted: #626b7a; --faint: #8b93a1; --line: #e3e6eb; --line-2: #d2d7df;
+    --accent: #4c5fd5; --accent-ink: #ffffff; --accent-soft: #eceffd;
+    --ok: #1e8449; --warn: #b45309; --bad: #c8322f; --code: #f1f3f6;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .06);
+    --radius: 12px; --top: 56px;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #0e1117; --panel: #161a22; --panel-2: #1b2029; --ink: #e7eaf0; --ink-2: #c3c9d4;
+      --muted: #99a2b1; --faint: #6f7888; --line: #262c38; --line-2: #343b4a;
+      --accent: #8b9cff; --accent-ink: #0c0f1f; --accent-soft: #1f2547;
+      --ok: #5fd08a; --warn: #f0b454; --bad: #ff7b72; --code: #1d222c;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0; font-weight: 650; }
+  h3 { font-size: 13px; margin: 0; font-weight: 600; }
+  p { margin: 0 0 8px; }
+  a { color: var(--accent); }
+  code { font-family: var(--mono); font-size: 12px; background: var(--code); padding: 1px 5px; border-radius: 5px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  input, select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line-2);
+          border-radius: 8px; padding: 6px 10px; min-height: 34px; width: 100%; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  input[type="checkbox"] { width: 18px; min-height: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+  input.invalid { border-color: var(--bad); }
+  button, a.button { font: inherit; font-weight: 500; border: 1px solid var(--line-2); background: var(--panel);
+           color: var(--ink); border-radius: 8px; padding: 0 12px; min-height: 32px; cursor: pointer; white-space: nowrap;
+           display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-size: 13px; }
+  button:hover, a.button:hover { background: var(--panel-2); }
+  button:focus-visible, a.button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .primary { background: var(--accent) !important; color: var(--accent-ink) !important; border-color: var(--accent) !important; }
+  .ghost { border-color: transparent !important; background: transparent !important; }
+  .tag { display: inline-block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+         padding: 1px 6px; border-radius: 5px; color: var(--muted); background: var(--code); vertical-align: 1px; }
+  .tag.own { color: var(--accent); background: var(--accent-soft); }
+  .tag.edit { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+
+  .topbar { height: var(--top); display: flex; align-items: center; gap: 10px; padding: 0 18px;
+            background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 3; }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand svg { width: 26px; height: 26px; flex: none; }
+  .brand b { display: block; font-size: 14px; line-height: 1.1; }
+  .brand span { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
+  .spacer { flex: 1; }
+  .topbar a.button { min-height: 28px; padding: 0 10px; }
+
+  main { max-width: 980px; margin: 0 auto; padding: 22px 18px 110px; display: grid; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
+  .card-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .card-head .spacer { flex: 1; }
+
+  /* The journey a new conversation would take, under these defaults. */
+  .journey { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  .step { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); }
+  .step span { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .step b { display: block; font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; margin: 2px 0; }
+  .step small { display: block; font-size: 12px; color: var(--muted); }
+
+  .fields { display: grid; margin-top: 6px; }
+  .field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px); gap: 4px 20px; align-items: center;
+           padding: 11px 0; border-top: 1px solid var(--line); }
+  .field:first-child { border-top: 0; }
+  .field label { font-weight: 550; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .field .about { font-size: 12px; color: var(--muted); }
+  .field .server { font-size: 12px; color: var(--faint); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .field .server button { min-height: 22px; padding: 0 8px; font-size: 12px; }
+  .field .input { display: grid; gap: 4px; }
+  .picker { display: flex; gap: 6px; }
+  .picker select { flex: 1; min-width: 0; }
+  .picker button { min-height: 34px; padding: 0 10px; }
+  .picker-note { font-size: 12px; color: var(--faint); }
+  .picker-note.bad { color: var(--warn); }
+  .thinking { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; margin-top: 2px;
+              border: 1px dashed var(--line-2); border-radius: 8px; background: var(--panel-2); }
+  .thinking label { display: flex; align-items: center; gap: 7px; font-weight: 550; cursor: pointer; }
+  .thinking .said { font-size: 12px; color: var(--muted); }
+  .thinking button { min-height: 22px; padding: 0 8px; font-size: 12px; }
+  .field .check { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+  .field .error { grid-column: 1 / -1; }
+  .error { color: var(--bad); font-size: 12px; }
+  details.more > summary { cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 500; padding: 10px 0 2px; list-style: none; }
+  details.more > summary::-webkit-details-marker { display: none; }
+  details.more > summary::before { content: "▸ "; }
+  details.more[open] > summary::before { content: "▾ "; }
+
+  .savebar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; background: var(--panel); border-top: 1px solid var(--line);
+             box-shadow: 0 -4px 16px rgba(16, 24, 40, .06); }
+  .savebar-in { max-width: 980px; margin: 0 auto; padding: 10px 18px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .savebar .status { font-size: 13px; color: var(--muted); flex: 1; min-width: 180px; }
+  .savebar .status.ok { color: var(--ok); } .savebar .status.bad { color: var(--bad); }
+
+  .gate { max-width: 420px; margin: 60px auto; }
+  .gate form { display: flex; gap: 8px; margin-top: 12px; }
+  @media (max-width: 680px) {
+    .field { grid-template-columns: minmax(0, 1fr); }
+    .brand span { display: none; }
+    .topbar .button.wide { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 26 26" aria-hidden="true">
+      <rect width="26" height="26" rx="7" fill="var(--accent)"/>
+      <path d="M7 16.5c2.2-5 4.2-7.5 6-7.5s3.8 2.5 6 7.5" stroke="var(--accent-ink)" stroke-width="1.7" fill="none" stroke-linecap="round"/>
+      <circle cx="13" cy="9" r="2.3" fill="var(--accent-ink)"/>
+      <circle cx="7" cy="17" r="2" fill="var(--accent-ink)"/>
+      <circle cx="19" cy="17" r="2" fill="var(--accent-ink)"/>
+    </svg>
+    <div><b>Guide defaults</b><span>what a new conversation starts from, from training to going live</span></div>
+  </div>
+  <div class="spacer"></div>
+  <a class="button" href="/agent">LoRA guide</a>
+  <a class="button wide" href="/runs.html">Your runs</a>
+  <a class="button wide" href="/demo">Console</a>
+  <button type="button" class="ghost" id="changeKey" hidden>Change key</button>
+</header>
+
+<main id="main"></main>
+
+<div class="savebar" id="savebar" hidden>
+  <div class="savebar-in">
+    <span class="status" id="status" role="status"></span>
+    <button type="button" id="discard">Discard changes</button>
+    <button type="button" id="resetAll" title="Forget every value you saved: the server's apply again">Use the server's for all</button>
+    <button type="button" class="primary" id="save">Save defaults</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// Everything here comes from GET /agent/defaults and goes back through PUT
+// /agent/defaults, under the user's key -- the one the guide and the console
+// use, kept in this browser. A field whose value is the server's is not saved:
+// it goes on following the server, so only what the person changed is kept.
+
+const $ = (id) => document.getElementById(id);
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs)) {
+    if (value === null || value === undefined || value === false) continue;
+    if (name === "class") node.className = value;
+    else if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
+    else if (name === "value") node.value = value;
+    else if (name === "checked") node.checked = !!value;
+    else node.setAttribute(name, value === true ? "" : value);
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : String(child));
+  }
+  return node;
+}
+
+let key = "";
+let form = null;        // what the server sent: groups, fields, saved, effective
+let draft = {};         // key -> the value on screen (null: empty)
+let errors = {};        // key -> what is wrong with what was typed
+// The free-text boxes that have a list to pick from. The box is the truth --
+// a model the endpoint does not list can still be typed -- and the drop-down
+// beside it only fills it in, the way the console's modelPicker() does.
+// (Not a <datalist>: that offers only entries matching what is already typed,
+// so once a model is filled in it cannot be switched from the list.)
+const PICKERS = {
+  model: { what: "model", load: async () => {
+    const found = await api("GET", "/agent/models?provider=" + encodeURIComponent(draft.provider));
+    return { items: found.models || [], where: found.base_url || draft.provider };
+  } },
+  judge_model: { what: "model", load: async () => {
+    const found = await api("GET", "/judge/models");
+    return { items: found.models || [], where: found.base_url };
+  } },
+  base_model: { what: "base model", load: async () => {
+    const found = await api("GET", "/loras/form");
+    return { items: (found.base_models || []).map((m) => m.id), where: "your LoRAs and this machine's cache" };
+  } },
+  chat_template: { what: "template", load: async () => ({ items: (field("chat_template").choices || []).map((c) => c.value), where: null }) },
+};
+const picked = {};      // key -> { items, note, bad, loading }
+
+// Fields shown under "More training options" rather than at the top.
+const ADVANCED = ["alpha", "dropout", "max_seq", "batch_size", "grad_accum", "warmup_steps",
+                  "weight_decay", "max_steps", "scheduler", "optim"];
+// The guide page's own remembered choices, which win over a default in that
+// browser; cleared when the matching default is saved, so it takes effect.
+const GUIDE_REMEMBERS = { provider: "gep-agent-agent", model: "gep-agent-agent", mock: "gep-agent-mock" };
+
+function recallKey() { try { return localStorage.getItem("gep-api-key") || ""; } catch (_) { return ""; } }
+function rememberKey(value) { try { localStorage.setItem("gep-api-key", value); } catch (_) { /* private mode */ } }
+
+async function api(method, path, body) {
+  let response;
+  try {
+    response = await fetch(path, { method, headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+                                   body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch (_) {
+    throw new Error("The API server cannot be reached. Is it running? (run_api_server.bat)");
+  }
+  let data = null;
+  try { data = await response.json(); } catch (_) { /* empty */ }
+  if (!response.ok) {
+    const error = new Error((data && data.error) || response.status + " " + response.statusText);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+function keyGate(message) {
+  $("changeKey").hidden = true;
+  $("savebar").hidden = true;
+  $("main").replaceChildren(el("section", { class: "card gate" },
+    el("h3", {}, "Your API key"),
+    el("p", { class: "muted small" }, "Defaults are yours alone: this page reads and saves the ones of the key you give it. ",
+      "It is the key the LoRA guide and the console use, kept in this browser."),
+    el("form", { onsubmit: (e) => { e.preventDefault(); useKey($("keyInput").value.trim()); } },
+      el("input", { id: "keyInput", type: "password", autocomplete: "off", placeholder: "paste it here", "aria-label": "API key" }),
+      el("button", { class: "primary", type: "submit" }, "Open my defaults")),
+    message ? el("p", { class: "error", style: "margin-top:8px" }, message) : null));
+  setTimeout(() => $("keyInput") && $("keyInput").focus(), 0);
+}
+
+async function useKey(value) {
+  key = value;
+  if (!key) return keyGate("Paste a key first.");
+  try {
+    form = await api("GET", "/agent/defaults");
+  } catch (error) {
+    key = "";
+    return keyGate(error.status === 401 ? "That key is not known to this server." : error.message);
+  }
+  rememberKey(key);
+  $("changeKey").hidden = false;
+  $("savebar").hidden = false;
+  startDraft();
+  draw();
+  loadLists();
+}
+
+// --- the values ------------------------------------------------------------------------
+
+const field = (k) => form.fields.find((one) => one.key === k);
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+function startDraft() {
+  draft = {};
+  errors = {};
+  for (const f of form.fields) draft[f.key] = form.effective[f.key] ?? null;
+}
+
+// What PUT /agent/defaults is sent: the values that differ from the server's.
+function wanted() {
+  const out = {};
+  for (const f of form.fields) {
+    const value = draft[f.key];
+    if (same(value, f.server)) continue;
+    if (value === null) {
+      // Clearing an optional text is a choice ("none named"); clearing another means the server's.
+      if ((f.optional && f.kind === "text") || f.kind === "tristate") out[f.key] = "";
+      continue;
+    }
+    out[f.key] = value;
+  }
+  // A chat model is a model of one provider: saved together, or not at all.
+  if (out.model && !("provider" in out)) out.provider = draft.provider;
+  return out;
+}
+const changed = () => !same(sorted(wanted()), sorted(form.saved));
+const sorted = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
+const isOwn = (f) => !same(draft[f.key], f.server);
+
+function parse(f, text) {
+  text = String(text).trim();
+  if (f.kind === "ranks") {
+    if (!text) return { value: null };
+    const parts = text.split(/[\s,;]+/).filter(Boolean).map(Number);
+    if (parts.some((n) => !Number.isInteger(n) || n < 1)) return { error: "whole numbers, separated by commas: 8, 16" };
+    return { value: parts };
+  }
+  if (["int", "float", "number"].includes(f.kind)) {
+    if (!text) return { value: null };
+    const n = Number(text);
+    if (!Number.isFinite(n)) return { error: "a number" };
+    if (f.kind === "int" && !Number.isInteger(n)) return { error: "a whole number" };
+    if (f.low !== undefined && (n < f.low || n > f.high)) return { error: `from ${f.low} to ${f.high}` };
+    return { value: n };
+  }
+  return { value: text || null };
+}
+
+// --- drawing ------------------------------------------------------------------------------
+
+function draw() {
+  const groups = form.groups.map((g) => {
+    const fields = form.fields.filter((f) => f.group === g.id && !f.attach);
+    const top = fields.filter((f) => !ADVANCED.includes(f.key));
+    const more = fields.filter((f) => ADVANCED.includes(f.key));
+    const own = form.fields.filter((f) => f.group === g.id && isOwn(f)).length;
+    return el("section", { class: "card", id: "group-" + g.id },
+      el("div", { class: "card-head" }, el("h2", {}, g.label),
+        own ? el("span", { class: "tag own" }, `${own} of yours`) : null,
+        el("span", { class: "spacer" }),
+        el("span", { class: "muted small" }, g.about)),
+      el("div", { class: "fields" }, top.map(row)),
+      more.length ? el("details", { class: "more", open: more.some(isOwn) || null },
+        el("summary", {}, `More training options (${more.length})`),
+        el("div", { class: "fields" }, more.map(row))) : null);
+  });
+  $("main").replaceChildren(
+    el("div", {}, el("h1", {}, "Guide defaults"),
+      el("p", { class: "muted small", style: "margin-top:4px" },
+        "What every new conversation in the ", el("a", { href: "/agent" }, "LoRA guide"),
+        " starts from: the LoRAs it plans, the search that blends them and the questions a blend is checked on. ",
+        "They are only a start: you can still change any of them in the chat. A value you leave at the server's follows the server.")),
+    el("section", { class: "card" }, el("div", { class: "card-head" }, el("h2", {}, "A new conversation, under these defaults")),
+      el("div", { class: "journey", id: "journey" })),
+    ...groups);
+  drawJourney();
+  drawStatus();
+}
+
+function inputFor(f) {
+  const value = draft[f.key];
+  const set = (v) => { draft[f.key] = v; delete errors[f.key]; refresh(f); };
+  if (f.kind === "bool")
+    return el("label", { class: "check" }, el("input", { type: "checkbox", id: "in-" + f.key, checked: value,
+      onchange: (e) => set(e.target.checked) }), el("span", { class: "small muted" }, value ? "on" : "off"));
+  if (f.kind === "choice")
+    return el("select", { id: "in-" + f.key, onchange: (e) => {
+      set(e.target.value);
+      // A chat model is one provider's: another provider starts from its own default.
+      if (f.key === "provider") { draft.model = null; refresh(field("model")); loadPicker("model"); }
+    } },
+      f.choices.map((c) => el("option", { value: c.value, selected: c.value === value || null, title: c.description || null }, c.label)));
+  const shown = f.kind === "ranks" ? (value || []).join(", ") : value ?? "";
+  return el("input", { id: "in-" + f.key, value: shown, spellcheck: "false", autocomplete: "off",
+    inputmode: ["int", "float", "number"].includes(f.kind) ? "decimal" : null,
+    placeholder: f.optional ? ({ chat_template: "the base model's own", max_steps: "no limit", lora_count: "one per rank" }[f.key] || "none") : "",
+    oninput: (e) => {
+      const found = parse(f, e.target.value);
+      e.target.classList.toggle("invalid", !!found.error);
+      if (found.error) { errors[f.key] = found.error; drawStatus(); drawError(f); return; }
+      draft[f.key] = found.value; delete errors[f.key]; refresh(f, false);
+    } });
+}
+
+// On, off, or the model's own habit (null, drawn as the checkbox's
+// indeterminate state). Only while a model is chosen: the switch belongs to it.
+function thinkingSwitch(t, parent) {
+  if (!draft[parent.key]) return null;
+  const value = draft[t.key];
+  const box = el("input", { type: "checkbox", id: "in-" + t.key, checked: value === true,
+    onchange: (e) => { draft[t.key] = e.target.checked; refresh(t); } });
+  box.indeterminate = value === null || value === undefined;
+  const said = value === true ? "on — it reasons before it answers"
+    : value === false ? "off — it answers straight away"
+    : "the model's own habit (tick to switch it on, again to switch it off)";
+  return el("div", { class: "thinking", title: t.help || null },
+    el("label", { for: "in-" + t.key }, box, t.label),
+    el("span", { class: "said" }, said),
+    isOwn(t) ? el("span", { class: "tag own" }, "yours") : null,
+    value !== null && value !== undefined
+      ? el("button", { type: "button", class: "ghost", onclick: () => { draft[t.key] = null; refresh(t); } }, "leave it to the model")
+      : null,
+    el("span", { class: "said" }, "server: ", el("code", {}, serverText(t))));
+}
+
+function serverText(f) {
+  const v = f.server;
+  if (f.kind === "tristate") return v === true ? "on" : v === false ? "off" : "the model's own";
+  if (v === null || v === undefined || v === "") return { chat_template: "the base model's own", lora_count: "one per rank" }[f.key] || "none";
+  if (Array.isArray(v)) return v.join(", ");
+  if (typeof v === "boolean") return v ? "on" : "off";
+  return String(v);
+}
+
+function row(f) {
+  const own = isOwn(f);
+  return el("div", { class: "field", id: "row-" + f.key },
+    el("div", {},
+      el("label", { for: "in-" + f.key }, f.label,
+        own ? el("span", { class: "tag own", title: "yours, not the server's" }, "yours") : null),
+      f.help ? el("div", { class: "about" }, f.help) : null),
+    el("div", { class: "input" }, inputFor(f), PICKERS[f.key] ? picker(f) : null,
+      form.fields.filter((one) => one.attach === f.key).map((one) => thinkingSwitch(one, f)),
+      el("div", { class: "server" }, el("span", {}, "server: ", el("code", {}, serverText(f))),
+        own ? el("button", { type: "button", class: "ghost", onclick: () => { draft[f.key] = f.server ?? null; delete errors[f.key]; refresh(f); } },
+          "use the server's") : null)),
+    el("div", { class: "error", id: "err-" + f.key }, errors[f.key] || ""));
+}
+
+// The drop-down beside a box, and a line saying what the list is (or why there is none).
+function picker(f) {
+  const state = picked[f.key] || { items: [], note: "", loading: true };
+  const value = draft[f.key] ?? "";
+  const items = [...new Set(state.items.filter(Boolean))];
+  const listed = items.includes(value);
+  const what = PICKERS[f.key].what;
+  const select = el("select", { "aria-label": `Pick a ${what} from the list`, disabled: !items.length || null,
+      onchange: (e) => {
+        if (!e.target.value) return;
+        draft[f.key] = e.target.value; delete errors[f.key];
+        refresh(f);
+      } },
+    el("option", { value: "" }, state.loading ? "asking for the list…" : !items.length ? `no list of ${what}s`
+      : value && !listed ? `not listed: ${value}` : `— pick one of ${items.length} —`),
+    items.map((item) => el("option", { value: item, selected: item === value || null }, item)));
+  if (!listed) select.value = "";
+  return el("div", {},
+    el("div", { class: "picker" }, select,
+      el("button", { type: "button", title: "Ask for the list again", disabled: state.loading || null,
+                     onclick: () => loadPicker(f.key) }, "↻")),
+    state.note ? el("div", { class: "picker-note" + (state.bad ? " bad" : "") }, state.note) : null);
+}
+
+async function loadPicker(k) {
+  const mine = (picked[k] = { items: [], note: "", loading: true });
+  refresh(field(k), false);
+  try {
+    const found = await PICKERS[k].load();
+    if (picked[k] !== mine) return;              // asked again since
+    picked[k] = { items: found.items, loading: false, bad: !found.items.length,
+                  note: found.where ? (found.items.length ? `${found.items.length} listed at ${found.where}`
+                                                          : `${found.where} lists none — type one in the box`) : "" };
+  } catch (error) {
+    if (picked[k] !== mine) return;
+    picked[k] = { items: [], loading: false, bad: true,
+                  note: `Could not get the list: ${error.message} — type it in the box.` };
+  }
+  refresh(field(k), false);
+}
+
+function drawError(f) { const node = $("err-" + f.key); if (node) node.textContent = errors[f.key] || ""; }
+
+// One row redrawn after a change: all of it, or (while typing) all but its input.
+function refresh(f, whole = true) {
+  if (f.attach) return refresh(field(f.attach));
+  for (const t of form.fields.filter((one) => one.attach === f.key)) if (!draft[f.key]) draft[t.key] = null;
+  const old = $("row-" + f.key);
+  const input = old && old.querySelector("#in-" + f.key);
+  if (old && (whole || !input)) old.replaceWith(row(f));
+  else if (old) {
+    // While typing, the box itself never leaves the page: moving an element
+    // takes its focus away, which cost the typist their cursor every
+    // keystroke. Everything around it -- the tags, the picker, the switch,
+    // the server's line, the error -- is swapped for the fresh row's.
+    const fresh = row(f);
+    const [label, box, error] = fresh.children;
+    old.children[0].replaceWith(label);
+    old.children[2].replaceWith(error);
+    const around = old.querySelector(".input");
+    for (const child of [...around.children]) if (child !== input) child.remove();
+    const newInput = box.querySelector("#in-" + f.key);
+    const [before, after] = [[], []];
+    let seen = false;
+    for (const child of [...box.children]) {
+      if (child === newInput) { seen = true; continue; }
+      (seen ? after : before).push(child);
+    }
+    input.before(...before);
+    input.after(...after);
+  }
+  const g = form.groups.find((one) => one.id === f.group);
+  const head = $("group-" + g.id) && $("group-" + g.id).querySelector(".card-head .tag.own");
+  const own = form.fields.filter((one) => one.group === g.id && isOwn(one)).length;
+  const place = $("group-" + g.id) && $("group-" + g.id).querySelector(".card-head");
+  if (place) {
+    if (head) head.remove();
+    if (own) place.insertBefore(el("span", { class: "tag own" }, `${own} of yours`), place.children[1]);
+  }
+  drawJourney();
+  drawStatus();
+}
+
+// The ranks a plan would train: planner.default_ranks(), on screen.
+function plannedRanks(d) {
+  const ranks = d.ranks || [];
+  if (!d.lora_count || !ranks.length) return ranks;
+  return Array.from({ length: d.lora_count }, (_, i) => ranks[i % ranks.length]);
+}
+
+function drawJourney() {
+  const d = draft, ranks = plannedRanks(d);
+  const rounds = 1 + (d.blend_generations || 0), blends = rounds * (d.blend_population || 0);
+  const step = (name, big, small) => el("div", { class: "step" }, el("span", {}, name), el("b", {}, big), el("small", {}, small));
+  $("journey").replaceChildren(
+    step("1 · Train", `${ranks.length} LoRA${ranks.length === 1 ? "" : "s"}`,
+      `rank ${ranks.join(", ") || "–"} on ${shortModel(d.base_model)}${d.mock ? " · practice run" : ""}`),
+    step("How long", `${d.epochs_quick} · ${d.epochs_balanced} · ${d.epochs_thorough}`, "epochs offered: quick, solid, full"),
+    step("2 · Blend", `${rounds} × ${d.blend_population}`, `${blends} blends, each judged on ${d.blend_questions} questions by ${d.evaluator}${d.judge_model ? " (" + d.judge_model + thinkingWords(d.judge_thinking) + ")" : ""}`),
+    step("3 · Test, verify", `${d.blend_test_questions} + ${d.blend_validation_questions}`,
+      `questions kept back: testing, then verification (${d.verify_questions} from a file)`),
+    step("Guide", d.provider, (d.model || "its default model") + thinkingWords(d.thinking)));
+}
+const thinkingWords = (v) => v === true ? " · thinking on" : v === false ? " · thinking off" : "";
+const shortModel = (id) => String(id || "?").split("/").pop();
+
+function drawStatus(message, kind) {
+  const bad = Object.keys(errors).length;
+  const dirty = changed();
+  const saved = Object.keys(form.saved).length;
+  $("save").disabled = !dirty || bad > 0;
+  $("discard").disabled = !dirty;
+  $("resetAll").disabled = !saved && !Object.keys(wanted()).length;
+  const node = $("status");
+  node.className = "status" + (kind ? " " + kind : bad ? " bad" : "");
+  node.textContent = message || (bad ? `${bad} value${bad === 1 ? "" : "s"} to fix before saving`
+    : dirty ? "Unsaved changes"
+    : saved ? `${saved} default${saved === 1 ? "" : "s"} of yours saved${form.updated_at ? " · " + form.updated_at.replace("T", " ").slice(0, 16) : ""}`
+    : "Everything follows the server's defaults");
+}
+
+// --- the lists beside the free-text boxes ---------------------------------------------------
+
+function loadLists() { for (const k of Object.keys(PICKERS)) loadPicker(k); }
+
+// --- saving -----------------------------------------------------------------------------
+
+function forgetGuideChoices(before, after) {
+  for (const [k, name] of Object.entries(GUIDE_REMEMBERS)) {
+    if (!same(before[k], after[k])) { try { localStorage.removeItem(name); } catch (_) { /* private mode */ } }
+  }
+}
+
+async function send(values) {
+  const before = form.effective;
+  try {
+    form = values === null ? await api("DELETE", "/agent/defaults") : await api("PUT", "/agent/defaults", { values });
+  } catch (error) {
+    return drawStatus(error.status === 401 ? "Your key is no longer known." : error.message, "bad");
+  }
+  forgetGuideChoices(before, form.effective);
+  startDraft();
+  draw();
+  drawStatus(values === null ? "Back to the server's defaults. The next conversation starts from them."
+                             : "Saved. The next conversation in the guide starts from these.", "ok");
+}
+
+$("save").addEventListener("click", () => send(wanted()));
+$("discard").addEventListener("click", () => { startDraft(); draw(); });
+$("resetAll").addEventListener("click", () => {
+  if (confirm("Forget every default you saved? The server's apply again.")) send(null);
+});
+$("changeKey").addEventListener("click", () => keyGate());
+window.addEventListener("beforeunload", (e) => { if (form && changed()) { e.preventDefault(); e.returnValue = ""; } });
+
+const stored = recallKey();
+if (stored) useKey(stored); else keyGate();
+</script>
+</body>
+</html>

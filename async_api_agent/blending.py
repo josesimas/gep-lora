@@ -41,6 +41,7 @@ from adapters import catalog as lora_catalog
 from async_api import results
 from async_api import train
 from async_api_agent import analysis
+from async_api_agent import guide_defaults
 from async_api_agent import planner
 from async_api_agent import settings
 from config import settings as config
@@ -86,11 +87,11 @@ def blend_of(raw):
         raise BlendError("a label must be some text")
     return {
         "loras": list(dict.fromkeys(loras)),
-        "generations": _whole("generations", raw.get("generations", settings.BLEND_GENERATIONS),
+        "generations": _whole("generations", raw.get("generations", guide_defaults.value("BLEND_GENERATIONS")),
                               1, settings.MAX_BLEND_GENERATIONS),
-        "population": _whole("population", raw.get("population", settings.BLEND_POPULATION),
+        "population": _whole("population", raw.get("population", guide_defaults.value("BLEND_POPULATION")),
                              settings.MIN_BLEND_POPULATION, settings.MAX_BLEND_POPULATION),
-        "questions": _whole("questions", raw.get("questions", settings.BLEND_QUESTIONS),
+        "questions": _whole("questions", raw.get("questions", guide_defaults.value("BLEND_QUESTIONS")),
                             1, settings.MAX_BLEND_QUESTIONS),
         "source": source,
         "label": " ".join(label.split())[:80] if label else None,
@@ -242,8 +243,8 @@ def split(lines, questions):
     too few are left for both, they are shared out, so neither step is empty
     while there is anything to give it."""
     training, rest = lines[:questions], lines[questions:]
-    validation = min(settings.BLEND_VALIDATION_QUESTIONS, len(rest) // 2)
-    testing = min(settings.BLEND_TEST_QUESTIONS, len(rest) - validation)
+    validation = min(guide_defaults.value("BLEND_VALIDATION_QUESTIONS"), len(rest) // 2)
+    testing = min(guide_defaults.value("BLEND_TEST_QUESTIONS"), len(rest) - validation)
     return training, rest[:testing], rest[testing:testing + validation]
 
 
@@ -294,6 +295,9 @@ def plan(catalog, registry, user, session, mock=False, dataset=None, prefer=()):
               "CHAT_TEMPLATE": first["chat_template"],
               "GENERATIONS": blend["generations"], "COUNT": blend["population"],
               "TRAINING_COUNT": len(training)}
+    # The evaluator and judge the user chose as their defaults; submit.py
+    # checks them as it checks any other setting a job names.
+    wanted.update(guide_defaults.job_settings())
     if mocked:
         wanted["TEMPLATE"] = MOCKED_TEMPLATE
     datasets = {"training": "\n".join(training)}

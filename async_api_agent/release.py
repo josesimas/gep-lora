@@ -45,6 +45,7 @@ from adapters import catalog as lora_catalog
 from async_api import results
 from async_api import verify
 from async_api_agent import blending
+from async_api_agent import guide_defaults
 from async_api_agent import settings
 
 # The splits a verification may ask, the first one a job holds being the default:
@@ -208,7 +209,7 @@ def verify_request(found, release, lora_name=None):
         body["dataset"] = dict(questions)
         where = (questions["file"] if questions.get("file")
                  else "%s's training data" % (lora_name or "LoRA %d" % questions["lora"]))
-        count = count or settings.VERIFY_QUESTIONS
+        count = count or guide_defaults.value("VERIFY_QUESTIONS")
     body["count"] = count
     return {"body": body, "blend": one, "against": list(one["loras"]),
             "questions_from": where, "count": count}

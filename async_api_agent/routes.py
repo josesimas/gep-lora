@@ -48,6 +48,12 @@ App and the user, like an App method, and returns (status, payload).
                                                               -> the blend beside its LoRAs
     POST /agent/live/started        {agent, deployment: id, history}
 
+  the user's defaults (guide_defaults.py; the page is /guide_defaults)
+    GET    /agent/defaults          every default: the server's, the saved, what is in force
+    PUT    /agent/defaults          {values: {key: value}}    -> the same, saved; replaces
+                                                                 what was saved, whole
+    DELETE /agent/defaults          back to the server's, all of them
+
   the journey so far (create_summary.py)
     POST /agent/summary             {agent, stage, mock, dataset?: the page's analysis,
                                      loras?: [id], job?, verification?, deployment?,
@@ -76,8 +82,13 @@ POST /jobs/{id}/verify, which the page sends and watches through GET
 tries it through POST /infer. The token that call returns stays in the page:
 /agent/live/started is sent the deployment's id, never its token, so no model
 is ever shown one.
+
+Every handler runs under the user's own defaults (`_theirs`): what they saved
+on /guide_defaults is what settings.py's knobs read as for that request, so a
+plan, a search and the config the page starts from are all theirs.
 """
 
+import functools
 import os
 
 from async_api import settings as api_settings
@@ -85,6 +96,7 @@ from async_api_agent import agent
 from async_api_agent import analysis
 from async_api_agent import blending
 from async_api_agent import create_summary
+from async_api_agent import guide_defaults
 from async_api_agent import planner
 from async_api_agent import prompts
 from async_api_agent import providers
@@ -208,20 +220,21 @@ def demo_datasets():
 
 def config(app, user):
     options = planner.recipe()
+    value = guide_defaults.value
     return 200, {"providers": providers.describe(),
-                 "default": {"provider": settings.PROVIDER, "model": settings.MODEL},
-                 "ranks": settings.LORA_RANKS, "base_model": options["base_model"],
+                 "default": {"provider": value("PROVIDER"), "model": value("MODEL")},
+                 "ranks": planner.default_ranks(), "base_model": options["base_model"],
                  "chat_template": options["chat_template"],
                  "recipe": {key: options[key] for key in ("batch_size", "grad_accum",
                                                           "learning_rate", "alpha", "scheduler")},
-                 "wait_choices": settings.WAIT_CHOICES,
+                 "wait_choices": guide_defaults.wait_choices(),
                  "min_epochs": settings.MIN_EPOCHS, "max_epochs": settings.MAX_EPOCHS,
-                 "mock": bool(settings.MOCK), "few_records": settings.FEW_RECORDS,
+                 "mock": bool(value("MOCK")), "few_records": settings.FEW_RECORDS,
                  "datasets": demo_datasets(),
                  # The page's own lines, so every word the agent says is prompts.py's.
-                 "blend": {"generations": settings.BLEND_GENERATIONS,
-                           "population": settings.BLEND_POPULATION,
-                           "questions": settings.BLEND_QUESTIONS,
+                 "blend": {"generations": value("BLEND_GENERATIONS"),
+                           "population": value("BLEND_POPULATION"),
+                           "questions": value("BLEND_QUESTIONS"),
                            "max_generations": settings.MAX_BLEND_GENERATIONS,
                            "min_population": settings.MIN_BLEND_POPULATION,
                            "max_population": settings.MAX_BLEND_POPULATION,
@@ -239,8 +252,10 @@ def config(app, user):
                            "test_stopped": prompts.TEST_STOPPED,
                            "release_hint": prompts.RELEASE_HINT},
                  "release": {"splits": list(release.SPLITS),
-                             "questions": settings.VERIFY_QUESTIONS,
-                             "max_questions": settings.MAX_VERIFY_QUESTIONS}}
+                             "questions": value("VERIFY_QUESTIONS"),
+                             "max_questions": settings.MAX_VERIFY_QUESTIONS},
+                 # Whether the defaults in force are the user's own (/guide_defaults).
+                 "own_defaults": sorted(guide_defaults.stored(_saved(app, user)[0]))}
 
 
 def models(app, user, query):
@@ -472,6 +487,44 @@ def live_started(app, user, body):
                  "deployment": shown, "formula": formula}
 
 
+# --- the user's defaults --------------------------------------------------------------
+
+
+def _saved(app, user):
+    """(the user's saved defaults, when) -- none for an App without a registry."""
+    registry = getattr(app, "registry", None)
+    return registry.guide_defaults(user["id"]) if registry is not None else ({}, None)
+
+
+def defaults(app, user):
+    saved, when = _saved(app, user)
+    return 200, guide_defaults.form(guide_defaults.stored(saved), when)
+
+
+def save_defaults(app, user, body):
+    values = (body or {}).get("values")
+    try:
+        kept = guide_defaults.check(values if values is not None else {})
+    except guide_defaults.DefaultsError as error:
+        raise AgentError(400, str(error))
+    when = app.registry.set_guide_defaults(user["id"], kept)
+    return 200, guide_defaults.form(kept, when)
+
+
+def reset_defaults(app, user):
+    app.registry.set_guide_defaults(user["id"], {})
+    return 200, guide_defaults.form({}, None)
+
+
+def _theirs(handler):
+    """`handler`, run with the user's saved defaults in force."""
+    @functools.wraps(handler)
+    def run(app, user, *args):
+        with guide_defaults.applied(_saved(app, user)[0]):
+            return handler(app, user, *args)
+    return run
+
+
 # --- the journey so far -------------------------------------------------------------
 
 
@@ -485,6 +538,9 @@ def summary(app, user, body):
 # a function where the server's own routes name an App method.
 ROUTES = [
     ("GET", r"/agent/config", config, ()),
+    ("GET", r"/agent/defaults", defaults, ()),
+    ("PUT", r"/agent/defaults", save_defaults, ("body",)),
+    ("DELETE", r"/agent/defaults", reset_defaults, ()),
     ("GET", r"/agent/models", models, ("query",)),
     ("POST", r"/agent/intro", intro, ("body",)),
     ("POST", r"/agent/analyse", analyse, ("body",)),
@@ -506,3 +562,4 @@ ROUTES = [
     ("POST", r"/agent/live/started", live_started, ("body",)),
     ("POST", r"/agent/summary", summary, ("body",)),
 ]
+ROUTES = [(method, pattern, _theirs(handler), extras) for method, pattern, handler, extras in ROUTES]

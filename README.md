@@ -3259,6 +3259,15 @@ With no model, `create_summary.fallback()` tells the same story in the
 overlay alone (the page's print styles hide the rest and force light
 colours); *Markdown* saves the text.
 
+**The conversation can be kept.** *Export* in the guide's header saves the
+whole conversation on the left, as this browser holds it: *Markdown* to read
+or share (every message with its time and the model that wrote it, the notes
+under them, the tool calls and events between, grouped by day, under a line
+naming the dataset, LoRAs, search, verification and deployment it touched),
+or *JSON* with the same and nothing lost. It is made in the page -- no
+endpoint -- and carries only what the conversation already shows: never the
+API key, a live blend's key or the dataset itself.
+
 **The second half: blending them.** A search needs adapters, and the first
 half has just made some, so the guide carries on: *Blend them* (or "blend
 them" in the chat, or *Blend my LoRAs* on the welcome for someone who already
@@ -3334,6 +3343,56 @@ static and every row comes from the API, which answers only with the caller's
 own jobs -- someone else's `?job=` is "no search of yours" -- and the guide's
 saved conversation is kept per key (under a hash of it), so two people
 sharing a browser never see each other's.
+
+**Every default the guide starts from can be a person's own.**
+**`/guide_defaults`** (*Defaults* in the guide's and the runs page's top bar)
+is one form for the whole process: the chat's provider and model; for
+training, the base model, chat template, the ranks, the number of LoRAs
+(`LORA_COUNT`: empty is one per rank; a number takes the ranks in turn until
+there are that many, at most `MAX_LORAS`, and a rank's second LoRA is trained
+under create_lora's seed plus one, its third plus two, so repeats are
+different adapters rather than copies), the epochs
+behind the three "how long can you wait?" answers, the create_lora recipe
+(learning rate, alpha, dropout, batch, scheduler, ...) and whether a practice
+run is ticked; for blending, the generations, the blends per generation, the
+questions each is judged on, how many are kept back for testing and for
+verification, the evaluator and the judge model; and the size of a
+verification asked of a file. Each model box has a drop-down of what its
+endpoint lists beside it, and once a model is chosen, a **Thinking** checkbox:
+on, off, or (its third, indeterminate state) the model's own habit.
+
+**Thinking is a switch on both models.** `THINKING` (async_api_agent/settings.py,
+or the page's per-conversation `agent.thinking`) for the guide's chat model and
+`JUDGE_THINKING` (config/settings.py, frozen into a sweep like every JUDGE_*
+knob) for the judge; `None` sends nothing. On an OpenAI-compatible endpoint it
+is `reasoning_effort` -- `"none"` off, `"medium"` on -- because that is the one
+control LM Studio was found to honour: on a loaded reasoning model it took a
+short answer from 251 completion tokens to 4, while `chat_template_kwargs`,
+`reasoning` and a `/no_think` in the prompt changed nothing. Anthropic's wire
+gets its `thinking` block (`disabled` / `adaptive`), the Responses API its
+`reasoning.effort`, and the unsloth judge the chat template's
+`enable_thinking`. An endpoint that refuses the field (400/422) is asked again
+without it -- and dropping a refused field no longer spends one of the judge's
+`JUDGE_RETRIES`, which it used to for `response_format` too. Each field shows the server's value beside it,
+and a card at the top shows the journey a new conversation would take under
+what is on screen.
+
+They are saved per user in `api.sqlite` (`guide_defaults`, one JSON document
+each) through `GET`/`PUT`/`DELETE /agent/defaults`, and
+`async_api_agent/guide_defaults.py` owns the fields and checks them -- by
+train.py's rules for a training option, the chat's for ranks, settings.py's
+limits for a search. **Only what differs from the server is kept**, so a field
+left alone follows the server's value when it changes. Every `/agent/*`
+request then runs under the caller's saved values (`routes._theirs`): the
+page's config, the session's ranks and blend sizes, the wait choices, the
+estimate, the POST /loras bodies (which carry the saved recipe, under the
+chat's own changes) and the POST /jobs body (`EVALUATOR`, `JUDGE_MODEL`), so
+train.py and submit.py check them as they check anything else. A default is
+a start, never a limit: the chat can still change any of it, within the
+server's maxima, which are not offered. It applies to a **new** conversation;
+one already under way keeps the plan it was shown. Saving a new provider,
+model or practice-run default also forgets the guide's remembered choice of
+it in that browser, which would otherwise win.
 
 All three need a search that **finished** (the API refuses the rest). A search
 that was stopped, cancelled or failed gets **Resume the search** instead

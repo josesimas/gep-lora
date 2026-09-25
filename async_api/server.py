@@ -88,6 +88,8 @@ Other
     GET    /datasets                       shared dataset files a submission may name
     GET    /  or  /demo                    a test page that drives all of the above
     GET    /runs.html                      the user's runs as a page (reads GET /runs)
+    GET    /guide_defaults                 the user's defaults for the guide, as a form
+                                           (reads and writes /agent/defaults)
 
 The LoRA agent (async_api_agent/routes.py)
     GET    /agent                          the agent page: a guide that trains LoRAs
@@ -97,6 +99,8 @@ The LoRA agent (async_api_agent/routes.py)
                                            page trains through POST /loras above
     POST   /agent/chat                     a typed message, answered and acted on with
                                            the agent's tools
+    GET    /agent/defaults                 the user's defaults for a new conversation;
+    PUT    /agent/defaults                 saved (DELETE: back to the server's)
     POST   /agent/blend/{intro,plan,started,debrief}
                                            the second half: the user's own LoRAs blended;
                                            the page submits the plan to POST /jobs above
@@ -140,6 +144,11 @@ AGENT_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-ui.
 # Every run of the user's on one page, served at /runs.html. Static like the
 # others: what it shows comes from GET /runs, which needs the user's key.
 RUNS_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs.html")
+
+# The guide's defaults as a form, served at /guide_defaults: what a new
+# conversation starts from, for the whole process -- training and blending.
+# Static too; it reads and saves through /agent/defaults, under the user's key.
+DEFAULTS_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guide_defaults.html")
 
 
 class FileReply:
@@ -919,6 +928,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._page(AGENT_PAGE)
             if path == "/runs.html" and self.command == "GET":
                 return self._page(RUNS_PAGE)
+            if path in ("/guide_defaults", "/guide_defaults.html") and self.command == "GET":
+                return self._page(DEFAULTS_PAGE)
             if path == "/health" and self.command == "GET":
                 return self._send(200, {"ok": True, "models": self.app.cache.status()})
             if path == "/infer" and self.command == "POST":

@@ -95,6 +95,13 @@ ANTHROPIC_MAX_TOKENS = 6000
 # short and latency is what the user feels, so low.
 ANTHROPIC_EFFORT = "low"
 
+# Whether the chat model thinks before it replies. None leaves it to the model;
+# False asks it not to -- a guide's reply rarely needs it, and a reasoning model
+# on LM Studio answered in half the time without -- and True asks it to. Sent
+# in each wire's own words (providers.thinking_fields); a provider that refuses
+# them is asked again without. The page may choose per conversation.
+THINKING = None
+
 # Seconds to wait for a reply, and for a provider to list its models. The list
 # is asked whenever the page's provider changes, so a dead endpoint should say
 # so in a few seconds rather than hold the page up.
@@ -127,6 +134,13 @@ FEW_RECORDS = 30
 # rule (CAT sums, SVD takes the max, LIN needs equal) has to work with -- the
 # five default slots are 16, 16, 8, 4 and 32 for that reason.
 LORA_RANKS = [8, 16]
+
+# How many LoRAs a plan trains. None is one per rank above. A number takes the
+# ranks in turn until there are that many -- 4 over [8, 16] is 8, 16, 8, 16 --
+# and a rank's second LoRA is trained under another seed (create_lora's own
+# plus one per repeat), so the two are different adapters for a search to
+# blend rather than one adapter twice. At most MAX_LORAS.
+LORA_COUNT = None
 
 # The most LoRAs one plan may train, when the chat is asked for more ranks.
 # Five, because that is how many slots a search blends (LORA_SLOTS L1-L5):
