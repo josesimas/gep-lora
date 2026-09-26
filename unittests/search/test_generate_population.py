@@ -59,7 +59,43 @@ class AlphabetTests(unittest.TestCase):
             self.assertEqual(gp.children_alphabet(symbol), ())
 
     def test_an_unknown_symbol_has_no_children(self):
-        self.assertEqual(gp.children_alphabet("L9"), ())
+        self.assertEqual(gp.children_alphabet("L11"), ())
+
+    def test_the_alphabet_holds_ten_slots_and_ten_weights(self):
+        self.assertEqual(gp.MAX_SLOTS, 10)
+        self.assertEqual(gp.UNARY_OPS[-1], "L10")
+        self.assertEqual(gp.VARIABLES[-1], "w10")
+        gp.check("CAT.L10.L9.w10.w6")
+
+
+class SlotCountTests(unittest.TestCase):
+    """How many of the alphabet's slots a sweep's LORA_SLOTS gives it."""
+
+    def slots(self, count):
+        return {"L%d" % n: "adapter%d" % n for n in range(1, count + 1)}
+
+    def test_one_to_ten_slots_in_order_are_counted(self):
+        for count in (1, 5, 10):
+            self.assertEqual(gp.slot_count(self.slots(count)), count)
+
+    def test_a_gap_none_or_too_many_are_refused(self):
+        gapped = dict(self.slots(5), L7="x")
+        for bad in ({}, None, gapped, {"L2": "x"}, self.slots(11), {"X1": "x"}):
+            with self.assertRaises(ValueError, msg=bad):
+                gp.slot_count(bad)
+
+    def test_slots_of_reads_the_sweeps_own(self):
+        self.assertEqual(gp.slots_of({"LORA_SLOTS": self.slots(7)}), 7)
+
+    def test_the_draw_stays_inside_the_sweeps_slots(self):
+        for count in (1, 3, 7):
+            allowed = set(gp.slot_symbols(count)) | set(gp.weight_symbols(count))
+            for chromosome in gp.build_population(30, rng(count), 4, 0.6, False, count):
+                self.assertLessEqual(set(chromosome.split(".")) - set(gp.BINARY_OPS), allowed)
+
+    def test_slot_key_puts_ten_after_nine(self):
+        self.assertEqual(sorted(["L10", "L2", "L1", "L9"], key=gp.slot_key),
+                         ["L1", "L2", "L9", "L10"])
 
 
 class DecodeTests(unittest.TestCase):
@@ -109,7 +145,7 @@ class DecodeTests(unittest.TestCase):
 
     def test_an_unknown_symbol_is_refused(self):
         with self.assertRaises(ValueError):
-            gp.decode("CAT.L1.L9.w1.w2")
+            gp.decode("CAT.L1.L11.w1.w2")
 
 
 class CheckTests(unittest.TestCase):
@@ -216,7 +252,7 @@ class BuildPopulationTests(unittest.TestCase):
     def test_without_unique_duplicates_are_allowed(self):
         # A shallow, never-branching draw has few trees to find, so the same
         # one comes up more than once -- which unique=False is meant to permit.
-        population = gp.build_population(40, rng(24), 1, 0.0, False)
+        population = gp.build_population(40, rng(24), 1, 0.0, False, 5)
         self.assertLess(len(set(population)), len(population))
 
     def test_the_same_seed_gives_the_same_population(self):
@@ -228,10 +264,11 @@ class BuildPopulationTests(unittest.TestCase):
                             gp.build_population(10, rng(26), 4, 0.3, True))
 
     def test_it_gives_up_rather_than_looping_forever(self):
-        # Depth 1 with no branching has 5*5*5*5 trees in it; asking for more
-        # unique ones than the budget can find has to raise, not spin.
+        # Depth 1 with no branching over five slots has 5*5*5*5 trees in it;
+        # asking for more unique ones than the budget can find has to raise,
+        # not spin.
         with self.assertRaises(RuntimeError) as caught:
-            gp.build_population(700, rng(27), 1, 0.0, True)
+            gp.build_population(700, rng(27), 1, 0.0, True, 5)
         self.assertIn("unique", str(caught.exception))
 
     def test_it_never_exceeds_the_depth_it_was_given(self):

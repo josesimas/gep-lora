@@ -5,7 +5,7 @@ Going live is two things, kept apart:
 
   * **the blend spec** -- what to build, derived once from the job's database
     at the moment it goes live and stored with the deployment: the base model,
-    the chat template, the five adapter folders, the build plan with every
+    the chat template, the adapter folders, the build plan with every
     weight already a number, and the final adapter. It is the same plan a
     generated `template_remote_code.py` script sends a lora server's /build,
     so a live blend is built by the code that built it during the search. A
@@ -21,7 +21,7 @@ Going live is two things, kept apart:
     TARGETS; the token, the registry row and the endpoints do not change.
 
 The weights are drawn from the individual's own weight seed exactly as its
-script drew them (`random.Random(seed)`, five draws, zero excluded), rather than
+script drew them (`random.Random(seed)`, ten draws, zero excluded), rather than
 read from the execution's `weights` column, which holds the four-decimal
 figures the script printed.
 """
@@ -31,14 +31,14 @@ import random
 from blends import generate_runs
 from blends import process_run
 from blends import server_pool
-from search.generate_population import decode
+from search.generate_population import VARIABLES, decode
 import start_run
 from storage import store
 
 from async_api import inference
 from async_api import results
 
-WEIGHT_NAMES = ("w1", "w2", "w3", "w4", "w5")
+WEIGHT_NAMES = VARIABLES      # the templates draw all of them, in this order
 
 
 class GoLiveError(ValueError):
@@ -46,7 +46,7 @@ class GoLiveError(ValueError):
 
 
 def draw_weights(seed):
-    """The template's own draw: {w1..w5}, each in (0, 1)."""
+    """The template's own draw: {w1..w10}, each in (0, 1)."""
     rng = random.Random(seed)
 
     def one():

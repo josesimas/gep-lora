@@ -34,6 +34,7 @@ from unittests.search.support import CONF, SweepTestCase, rng
 
 # The knobs a real sweep would carry, small enough to run in a second.
 POPULATION = 12
+SLOTS = 5          # a sweep of five adapters: L1..L5, w1..w5
 SELECTION_COUNT = 3
 MUTATION_RATE = 0.15
 GENERATIONS = 14
@@ -100,7 +101,7 @@ class GenerationCycleTests(SweepTestCase):
         population = []
         while len(population) < POPULATION:
             chromosome = gp.build_population(
-                1, generator, CONF["MAX_DEPTH"], 0.9, False)[0]
+                1, generator, CONF["MAX_DEPTH"], 0.9, False, SLOTS)[0]
             leaves = [symbol for symbol in chromosome.split(".")
                       if symbol in gp.VARIABLES]
             if len(leaves) >= 4 and chromosome not in population:
@@ -127,7 +128,7 @@ class GenerationCycleTests(SweepTestCase):
         elitism.elect(self.conn, self.run)
         selection.select(self.conn, self.run, SELECTION_COUNT,
                          self.selection_rng, CONF)
-        mutation.apply(self.conn, self.run, MUTATION_RATE, self.mutation_rng)
+        mutation.apply(self.conn, self.run, MUTATION_RATE, self.mutation_rng, SLOTS)
         return snapshot
 
     def search(self, generations=GENERATIONS):

@@ -117,7 +117,7 @@ def read_sweep(conn, run_id):
 #
 # generate_runs.build_order_block() is what writes it, and writes nothing else
 # in that shape.
-_LEAF_RANK = re.compile(r"=\s*(L\d)\s*@\s*w\d\s+rank\s+(\d+)")
+_LEAF_RANK = re.compile(r"=\s*(L\d+)\s*@\s*w\d+\s+rank\s+(\d+)")
 
 
 def slot_ranks(people):

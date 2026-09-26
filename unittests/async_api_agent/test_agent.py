@@ -735,7 +735,7 @@ class BlendingTests(JobsTestCase):
         self.assertEqual(session["blend"]["generations"], settings.BLEND_GENERATIONS)
         self.assertEqual(session["blend"]["loras"], [])
         for bad in ({"population": 1}, {"generations": 0}, {"loras": ["x"]},
-                    {"loras": list(range(1, 8))}, {"source": {"url": "http://x"}}):
+                    {"loras": list(range(1, 12))}, {"source": {"url": "http://x"}}):
             with self.assertRaises(planner.SessionError, msg=bad):
                 planner.session_of({"blend": bad})
 
@@ -752,6 +752,14 @@ class BlendingTests(JobsTestCase):
             blending.own(self.catalog, self.user, failed["id"])
         self.assertEqual({row["name"] for row in blending.mine(self.catalog, self.user)},
                          {"poem-r16", "poem-r8"})
+
+    def test_more_than_five_loras_get_a_place_each_up_to_ten(self):
+        seven = [lora(self.catalog, "set-%d" % n) for n in range(7)]
+        self.assertEqual(blending.slots(seven),
+                         {"L%d" % (n + 1): row["id"] for n, row in enumerate(seven)})
+        blending.check_together([lora(self.catalog, "ten-%d" % n) for n in range(10)])
+        with self.assertRaises(blending.BlendError):
+            blending.check_together([lora(self.catalog, "eleven-%d" % n) for n in range(11)])
 
     def test_one_base_model_and_five_places(self):
         other = lora(self.catalog, "other", base_model="someone/else")
@@ -1266,7 +1274,7 @@ class GuideDefaultsTests(JobsTestCase):
                                      "blend_population": 12, "model": None, "chat_template": ""})
         self.assertEqual(kept, {"ranks": [4, 32], "learning_rate": 1e-4, "mock": True,
                                 "blend_population": 12, "chat_template": ""})
-        for bad in ({"ranks": []}, {"ranks": list(range(1, 8))}, {"learning_rate": "fast"},
+        for bad in ({"ranks": []}, {"ranks": list(range(1, 12))}, {"learning_rate": "fast"},
                     {"blend_population": 1}, {"scheduler": "sideways"}, {"evaluator": "nope"},
                     {"nonsense": 1}, {"model": "m"}, {"mock": "yes"}, []):
             with self.assertRaises(guide_defaults.DefaultsError, msg=bad):
@@ -1322,7 +1330,7 @@ class GuideDefaultsTests(JobsTestCase):
         self.assertEqual(len({body["name"] for body in bodies}), 5)
         with guide_defaults.applied({"ranks": [8], "lora_count": 1}):
             self.assertEqual(planner.default_ranks(), [8])
-        for bad in (0, 6, 2.5):
+        for bad in (0, settings.MAX_LORAS + 1, 2.5):
             with self.assertRaises(guide_defaults.DefaultsError, msg=bad):
                 guide_defaults.check({"lora_count": bad})
 

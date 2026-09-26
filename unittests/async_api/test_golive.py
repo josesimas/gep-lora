@@ -95,9 +95,9 @@ class BuildPlanTests(JobsTestCase):
 
 class DrawWeightsTests(unittest.TestCase):
 
-    def test_five_weights_in_the_open_interval_repeatably(self):
+    def test_ten_weights_in_the_open_interval_repeatably(self):
         weights = golive.draw_weights(42)
-        self.assertEqual(sorted(weights), ["w1", "w2", "w3", "w4", "w5"])
+        self.assertEqual(sorted(weights), sorted("w%d" % n for n in range(1, 11)))
         self.assertTrue(all(0.0 < value < 1.0 for value in weights.values()))
         self.assertEqual(weights, golive.draw_weights(42))
 

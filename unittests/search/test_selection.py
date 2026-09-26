@@ -171,9 +171,18 @@ class FreshTests(unittest.TestCase):
         with mock.patch.object(gp, "build_population",
                                return_value=["CAT.L1.L2.w1.w2"]) as drawn:
             selection.fresh([], rng(75), CONF)
-        _count, _generator, max_depth, branch_prob, unique = drawn.call_args[0]
+        _count, _generator, max_depth, branch_prob, unique, slots = drawn.call_args[0]
         self.assertEqual((max_depth, branch_prob, unique),
                          (CONF["MAX_DEPTH"], CONF["BRANCH_PROB"], False))
+        # CONF names no LORA_SLOTS, so settings.py's say how many there are.
+        self.assertEqual(slots, gp.slots_of(CONF))
+
+    def test_it_draws_only_the_slots_the_sweep_has(self):
+        conf = dict(CONF, LORA_SLOTS={"L1": "a", "L2": "b", "L3": "c"})
+        for seed in range(30):
+            symbols = set(selection.fresh([], rng(seed), conf).split("."))
+            self.assertLessEqual(symbols - set(gp.BINARY_OPS),
+                                 {"L1", "L2", "L3", "w1", "w2", "w3"})
 
 
 class SelectTests(SweepTestCase):

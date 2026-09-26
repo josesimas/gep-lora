@@ -333,7 +333,7 @@ def blend_intro(catalog, user, session, choice=None, history=None, prefer=(), qu
         fallback = prompts.FALLBACK_BLEND.format(
             questions=blend["questions"],
             picked=", ".join("**%s** (rank %s)" % (row["name"], row["rank"]) for row in rows),
-            repeat=prompts.FALLBACK_BLEND_REPEAT if len(rows) < len(blending.SLOTS) else "",
+            repeat=prompts.FALLBACK_BLEND_REPEAT if len(rows) < blending.MIN_PLACES else "",
             generations=1 + blend["generations"], population=blend["population"],
             time=found["time"], source=found["source"])
     out["message"] = say("blend", facts, fallback, choice, history)

@@ -169,8 +169,9 @@ is roughly how long it takes.
 Explain in a few short sentences what happens: a search builds many blends \
 of these LoRAs — stacking, merging or mixing them at different strengths — \
 asks each one the questions, has a judge score the answers, and breeds the \
-best into the next round. Say which LoRAs are picked and that fewer than five \
-simply take more than one of the five places a blend has. If FACTS.loras is \
+best into the next round. Say which LoRAs are picked and that a blend has one \
+place per LoRA (up to ten) but at least five, so fewer than five simply take \
+more than one place. If FACTS.loras is \
 empty, say they have no ready LoRAs yet and should train some first.
 
 End by asking them to check the LoRAs ticked on the left and press **Plan \
@@ -451,9 +452,10 @@ TOOLS = {
     "open_blending": ("Go to combining the person's LoRAs: a search that tries many blends of "
                       "them and keeps the best."),
     "choose_blend_loras": (
-        "Choose which of the person's own ready LoRAs to blend, by id or name: 1 to 5, all "
+        "Choose which of the person's own ready LoRAs to blend, by id or name: 1 to 10, all "
         "on one base model. add=true adds them to those already chosen instead of "
-        "replacing them. Fewer than five take more than one of a blend's five places."),
+        "replacing them. A blend has at least five places, so fewer than five LoRAs take "
+        "more than one."),
     "set_blend_search": (
         "Size the search: generations (rounds after the first), population (blends in each "
         "round), questions (how many questions every blend is judged on), label (its name)."),
@@ -622,8 +624,8 @@ I've picked {picked}.{repeat} The search runs **{generations} rounds** of \
 Check the LoRAs on the left and press **Plan the search**, or tell me what to \
 change: which LoRAs, how many rounds, blends or questions."""
 
-FALLBACK_BLEND_REPEAT = (" A blend has five places, so with fewer LoRAs some take more than "
-                         "one.")
+FALLBACK_BLEND_REPEAT = (" A blend has at least five places, so with fewer LoRAs some take "
+                         "more than one.")
 
 FALLBACK_BLEND_NONE = """\
 You have no ready LoRAs to combine yet. Train some first — press **New \
@@ -873,8 +875,9 @@ UI_BLOCKS = {
         "question of your dataset — a quick taste of what each one learned. The path is "
         "where its weights are kept on the server.")),
     "blend_plan": ("right", "The search", (
-        "What the search will blend. A blend has five places (L1–L5), each filled by one of "
-        "your LoRAs — with fewer than five, some take more than one. The search tries ways "
+        "What the search will blend. A blend has one place per LoRA (L1–L10 at most, and at "
+        "least five), each filled by one of your LoRAs — with fewer than five, some take "
+        "more than one. The search tries ways "
         "to stack, merge or mix them and at what strength; a LoRA's rank decides which of "
         "those can be built.")),
     "search": ("right", "Search", (

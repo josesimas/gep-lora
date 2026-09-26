@@ -1950,7 +1950,7 @@ function renameLora(index, input) {
 }
 
 // The blend step's controls: the user's ready LoRAs to tick (one base model,
-// at most five), and the search's size.
+// at most limits.slots, ten), and the search's size.
 function blendControls(lock, ask) {
   const b = blendOf(), limits = config.blend;
   const picked = S.blend.available.filter((one) => b.loras.includes(one.id));
@@ -1959,7 +1959,7 @@ function blendControls(lock, ask) {
     const on = b.loras.includes(one.id);
     const blocked = !on && ((model && one.base_model !== model) || b.loras.length >= limits.slots);
     return el("label", { class: "option" + (blocked ? " blocked" : ""),
-                         title: blocked ? (model && one.base_model !== model ? "trained on another base model" : "a blend has five places") : one.dataset || "" },
+                         title: blocked ? (model && one.base_model !== model ? "trained on another base model" : `a blend has at most ${limits.slots} places`) : one.dataset || "" },
       el("input", { type: "checkbox", checked: on, disabled: lock || blocked, onchange: (e) => toggleLora(one.id, e.target.checked) }),
       el("b", {}, one.name, one.practice_run ? el("span", { class: "tag mock", style: "margin-left:6px" }, "mock") : null),
       el("span", { class: "side" }, `rank ${one.rank ?? "?"}`),
@@ -2131,7 +2131,11 @@ function blendPlanCard() {
   if (!rows.length) return card("The search", null, el("p", { class: "muted" }, "Tick at least one of your LoRAs on the left."));
   const places = {};
   if (B.plan) for (const [slot, name] of Object.entries(B.plan.slots)) (places[name] = places[name] || []).push(slot);
-  else ["L1", "L2", "L3", "L4", "L5"].forEach((slot, i) => { const one = rows[i % rows.length]; (places[one.name] = places[one.name] || []).push(slot); });
+  else {
+    // blending.slots(): one place per LoRA, at least min_places, at most slots.
+    const limits = config.blend, count = Math.min(limits.slots, Math.max(limits.min_places || 5, rows.length));
+    for (let i = 0; i < count; i++) { const one = rows[i % rows.length]; (places[one.name] = places[one.name] || []).push("L" + (i + 1)); }
+  }
   return card("The search", B.plan ? `${B.plan.label} · ${B.plan.estimate.time}` : "not planned yet",
     el("div", { class: "scroll" }, el("table", {},
       el("thead", {}, el("tr", {}, ["LoRA", "Places", "Rank", "Base model", "Loss"].map((h, i) => el("th", { class: i === 2 || i === 4 ? "num" : "" }, h)))),
@@ -2140,7 +2144,7 @@ function blendPlanCard() {
         el("td", {}, (places[one.name] || []).map((slot) => el("span", { class: "slot-tag" }, slot))),
         el("td", { class: "num" }, one.rank ?? "–"), el("td", {}, one.base_model || "–"),
         el("td", { class: "num" }, fmt(one.final_loss))))))),
-    el("p", { class: "help" }, "A blend has five places (L1–L5); with fewer LoRAs some take more than one. " +
+    el("p", { class: "help" }, "A blend has one place per LoRA (up to L10), and at least five; with fewer LoRAs some take more than one. " +
       "Each blend stacks, merges or mixes them at strengths the search picks; rank decides which of those can run." +
       (B.plan ? ` Judged on ${B.plan.questions} question(s) from ${B.plan.source}` +
         (B.plan.testing ? `; ${B.plan.testing} more kept back to test the blends on, and ${B.plan.validation || 0} to verify the one you pick.` : ".") : "")));

@@ -36,10 +36,17 @@ No brackets are needed, because every symbol's arity is fixed.
 | Symbol | Arity | Children must be | Meaning |
 |---|---|---|---|
 | `CAT` `SVD` `LIN` | 2 | operators | combine two blends |
-| `L1`–`L5` | 1 | a variable | one LoRA adapter |
-| `w1`–`w5` | 0 | — | a blend weight |
+| `L1`–`L10` | 1 | a variable | one LoRA adapter |
+| `w1`–`w10` | 0 | — | a blend weight |
 
 The first symbol is always `CAT`.
+
+The alphabet is a ceiling (`MAX_SLOTS = 10` in `generate_population.py`). A
+sweep draws from as many slots as its own `LORA_SLOTS` names -- `L1`..`Ln`, one
+to ten of them with no gap, and `w1`..`wn` beside them -- so a sweep of five
+adapters only ever holds `L1`–`L5` and `w1`–`w5`, exactly as before the
+ceiling was raised, and adding `"L6": ...` .. `"L10": ...` to `LORA_SLOTS`
+widens the search. `start_run.freeze()` refuses slots that are not `L1..Ln`.
 
 Because `L*` only accepts variables and `CAT`/`SVD`/`LIN` only accept operators,
 every leaf `w` sits under an `L`, and every `L` sits under a binary operator.
@@ -1724,8 +1731,8 @@ touched at all:
 | Class | Swaps with | Why it stays valid |
 |---|---|---|
 | `CAT` `SVD` `LIN` | each other | arity 2, children still operators |
-| `L1`–`L5` | each other | arity 1, child still a variable |
-| `w1`–`w5` | each other | arity 0 |
+| `L1`–`Ln` | each other | arity 1, child still a variable |
+| `w1`–`wn` | each other | arity 0 |
 | the root | nothing | the grammar fixes it at `CAT` |
 
 That restriction is the whole trick. A symbol's arity, and the alphabet its
@@ -2996,7 +3003,7 @@ LoRA is a 404 on every `/loras` endpoint, exactly as another user's job is;
 names are unique per owner rather than across the catalogue, so choosing one can
 never reveal another user's; each user's trainings go to their own
 `loras/trained/user<N>/`; and **a job blends its owner's LoRAs and nobody
-else's**. A submission must give all five of `LORA_SLOTS` (L1-L5), each one of
+else's**. A submission must give `LORA_SLOTS` as L1..Ln (one to ten, no gap), each one of
 the user's own *ready* catalogue rows -- named by id, by name or by folder, the
 same LoRA in as many slots as wanted -- and each trained on the job's
 `BASE_MODEL` (`submit.own_slots()`, `check_base_model()`). There is no
@@ -3175,7 +3182,7 @@ where the model is given tools (`tools.py`, described to it in
 |---|---|
 | `select_records`, `use_all_records` | train on part of the dataset: "only the first 20", "records 5 to 30", "half", "a random 25", "drop the ones about fever", "no duplicates", "answers under 40 words" -- or all of it again |
 | `show_records`, `dataset_facts` | look before choosing: "show me record 7", "the longest answers" |
-| `set_loras` | how many LoRAs and their ranks: "one LoRA at rank 32", "ranks 4, 8 and 16" -- up to `MAX_LORAS` (5, a search's five slots) |
+| `set_loras` | how many LoRAs and their ranks: "one LoRA at rank 32", "ranks 4, 8 and 16" -- up to `MAX_LORAS` (10, a search's most slots) |
 | `set_epochs`, `estimate_time` | how long: "10 epochs", "I can wait 20 minutes" |
 | `set_training_options` | learning rate, alpha, dropout, sequence length, batch, warmup, max steps, scheduler, optimiser, the LoRAs' name, the test prompt |
 | `set_practice_run` | a practice run on or off |
@@ -3309,8 +3316,9 @@ the rounds improved. The third part, below, tests, verifies and puts live.
 Four rules shape that body. **Only the user's LoRAs**: every id is looked up
 among their catalogue rows (`blending.own()`), the body names the slots by id,
 and `submit.own_slots()` checks them again on the way in -- the `Lora00N`
-folders are never used. **Five places, one model**: the grammar blends L1-L5,
-so fewer LoRAs go round again (two LoRAs are L1=A, L2=B, L3=A, ...), and all
+folders are never used. **One place per LoRA, at least five, one model**: the grammar blends up
+to L1-L10, a LoRA each, and fewer than five go round again to fill five places
+(two LoRAs are L1=A, L2=B, L3=A, ...), and all
 of them must share a base model and chat template, which the job then runs
 under. **A practice LoRA makes a practice search**: a mocked LoRA has no
 weights, so any chosen one (or *Practice run*) sets `TEMPLATE` to the mocked
@@ -3560,11 +3568,13 @@ rows, and none can be worked out after the fact.
 Both live as tables at the top of every generated script, so they are easy to
 change per individual or globally in `template_code.py`.
 
-**`WEIGHTS`** — nothing in the repo defines what `w1`–`w5` are worth, so each
-run draws them fresh, strictly between 0 and 1:
+**`WEIGHTS`** — nothing in the repo defines what `w1`–`w10` are worth, so each
+run draws them fresh, strictly between 0 and 1 -- all ten, whichever a tree
+uses; the draw is sequential, so `w1`–`w5` are the values they were when there
+were only five:
 
 ```python
-WEIGHTS = {name: _weight() for name in ("w1", "w2", "w3", "w4", "w5")}
+WEIGHTS = {"w%d" % n: _weight() for n in range(1, 11)}
 ```
 
 `_weight()` calls `random.random()`, which yields `[0.0, 1.0)`, and rejects an

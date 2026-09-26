@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Gene Expression Programming search over **LoRA adapter blends**. A chromosome is a
 K-expression (Karva notation, level-order, dot-separated, always rooted at `CAT`) that
-describes how to fold five LoRA adapters into one model. Each chromosome is compiled into a
+describes how to fold up to ten LoRA adapters (the sweep's `LORA_SLOTS`) into one model. Each chromosome is compiled into a
 standalone Python script that builds that blend with PEFT and answers the eval prompts;
 the `evaluate` step then scores the answers, the way `EVALUATOR` in `settings.py` says.
 
@@ -766,7 +766,14 @@ rows of its own, so `add_dataset.py` is still the only INSERT.
 `generate_population.py` is the root module — it owns the alphabet (`BINARY_OPS`,
 `UNARY_OPS`, `VARIABLES`, `ARITY`), the `Node` type, and `decode`/`encode`/`levels`.
 Everything else imports from it; there is no second parser. Grammar invariants enforced
-there: root is `CAT`; `CAT`/`SVD`/`LIN` take two *operators*; `L1`–`L5` take one *variable*.
+there: root is `CAT`; `CAT`/`SVD`/`LIN` take two *operators*; `L1`–`L10` take one *variable*
+(`w1`–`w10`). **The alphabet is a ceiling (`MAX_SLOTS`), not what a sweep draws**: a sweep
+uses `L1..Ln`/`w1..wn`, n = its own `LORA_SLOTS` (`slots_of(conf)`, validated by
+`slot_count()` in `start_run.freeze()` -- L1..Ln, 1 <= n <= 10, no gap). `decode()` accepts
+the whole alphabet; the draws (`build_population`, `random_tree`, selection's newcomer,
+`mutation`, `weight_mutation`) take a `slots` count, which `start_run` passes from the
+sweep. A sweep stored with five slots draws exactly what it drew before. Sort slot names
+with `slot_key` -- a plain sort puts `L10` before `L2`.
 
 `calculate_fitness.py` folds a judged transcript into one number: `assign(conn, run_id)`
 averages `exchanges.quality` over each individual's most recent execution -- the
@@ -849,7 +856,7 @@ randomness at all.
 
 `mutation.py` is point mutation with the grammar built in: `mutate(chromosome, rate, rng)`
 gives each symbol probability `rate` of becoming a *different symbol of its own class*
-(`CAT`/`SVD`/`LIN`, `L1`-`L5`, `w1`-`w5`) and never touches the root. Class-local swaps are
+(`CAT`/`SVD`/`LIN`, `L1`-`Ln`, `w1`-`wn` for the sweep's n slots) and never touches the root. Class-local swaps are
 the only ones that preserve both arity and the child alphabet -- `children_alphabet()`
 depends on the class, not the symbol -- so the tree keeps its shape and every result still
 decodes; `generate_population.check()` is run on each one before it is stored, so a broken
@@ -865,7 +872,7 @@ those. Re-run `process` before `fitness` -- `fitness` reads the latest *executio
 running it first would recompute the old chromosome's score and put it back. A `CAT`->`LIN` swap over mismatched
 ranks is expected and is culled by the usual `BAD` path.
 
-`weight_mutation.py` runs after it and moves only `w1`-`w5` symbols. Its rate is a
+`weight_mutation.py` runs after it and moves only `w1`-`wn` symbols. Its rate is a
 **count over the pool**, not a chance per weight: every non-elite individual's weights go
 into one pool and `round(WEIGHT_MUTATION_RATE * pool)` (half up) are drawn without
 replacement and swapped for a different `w` -- ten weights at 0.1 is exactly one change.
@@ -1115,7 +1122,7 @@ change to it. These rules hold it together:
   delete a folder. **A LoRA is its owner's alone**: `loras.owner` is a user's name, every
   `/loras` endpoint 404s on another's (`App.own_lora`), names are unique per owner, API
   trainings go to `TRAINED_LORAS_DIR/user<N>/`, and **a job blends only its owner's
-  LoRAs**: `submit.own_slots` requires all five `LORA_SLOTS`, each one of the user's
+  LoRAs**: `submit.own_slots` requires `LORA_SLOTS` as L1..Ln (1-10, no gap), each one of the user's
   own ready rows (by id, name or folder), before anything touches the disk, and
   `check_base_model` holds them to the job's `BASE_MODEL`. `config.LORA_SLOTS` (the
   `loras/Lora00N` set) is the command line's and never a job's default -- `submit.form`
@@ -1301,7 +1308,8 @@ appeared to manage VRAM would be claiming to test something it cannot.
   recycled server does not erase the log of the one that failed. The pool prints the path
   when it starts.
 - **An execution is self-contained.** Its row carries the weight seed, the full `weights`
-  draw (all five, not just the referenced ones), stdout, stderr and the `exchanges`, so a
+  draw (all ten, not just the referenced ones -- the templates draw `w1`..`w10` in order,
+  so a five-weight sweep's values are unchanged), stdout, stderr and the `exchanges`, so a
   scorer never has to look anywhere else — `individual_quality` is the view that does the
   join. Exchanges are parsed from stdout only, so stderr progress bars cannot leak in; a
   missing reply keeps an empty `answer` rather than vanishing.

@@ -44,7 +44,7 @@ from adapters import catalog as lora_catalog
 from async_api import settings
 from blends import generate_runs
 from config import settings as config
-from search.generate_population import UNARY_OPS as SLOTS
+from search.generate_population import MAX_SLOTS, UNARY_OPS as SLOTS, slot_count
 import start_run
 from storage import add_dataset
 from storage import store
@@ -146,17 +146,22 @@ def own_slots(catalog, user, value):
     A job blends its owner's LoRAs and nobody else's. There is no default:
     config/settings.py's LORA_SLOTS is the command line's set, and a search
     submitted here that named none would run on adapters that are not the
-    user's. So every one of L1-L5 must be given -- by catalogue id, by name or
-    by folder, the same LoRA as often as wanted -- and each must be a row the
-    user owns that is ready. Decided before anything reads the disk, so a path
-    that is not theirs is refused the same way whether it exists or not.
+    user's. So the slots must be L1..Ln, one to MAX_SLOTS of them with no gap,
+    each given -- by catalogue id, by name or by folder, the same LoRA as often
+    as wanted -- and each must be a row the user owns that is ready. Decided
+    before anything reads the disk, so a path that is not theirs is refused
+    the same way whether it exists or not.
     """
-    if not isinstance(value, dict) or sorted(value) != sorted(SLOTS):
+    try:
+        count = slot_count(value) if isinstance(value, dict) else 0
+    except ValueError:
+        count = 0
+    if not count:
         raise SubmissionError(
-            "LORA_SLOTS must name one of your LoRAs for each of %s -- by id, name or "
-            "folder; the same LoRA may fill several slots" % ", ".join(SLOTS))
+            "LORA_SLOTS must name one of your LoRAs for each of L1..Ln, n from 1 to %d "
+            "-- by id, name or folder; the same LoRA may fill several slots" % MAX_SLOTS)
     folders, rows = {}, {}
-    for slot in SLOTS:
+    for slot in SLOTS[:count]:
         row = own_lora(catalog, user, value[slot])
         if row is None:
             raise SubmissionError("slot %s: no LoRA of yours called %r" % (slot, value[slot]))

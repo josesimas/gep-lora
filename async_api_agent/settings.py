@@ -143,10 +143,10 @@ LORA_RANKS = [8, 16]
 LORA_COUNT = None
 
 # The most LoRAs one plan may train, when the chat is asked for more ranks.
-# Five, because that is how many slots a search blends (LORA_SLOTS L1-L5):
+# Ten, because that is how many slots a search can blend (LORA_SLOTS L1-L10):
 # one chat can train a whole set. Each is a full training of its own, one
 # after another on the worker, so this also caps what one sentence can queue.
-MAX_LORAS = 5
+MAX_LORAS = 10
 
 # The name each LoRA gets: the dataset's stem, the base model it is trained on,
 # the day it was planned (YYYYMMDD) and the rank -- so a name alone says what

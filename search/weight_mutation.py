@@ -4,8 +4,8 @@ weight_mutation.py - Mutation of the blend weights alone, minus the elite.
     individuals.chromosome  -->  chromosome, has_changed, fitness
 
 mutation.py offers every symbol a chance to move; this offers only the weights.
-A weight is a `w1`..`w5` symbol -- the child of an `L*` node, saying at which
-of the five drawn weights that adapter enters the blend -- so a tree of ten
+A weight is a `w1`..`wn` symbol -- the child of an `L*` node, saying at which
+of the n drawn weights (one per slot in the sweep's LORA_SLOTS) that adapter enters the blend -- so a tree of ten
 blended adapters carries ten of them. Operators and slots are left exactly as
 they are: the blend keeps its shape and its adapters, and only how much of each
 it takes is varied.
@@ -72,7 +72,7 @@ def draw_count(rate, total):
     return min(total, int(rate * total + 0.5))
 
 
-def mutate(chromosomes, rate, rng):
+def mutate(chromosomes, rate, rng, slots=generate_population.MAX_SLOTS):
     """A pool of chromosomes through one draw. -> the chromosomes they came out as.
 
     `chromosomes` is a list; the result is a list of the same length, in the
@@ -86,7 +86,8 @@ def mutate(chromosomes, rate, rng):
     for index, position in rng.sample(pool, draw_count(rate, len(pool))):
         current = symbols[index][position]
         symbols[index][position] = rng.choice(
-            [other for other in generate_population.VARIABLES if other != current])
+            [other for other in generate_population.weight_symbols(slots)
+             if other != current])
     mutated = [".".join(parts) for parts in symbols]
     for chromosome in mutated:
         generate_population.check(chromosome)
@@ -98,7 +99,7 @@ def differences(before, after):
     return sum(one != other for one, other in zip(before.split("."), after.split(".")))
 
 
-def apply(conn, run_id, rate, rng):
+def apply(conn, run_id, rate, rng, slots=generate_population.MAX_SLOTS):
     """Mutate the weights of a whole population but its elite. -> (changes, rows).
 
     Writes the new chromosome, has_changed = 1 and a cleared fitness for every
@@ -107,7 +108,7 @@ def apply(conn, run_id, rate, rng):
     """
     rows = store.individuals(conn, run_id)
     eligible = [row for row in rows if not row["is_best"]]
-    mutated = mutate([row["chromosome"] for row in eligible], rate, rng)
+    mutated = mutate([row["chromosome"] for row in eligible], rate, rng, slots)
     changes = []
     for row, after in zip(eligible, mutated):
         if after == row["chromosome"]:

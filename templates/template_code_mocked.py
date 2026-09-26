@@ -81,7 +81,7 @@ _PROJECT = os.path.dirname(_HERE)                  # run/ -> project/
 #~ the ranks without either of them holding a copy of the paths.
 # @@LORA_SLOTS@@
 
-# What w1..w5 are worth: a fresh random draw every run, strictly between 0 and
+# What w1..w10 are worth: a fresh random draw every run, strictly between 0 and
 # 1, exactly as in the real template. Set WEIGHT_SEED to an int to repeat one
 # particular draw.
 #~ Filled by the same whole-line marker as in template_code.py -- see the note
@@ -100,7 +100,9 @@ def _weight():
     return value
 
 
-WEIGHTS = {name: _weight() for name in ("w1", "w2", "w3", "w4", "w5")}
+# All ten of the grammar's weights, whichever a tree uses. The draw is
+# sequential, so w1..w5 are what they were when there were only five.
+WEIGHTS = {"w%d" % n: _weight() for n in range(1, 11)}
 
 # --- the mock --------------------------------------------------------------
 

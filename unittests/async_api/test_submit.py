@@ -90,8 +90,12 @@ class SubmitTests(JobsTestCase):
         payload = self.submission()
         del payload["settings"]["LORA_SLOTS"]
         self.refused(payload, "LORA_SLOTS must name one of your LoRAs")
-        # Every one of the five, not some of them.
-        self.refused(self.submission(LORA_SLOTS={"L1": self.slots["L1"]}), "each of L1")
+        # L1..Ln with no gap, n at most ten -- not any slots at all.
+        self.refused(self.submission(LORA_SLOTS={"L2": self.slots["L2"]}), "each of L1")
+        self.refused(self.submission(LORA_SLOTS=dict(self.slots, L7=self.slots["L1"])),
+                     "each of L1")
+        eleven = {"L%d" % n: self.slots["L1"] for n in range(1, 12)}
+        self.refused(self.submission(LORA_SLOTS=eleven), "each of L1")
         # A folder nobody gave the user -- the command line's own set, say -- is
         # refused in the same words as one that does not exist.
         catalog = self.registry.catalog

@@ -796,7 +796,7 @@ function chromo(text, chips = false) {
   const node = el("span", { class: "chromo" + (chips ? " chips" : ""), title: text || "" });
   String(text || "").split(".").forEach((token, index) => {
     if (index && !chips) node.append(el("span", { class: "dot" }, "."), document.createElement("wbr"));
-    const kind = /^L\d$/.test(token) ? "slot" : /^w\d$/.test(token) ? "wt" : "op";
+    const kind = /^L\d+$/.test(token) ? "slot" : /^w\d+$/.test(token) ? "wt" : "op";
     node.append(el("span", { class: kind }, token));
   });
   return node;
@@ -1033,9 +1033,12 @@ const testingPass = () => $("testingMode").value !== "none" && $("runTest").chec
 // (GET /loras) -- the user's own, and a job may name no others. An adapter only
 // fits the model it was trained on, so choosing a model also chooses its
 // LORA_SLOTS: the largest family of the user's LoRAs on that model (a family is
-// one adapter folder name -- a set trained together), repeated round the five
-// slots when there are fewer. Each slot can then be pointed at any of them.
-const SLOTS = ["L1", "L2", "L3", "L4", "L5"];
+// one adapter folder name -- a set trained together), one slot each and
+// repeated round the first five when there are fewer. Each slot can then be
+// pointed at any of them, and past L1 left unused: a job blends L1..Ln, n up
+// to ten, with no gap (submit.own_slots).
+const SLOTS = Array.from({ length: 10 }, (_, i) => "L" + (i + 1));
+const MIN_PLACES = 5;       // as the guide: fewer LoRAs than this go round again
 let catalogue = [];         // GET /loras
 
 const readyLoras = (model) => catalogue.filter((one) => one.status === "ready" && (!model || one.base_model === model));
@@ -1058,7 +1061,8 @@ function slotsFor(model) {
   const members = [...families.values()].sort((a, b) => b.length - a.length)[0]
     .sort((a, b) => a.folder.localeCompare(b.folder));
   const slots = {};
-  SLOTS.forEach((slot, index) => { slots[slot] = members[index % members.length].folder; });
+  const places = Math.min(SLOTS.length, Math.max(MIN_PLACES, members.length));
+  SLOTS.forEach((slot, index) => { slots[slot] = index < places ? members[index % members.length].folder : ""; });
   return slots;
 }
 
@@ -1091,7 +1095,7 @@ const FIELDS = [
   { group: "Model", name: "BASE_MODEL", label: "Base model", type: "choice", wide: true, describe: true,
     options: baseModelChoices },
   { group: "Model", name: "LORA_SLOTS", label: "LoRA slots", type: "slots", wide: true,
-    help: "The five adapters the search blends: your own LoRAs of the chosen base model, one may fill several slots. Their ranks decide which LIN nodes can run." },
+    help: "The adapters the search blends, L1 up to L10 with no gap: your own LoRAs of the chosen base model, one may fill several slots. Their ranks decide which LIN nodes can run." },
   { group: "Model", name: "CHAT_TEMPLATE", label: "Chat template", type: "text",
     nullable: "blank = the model's own" },
   { group: "Model", name: "LORA_SERVER_COUNT", label: "Lora servers", type: "int", min: 1,
@@ -1271,7 +1275,7 @@ function choicesOf(field) {
   return options;
 }
 
-// Fill the five slot selects with the chosen base model's LoRAs, and pick
+// Fill the slot selects with the chosen base model's LoRAs, and pick
 // `slots` in them (or keep what each holds). A folder the catalogue does not
 // list -- or lists under another model -- is still offered, named for what it is.
 function setSlots(slots) {
@@ -1280,18 +1284,20 @@ function setSlots(slots) {
   for (const slot of SLOTS) {
     const select = $("f_LORA_SLOTS_" + slot);
     if (!select) return;
-    const want = slots ? slots[slot] : select.value;
+    const want = slots ? slots[slot] || "" : select.value;
     const options = pool.map((one) => el("option", { value: one.folder },
       `${one.name} · r${one.rank}${one.mock ? " · mock" : ""}`));
+    const optional = slot !== SLOTS[0];
     if (want && !pool.some((one) => one.folder === want)) {
       const known = catalogue.find((one) => one.folder === want);
       options.unshift(el("option", { value: want }, known
         ? `${known.name} · r${known.rank} (${known.base_model})`
         : `${want} (not one of your LoRAs)`));
     }
-    if (!options.length) options.push(el("option", { value: "" }, "no LoRAs for this model — train one"));
+    if (optional) options.unshift(el("option", { value: "" }, "— unused —"));
+    else if (!options.length) options.push(el("option", { value: "" }, "no LoRAs for this model — train one"));
     select.replaceChildren(...options);
-    select.value = want || (pool[0] ? pool[0].folder : "");
+    select.value = want || (optional ? "" : pool[0] ? pool[0].folder : "");
   }
 }
 
@@ -1326,8 +1332,10 @@ function readField(field) {
   if (field.type === "bool") return [input.checked, null];
   if (field.type === "slots") {
     const slots = {};
-    for (const slot of SLOTS) slots[slot] = $("f_LORA_SLOTS_" + slot).value;
-    return Object.values(slots).every(Boolean) ? [slots, null] : [slots, "Every slot needs a LoRA."];
+    for (const slot of SLOTS) { const value = $("f_LORA_SLOTS_" + slot).value; if (value) slots[slot] = value; }
+    const used = Object.keys(slots).length;
+    return used && SLOTS.slice(0, used).every((slot) => slots[slot]) ? [slots, null]
+      : [slots, "The slots used must run from L1 with no gap."];
   }
   if (field.type === "members") {
     // -> ["name", ["name", weight], ...]: a weight of 1 is just the name.
@@ -1504,12 +1512,13 @@ function overrides() {
 // What the chosen slots are: their ranks, and anything that will not run.
 function slotsSummary(slots, values) {
   if (!slots) return "";
-  const held = SLOTS.map((slot) => catalogue.find((one) => one.folder === slots[slot]));
+  const used = SLOTS.filter((slot) => slots[slot]);
+  const held = used.map((slot) => catalogue.find((one) => one.folder === slots[slot]));
   const ranks = held.map((one) => (one && one.rank !== null ? one.rank : "?"));
   const problems = [];
-  const other = SLOTS.filter((slot, i) => held[i] && held[i].base_model !== values.BASE_MODEL);
+  const other = used.filter((slot, i) => held[i] && held[i].base_model !== values.BASE_MODEL);
   if (other.length) problems.push(`${other.join(", ")} ${other.length > 1 ? "were" : "was"} trained on another base model`);
-  const mocked = SLOTS.filter((slot, i) => held[i] && held[i].mock);
+  const mocked = used.filter((slot, i) => held[i] && held[i].mock);
   if (mocked.length && values.TEMPLATE !== "template_code_mocked.py") {
     problems.push(`${mocked.join(", ")} ${mocked.length > 1 ? "are mocked LoRAs" : "is a mocked LoRA"}, which only the mocked template can run`);
   }

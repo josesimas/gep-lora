@@ -150,7 +150,7 @@ def _post(path, payload):
 # settings of its own: an individual carries its own adapters.
 # @@LORA_SLOTS@@
 
-# What w1..w5 are worth. Drawn here, exactly as in template_code.py -- the seed
+# What w1..w10 are worth. Drawn here, exactly as in template_code.py -- the seed
 # is the individual's own, so a stored sweep replays weight for weight, and the
 # weights go to the server as part of the build plan.
 # @@WEIGHT_SEED@@
@@ -166,7 +166,9 @@ def _weight():
     return value
 
 
-WEIGHTS = {name: _weight() for name in ("w1", "w2", "w3", "w4", "w5")}
+# All ten of the grammar's weights, whichever a tree uses. The draw is
+# sequential, so w1..w5 are what they were when there were only five.
+WEIGHTS = {"w%d" % n: _weight() for n in range(1, 11)}
 
 
 def _rank(adapter_dir):

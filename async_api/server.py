@@ -136,6 +136,7 @@ from async_api import verify
 from async_api_agent import routes as agent_routes
 from adapters import catalog as lora_catalog
 from config import settings as config
+from search.generate_population import slot_key
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -232,7 +233,7 @@ def default_slots():
     set, which no job submitted here may use (submit.own_slots). Kept only so
     a LoRA that is one of them cannot be deleted from under the command line."""
     out = {}
-    for slot, where in sorted(config.LORA_SLOTS.items()):
+    for slot, where in sorted(config.LORA_SLOTS.items(), key=lambda pair: slot_key(pair[0])):
         out.setdefault(os.path.normcase(lora_catalog.absolute(where)), []).append(slot)
     return out
 

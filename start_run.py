@@ -201,6 +201,12 @@ def freeze(conf):
     if evaluator.check:
         evaluator.check(conf)
     evaluators.backend_of(conf)
+    # And on LORA_SLOTS that are not L1..Ln: the draw would hand out a slot
+    # with no adapter behind it, and only the runs step would notice.
+    try:
+        generate_population.slots_of(conf)
+    except ValueError as error:
+        raise SystemExit("LORA_SLOTS: %s" % error)
     for name in ("SEED", "WEIGHT_MASTER_SEED", "SELECTION_MASTER_SEED",
                  "MUTATION_MASTER_SEED", "WEIGHT_MUTATION_MASTER_SEED"):
         if conf.get(name) is None:
@@ -216,7 +222,8 @@ def step_population(context):
     conf = context.conf
     rng = random.Random(conf["SEED"])
     chromosomes = generate_population.build_population(
-        conf["COUNT"], rng, conf["MAX_DEPTH"], conf["BRANCH_PROB"], conf["UNIQUE"])
+        conf["COUNT"], rng, conf["MAX_DEPTH"], conf["BRANCH_PROB"], conf["UNIQUE"],
+        generate_population.slots_of(conf))
     store.add_individuals(context.conn, context.run_id, chromosomes)
 
     context.count(len(chromosomes), "individuals")
@@ -1063,7 +1070,8 @@ def step_mutation(context):
     # time. Seeding on the size instead would mutate the same positions of the
     # same individuals every generation, now that the size does not move.
     rng = random.Random("%s:%d" % (master, store.high_number(conn, run_id)))
-    changes, rows = mutation.apply(conn, run_id, rate, rng)
+    changes, rows = mutation.apply(conn, run_id, rate, rng,
+                                   generate_population.slots_of(context.conf))
 
     elite = [row["number"] for row in rows if row["is_best"]]
     eligible = len(rows) - len(elite)
@@ -1106,7 +1114,8 @@ def step_weight_mutation(context):
     # Dated by the high-water number, as mutation's generator is. The prefix
     # keeps the two streams apart when both master seeds hold the same value.
     rng = random.Random("weights:%s:%d" % (master, store.high_number(conn, run_id)))
-    changes, rows = weight_mutation.apply(conn, run_id, rate, rng)
+    changes, rows = weight_mutation.apply(conn, run_id, rate, rng,
+                                          generate_population.slots_of(context.conf))
 
     elite = [row["number"] for row in rows if row["is_best"]]
     pool = weight_mutation.pool_size(rows)

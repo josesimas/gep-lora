@@ -163,10 +163,15 @@ BASE_MODEL = "unsloth/Qwen3.5-0.8B" #Qwen2.5-0.5B-Instruct-bnb-4bit
 # means, so the llm_judge_baseline cache is keyed on it as well as on the model.
 CHAT_TEMPLATE = None
 
-# Where each of the five LoRAs the trees refer to lives -- the search space
+# Where each of the LoRAs the trees refer to lives -- the search space
 # itself, so it belongs with the rest of the knobs rather than in the templates:
 # repoint a slot here and both templates follow, and the sweep records which
-# five adapters its fitness numbers were earned on.
+# adapters its fitness numbers were earned on.
+#
+# From one to ten slots, named L1..Ln with no gap (MAX_SLOTS in
+# search/generate_population.py). How many there are is how many the search
+# draws from: a sweep with n slots only ever holds L1..Ln and w1..wn, so add
+# "L6": ..., "L7": ... here to widen it. A sweep stored with five keeps five.
 #
 # One independent entry per slot. A relative path is taken from this file's
 # folder; an absolute one is used as it stands. Anything that is neither -- a
@@ -261,7 +266,7 @@ LORA_SERVER_RECYCLE_AFTER = 0
 
 # Where the per-individual weight seeds come from. Each individual's script is
 # stamped with a seed derived from this one and its own number, so it draws the
-# same w1..w5 every time it runs and re-running a stored sweep rebuilds the same
+# same w1..w10 every time it runs and re-running a stored sweep rebuilds the same
 # blends. An int makes a whole sweep reproducible from the start; None draws a
 # master seed at run time and stores it, which is just as repeatable after the
 # fact -- the value used is written to the run's settings either way.
@@ -292,7 +297,7 @@ SELECTION_COUNT = 2
 # The chance each symbol of a chromosome is replaced by another of its own kind
 # -- per symbol, not per chromosome, so an eleven-symbol individual at 0.1
 # expects about one change and may well come through untouched. A symbol only
-# ever becomes one of its own class (CAT/SVD/LIN, L1-L5, w1-w5) and the root is
+# ever becomes one of its own class (CAT/SVD/LIN, L1-Ln, w1-wn, n the slots LORA_SLOTS names) and the root is
 # never touched, which is what keeps every mutated chromosome readable; 0.0
 # turns mutation off without removing the step.
 MUTATION_RATE = 0.1
@@ -304,7 +309,7 @@ MUTATION_MASTER_SEED = None
 
 # --- weight mutation -------------------------------------------------------
 
-# The share of the population's weights (the w1-w5 symbols, one per blended
+# The share of the population's weights (the w1-wn symbols, one per blended
 # adapter) moved each round -- a count over all of them, not a chance per
 # weight. Every non-elite individual's weights go into one pool and
 # round(rate * pool) of them are drawn and swapped for a different w, so ten

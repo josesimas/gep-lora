@@ -48,11 +48,25 @@ class AlternativesTests(unittest.TestCase):
 
     def test_a_unary_op_becomes_another_unary_op(self):
         self.assertEqual(set(mutation.alternatives("L2", 1)),
-                         {"L1", "L3", "L4", "L5"})
+                         set(gp.UNARY_OPS) - {"L2"})
 
     def test_a_variable_becomes_another_variable(self):
         self.assertEqual(set(mutation.alternatives("w4", 7)),
+                         set(gp.VARIABLES) - {"w4"})
+
+    def test_a_sweep_of_five_slots_only_swaps_among_its_five(self):
+        self.assertEqual(set(mutation.alternatives("L2", 1, 5)),
+                         {"L1", "L3", "L4", "L5"})
+        self.assertEqual(set(mutation.alternatives("w4", 7, 5)),
                          {"w1", "w2", "w3", "w5"})
+        self.assertEqual(set(mutation.alternatives("CAT", 3, 5)), {"SVD", "LIN"})
+
+    def test_a_mutant_never_names_a_slot_the_sweep_lacks(self):
+        generator = rng(48)
+        for _ in range(200):
+            mutated = mutation.mutate("CAT.SVD.L3.L1.L2.w1.w2.w3", 1.0, generator, 3)
+            self.assertLessEqual(set(mutated.split(".")) - set(gp.BINARY_OPS),
+                                 {"L1", "L2", "L3", "w1", "w2", "w3"})
 
     def test_a_symbol_is_never_its_own_alternative(self):
         for symbol in gp.BINARY_OPS + gp.UNARY_OPS + gp.VARIABLES:
@@ -65,7 +79,7 @@ class AlternativesTests(unittest.TestCase):
                                  set(family) - {symbol})
 
     def test_a_symbol_outside_the_alphabet_has_none(self):
-        self.assertEqual(mutation.alternatives("L9", 1), ())
+        self.assertEqual(mutation.alternatives("L11", 1), ())
 
 
 class MutateTests(unittest.TestCase):

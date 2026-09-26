@@ -32,7 +32,7 @@ What the person decides lives in the session's `release` part
                                 size, or VERIFY_QUESTIONS of a file
 
 **A verification is against every LoRA of that blend, once each.** The slots
-a chromosome names are the places it uses; with fewer than five LoRAs one
+a chromosome names are the places it uses; with fewer LoRAs than places one
 LoRA fills several places, and asking it the same questions once per place
 would only repeat the same answers. So the slots sent are the first place of
 each distinct LoRA the blend uses (`lora_slots`).

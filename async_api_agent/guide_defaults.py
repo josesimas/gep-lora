@@ -180,7 +180,7 @@ FIELDS = [
      "help": "Which chromosomes the first generation starts from."},
     {"key": "weight_seed", "group": "blend", "label": "Seed: the blend weights", "kind": "seed",
      "job": "WEIGHT_MASTER_SEED", "server": lambda: config.WEIGHT_MASTER_SEED, "more": True,
-     "help": "The weights w1-w5 each blend is drawn under."},
+     "help": "The weights w1-w10 each blend is drawn under."},
     {"key": "selection_seed", "group": "blend", "label": "Seed: selection", "kind": "seed",
      "job": "SELECTION_MASTER_SEED", "server": lambda: config.SELECTION_MASTER_SEED,
      "more": True, "help": "The roulette wheel that picks which blends are copied."},

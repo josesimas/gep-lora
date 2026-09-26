@@ -23,10 +23,17 @@ order and hand each one out as the next child that is still missing.
 Grammar
 -------
     CAT, SVD, LIN   arity 2, their children must be operators
-    L1 .. L5        arity 1, their child must be a variable
-    w1 .. w5        variables, the leaves of the tree
+    L1 .. L10       arity 1, their child must be a variable
+    w1 .. w10       variables, the leaves of the tree
 
 The first symbol is always CAT.
+
+How many of the L*/w* a sweep may use is how many adapters its LORA_SLOTS
+names -- L1..Ln, 1 <= n <= MAX_SLOTS, and w1..wn beside them. The alphabet
+above is the ceiling, so decode() reads any sweep's chromosomes; the draws
+(random_tree, build_population, and mutation's swaps) take the sweep's own
+`slots` and never hand out a symbol it has no adapter for. A sweep stored
+when the ceiling was five draws exactly what it drew then.
 """
 
 from collections import deque
@@ -34,9 +41,13 @@ from collections import deque
 
 # --- the alphabet ---------------------------------------------------------
 
-BINARY_OPS = ("CAT", "SVD", "LIN")           # arity 2, feed on other operators
-UNARY_OPS = ("L1", "L2", "L3", "L4", "L5")   # arity 1, feed on variables
-VARIABLES = ("w1", "w2", "w3", "w4", "w5")
+# The most adapters one blend can draw from. Raising it is this line: every
+# other reader takes the alphabet from the tuples below.
+MAX_SLOTS = 10
+
+BINARY_OPS = ("CAT", "SVD", "LIN")                                  # arity 2, feed on other operators
+UNARY_OPS = tuple("L%d" % n for n in range(1, MAX_SLOTS + 1))        # arity 1, feed on variables
+VARIABLES = tuple("w%d" % n for n in range(1, MAX_SLOTS + 1))
 
 ROOT = "CAT"
 
@@ -55,6 +66,50 @@ def children_alphabet(symbol):
     return ()
 
 
+def slot_symbols(slots=MAX_SLOTS):
+    """The L* a sweep of `slots` adapters may draw: L1..L<slots>."""
+    return UNARY_OPS[:slots]
+
+
+def weight_symbols(slots=MAX_SLOTS):
+    """The w* a sweep of `slots` adapters may draw: w1..w<slots>, one per slot."""
+    return VARIABLES[:slots]
+
+
+def slot_key(slot):
+    """Sort key putting L2 before L10, where a plain sort would not."""
+    return (len(slot), slot)
+
+
+def slot_count(lora_slots):
+    """How many adapters a LORA_SLOTS dict gives the search. -> n.
+
+    Its keys must be exactly L1..Ln, 1 <= n <= MAX_SLOTS: a gap would be a slot
+    the draw can hand out with no adapter behind it, and past the ceiling a slot
+    no chromosome can name. Raises ValueError saying which.
+    """
+    names = sorted(lora_slots or (), key=slot_key)
+    count = len(names)
+    if not 1 <= count <= MAX_SLOTS:
+        raise ValueError("LORA_SLOTS holds %d slot(s); a blend draws from 1 to %d"
+                         % (count, MAX_SLOTS))
+    if names != list(UNARY_OPS[:count]):
+        raise ValueError("LORA_SLOTS must be named L1..L%d with no gaps, not %s"
+                         % (count, ", ".join(names)))
+    return count
+
+
+def slots_of(conf):
+    """How many slots a sweep's settings give it -- its stored LORA_SLOTS, or
+    settings.py's when it stored none, the fallback generate_runs.lora_slots()
+    takes too."""
+    slots = (conf or {}).get("LORA_SLOTS")
+    if slots is None:
+        from config import settings
+        slots = settings.LORA_SLOTS
+    return slot_count(slots)
+
+
 class Node:
     """One tree node: a symbol plus its ordered children."""
 
@@ -68,8 +123,8 @@ class Node:
 # --- growing a random tree ------------------------------------------------
 
 
-def random_tree(rng, max_depth, branch_prob):
-    """Grow a random valid tree rooted at CAT.
+def random_tree(rng, max_depth, branch_prob, slots=MAX_SLOTS):
+    """Grow a random valid tree rooted at CAT, over the first `slots` L*/w*.
 
     `max_depth` is the deepest level an *operator* may sit at (the root is
     level 0), so a variable can appear at most one level below that. At that
@@ -77,15 +132,16 @@ def random_tree(rng, max_depth, branch_prob):
     `branch_prob` is the chance that an operator above that level is arity 2,
     i.e. that the branch keeps growing instead of closing off with an L*.
     """
+    leaves, weights = slot_symbols(slots), weight_symbols(slots)
     root = Node(ROOT)
     pending = deque([(root, 0)])
     while pending:
         node, depth = pending.popleft()
         for _ in range(ARITY[node.symbol]):
             if node.symbol in UNARY_OPS:
-                child = Node(rng.choice(VARIABLES))
+                child = Node(rng.choice(weights))
             elif depth + 1 >= max_depth or rng.random() >= branch_prob:
-                child = Node(rng.choice(UNARY_OPS))
+                child = Node(rng.choice(leaves))
             else:
                 child = Node(rng.choice(BINARY_OPS))
             node.children.append(child)
@@ -157,8 +213,8 @@ def check(expression):
 # --- the population --------------------------------------------------------
 
 
-def build_population(count, rng, max_depth, branch_prob, unique):
-    """Generate `count` validated expressions."""
+def build_population(count, rng, max_depth, branch_prob, unique, slots=MAX_SLOTS):
+    """Generate `count` validated expressions over the first `slots` L*/w*."""
     population = []
     seen = set()
     attempts = 0
@@ -172,7 +228,7 @@ def build_population(count, rng, max_depth, branch_prob, unique):
                 % (len(population), count)
             )
         depth = rng.randint(1, max_depth)
-        expression = encode(random_tree(rng, depth, branch_prob))
+        expression = encode(random_tree(rng, depth, branch_prob, slots))
         check(expression)   # never store something we cannot read back
         if unique:
             if expression in seen:

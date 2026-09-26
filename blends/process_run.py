@@ -55,12 +55,12 @@ import time
 def drawn_weights(stdout):
     """The blend weights a run drew for itself, from the line it prints.
 
-    Every generated script redraws w1..w5 at startup, so two runs of the same
+    Every generated script redraws w1..w10 at startup, so two runs of the same
     chromosome are scored under different blends. Recording the draw is what
     makes a transcript traceable back to the weights that produced it.
 
     Read off the "weights: w1=..., w2=..." line rather than recomputed, so this
-    is the draw that was actually used. All five are recorded, not just the ones
+    is the draw that was actually used. All ten are recorded, not just the ones
     this tree happens to reference.
     """
     line = re.search(r"^weights:.*$", stdout, re.MULTILINE)

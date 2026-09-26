@@ -34,7 +34,7 @@ import os
 
 import evaluators
 from blends import generate_runs
-from search.generate_population import VARIABLES, decode
+from search.generate_population import VARIABLES, decode, slot_key
 from storage import store
 from testing import evaluate_chromosome_against_loras as compare
 
@@ -61,7 +61,7 @@ def blend_slots(chromosome):
             frontier.extend(node.children)
         if node.symbol.startswith("L"):
             found.add(node.symbol)
-    return sorted(found)
+    return sorted(found, key=slot_key)
 
 
 def choices(db_path, run_id):
@@ -91,7 +91,7 @@ def choices(db_path, run_id):
                         & set(compare.SPLIT_COUNTS))
         return {
             "individuals": individuals,
-            "slots": sorted(generate_runs.lora_slots(conf.get("LORA_SLOTS"))),
+            "slots": sorted(generate_runs.lora_slots(conf.get("LORA_SLOTS")), key=slot_key),
             "splits": splits,
             "evaluators": [{"value": name, "label": name, "description": description,
                             "needs_judge": evaluators.get(name).needs_judge}

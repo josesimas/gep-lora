@@ -128,7 +128,7 @@ _PROJECT = os.path.dirname(_HERE)                  # run/ -> project/
 #~ and finds defined in every file generated from this.
 # @@LORA_SLOTS@@
 
-# What w1..w5 are worth: a fresh random draw every run, strictly between 0 and
+# What w1..w10 are worth: a fresh random draw every run, strictly between 0 and
 # 1. Set WEIGHT_SEED to an int to repeat one particular draw -- without it the
 # same tree scores differently each time it runs.
 #~ The next line is a whole-line marker: generate_runs.py replaces it with the
@@ -152,7 +152,9 @@ def _weight():
     return value
 
 
-WEIGHTS = {name: _weight() for name in ("w1", "w2", "w3", "w4", "w5")}
+# All ten of the grammar's weights, whichever a tree uses. The draw is
+# sequential, so w1..w5 are what they were when there were only five.
+WEIGHTS = {"w%d" % n: _weight() for n in range(1, 11)}
 
 def _rank(adapter_dir):
     """The rank PEFT will allocate for this adapter, from its adapter_config.json.

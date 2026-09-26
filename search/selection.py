@@ -227,7 +227,8 @@ def fresh(rows, rng, conf):
     chromosome = None
     for _ in range(FRESH_ATTEMPTS if conf.get("UNIQUE", True) else 1):
         chromosome = generate_population.build_population(
-            1, rng, conf["MAX_DEPTH"], conf["BRANCH_PROB"], False)[0]
+            1, rng, conf["MAX_DEPTH"], conf["BRANCH_PROB"], False,
+            generate_population.slots_of(conf))[0]
         if chromosome not in held:
             break
     return chromosome

@@ -27,10 +27,13 @@ missing one is), and the job names them by id, which submit.own_slots() checks
 again: the server's own LORA_SLOTS -- the command line's set under
 loras/Lora00N -- are never used.
 
-The grammar blends exactly five slots, L1-L5. Fewer LoRAs than that go round
-the slots again (two LoRAs are L1=A, L2=B, L3=A, ...), which the search already
+The grammar blends up to ten slots, L1-L10, and a search gets one per LoRA
+chosen -- but never fewer than MIN_PLACES. Fewer LoRAs than that go round the
+places again (two LoRAs are L1=A, L2=B, L3=A, ...), which the search already
 allows: one slot may appear in a chromosome many times, and so may one
-adapter.
+adapter. The floor keeps what a small selection searches the same as when the
+grammar had exactly five: five places, and five weights (w1..w5) to put them
+in at.
 """
 
 import json
@@ -49,6 +52,9 @@ from search import generate_population
 from search.generate_population import UNARY_OPS as SLOTS
 
 MOCKED_TEMPLATE = "template_code_mocked.py"
+
+# The fewest places a blend has, however few LoRAs fill them.
+MIN_PLACES = 5
 
 
 class BlendError(ValueError):
@@ -139,7 +145,7 @@ def own(catalog, user, key):
 
 
 def check_together(rows):
-    """LoRAs that can be blended in one search: 1 to 5, one base model and one
+    """LoRAs that can be blended in one search: 1 to 10, one base model and one
     chat template, since a search runs one model under one template."""
     if not rows:
         raise BlendError("choose at least one of your LoRAs to blend")
@@ -184,9 +190,16 @@ def chosen(catalog, user, blend, prefer=()):
     return default_pick(catalog, user, prefer)
 
 
+def places(count):
+    """How many slots a blend of `count` LoRAs gets: one each, at least MIN_PLACES."""
+    return min(len(SLOTS), max(MIN_PLACES, count))
+
+
 def slots(rows):
-    """{L1..L5: id}, going round the LoRAs again when there are fewer than five."""
-    return {slot: rows[index % len(rows)]["id"] for index, slot in enumerate(SLOTS)}
+    """{L1..Ln: id}, one place per LoRA, going round them again when there are
+    fewer than MIN_PLACES."""
+    return {slot: rows[index % len(rows)]["id"]
+            for index, slot in enumerate(SLOTS[:places(len(rows))])}
 
 
 # --- the questions ---------------------------------------------------------------

@@ -20,8 +20,11 @@ Only valid changes
 A symbol may only be replaced by one of its own kind:
 
     CAT SVD LIN     swap freely among themselves       (arity 2, operator children)
-    L1 .. L5        swap freely among themselves       (arity 1, variable child)
-    w1 .. w5        swap freely among themselves       (arity 0)
+    L1 .. Ln        swap freely among themselves       (arity 1, variable child)
+    w1 .. wn        swap freely among themselves       (arity 0)
+
+(n being how many adapters the sweep's LORA_SLOTS names, at most
+generate_population.MAX_SLOTS.)
 
 and the root is never touched at all, because the grammar fixes it at CAT.
 
@@ -72,23 +75,25 @@ from storage import store
 Change = namedtuple("Change", "number before after symbols")
 
 
-def alternatives(symbol, position):
+def alternatives(symbol, position, slots=generate_population.MAX_SLOTS):
     """The symbols `symbol` may legally become at `position`.
 
     Empty for the root, which the grammar fixes at CAT, and for anything that
-    is not in the alphabet at all.
+    is not in the alphabet at all. An L* or w* only ever becomes one of the
+    first `slots` -- the sweep's own adapters -- never one it has none for.
     """
     if position == 0:
         return ()
-    for family in (generate_population.BINARY_OPS,
-                   generate_population.UNARY_OPS,
-                   generate_population.VARIABLES):
-        if symbol in family:
+    for symbol_class, family in (
+            (generate_population.BINARY_OPS, generate_population.BINARY_OPS),
+            (generate_population.UNARY_OPS, generate_population.slot_symbols(slots)),
+            (generate_population.VARIABLES, generate_population.weight_symbols(slots))):
+        if symbol in symbol_class:
             return tuple(other for other in family if other != symbol)
     return ()
 
 
-def mutate(chromosome, rate, rng):
+def mutate(chromosome, rate, rng, slots=generate_population.MAX_SLOTS):
     """One chromosome through the dice. -> the chromosome it came out as.
 
     Each symbol independently has probability `rate` of being replaced by one of
@@ -99,7 +104,7 @@ def mutate(chromosome, rate, rng):
     symbols = chromosome.split(".")
     drawn = []
     for position, symbol in enumerate(symbols):
-        choices = alternatives(symbol, position)
+        choices = alternatives(symbol, position, slots)
         drawn.append(rng.choice(choices)
                      if choices and rng.random() < rate else symbol)
     mutated = ".".join(drawn)
@@ -112,7 +117,7 @@ def differences(before, after):
     return sum(one != other for one, other in zip(before.split("."), after.split(".")))
 
 
-def apply(conn, run_id, rate, rng):
+def apply(conn, run_id, rate, rng, slots=generate_population.MAX_SLOTS):
     """Mutate a whole population but for its elite. -> (changes, rows).
 
     Writes has_changed for every individual; for the ones that actually moved it
@@ -127,7 +132,7 @@ def apply(conn, run_id, rate, rng):
             # The one row that is read and not written: see the module note.
             store.set_changed(conn, row["id"], 0)
             continue
-        mutated = mutate(row["chromosome"], rate, rng)
+        mutated = mutate(row["chromosome"], rate, rng, slots)
         if mutated == row["chromosome"]:
             store.set_changed(conn, row["id"], 0)
         else:

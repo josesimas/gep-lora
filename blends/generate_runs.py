@@ -61,7 +61,7 @@ import os
 
 from config import settings
 
-from search.generate_population import UNARY_OPS, decode, levels
+from search.generate_population import UNARY_OPS, decode, encode, levels, slot_key
 
 # The repo folder, one above this one. Every path a setting names is
 # resolved against it, so nothing here depends on the cwd a driver was
@@ -399,7 +399,7 @@ def lora_slots(slots=None):
 
     LORA_SLOTS is a setting rather than a block in the templates, so a slot is
     repointed in one place and both templates follow, and a sweep records which
-    five adapters it was scored on. A relative entry is taken from this file's
+    adapters it was scored on. A relative entry is taken from this file's
     folder, the same rule training_set_path() uses -- but only when it really is
     a folder here; anything else is passed through as written, which is what
     leaves the door open for an absolute path or a Hub repo id. None means
@@ -420,11 +420,11 @@ def lora_slots(slots=None):
 def slot_ranks(slots=None):
     """{slot: rank} read from each adapter's own adapter_config.json.
 
-    Ranks are not assumed equal: the five slots may point at LoRAs trained with
+    Ranks are not assumed equal: the slots may point at LoRAs trained with
     different r values, and cat/svd/linear each treat that differently.
     """
     ranks = {}
-    for slot, path in sorted(lora_slots(slots).items()):
+    for slot, path in sorted(lora_slots(slots).items(), key=lambda pair: slot_key(pair[0])):
         config_path = os.path.join(path, "adapter_config.json")
         try:
             with open(config_path, encoding="utf-8") as handle:
@@ -448,7 +448,7 @@ class Step:
     def __init__(self, kind, name, symbol, rank):
         self.kind = kind          # "leaf" or "combine"
         self.name = name          # adapter name inside the model
-        self.symbol = symbol      # L1..L5, or CAT/SVD/LIN
+        self.symbol = symbol      # L1..L10, or CAT/SVD/LIN
         self.variable = None      # leaf only: which w<j> weights it
         self.left = None          # combine only: (name, weight_expr, rank)
         self.right = None
@@ -459,7 +459,7 @@ class Step:
 def plan(root, ranks):
     """Post-order walk of the tree -> the ordered list of build steps.
 
-    `ranks` maps each slot (L1..L5) to the rank read from its adapter_config.json.
+    `ranks` maps each slot (L1..Ln) to the rank read from its adapter_config.json.
     Returns (steps, final_adapter_name). Nodes are numbered in the order they
     have to be built, so a step never references a name defined after it.
     """
@@ -475,6 +475,9 @@ def plan(root, ranks):
         if node.symbol in UNARY_OPS:
             # An L* node is a leaf adapter; its single child names the weight.
             variable = node.children[0].symbol
+            if node.symbol not in ranks:
+                raise ValueError("%s names slot %s, which LORA_SLOTS does not hold"
+                                 % (encode(root), node.symbol))
             rank = ranks[node.symbol]
             step = Step("leaf", next_name(node.symbol), node.symbol, rank)
             step.variable = variable
@@ -678,7 +681,8 @@ def render(expression, steps, final, script_name, provenance, label,
         # so two scripts built from the same settings are byte-identical here.
         "LORA_SLOTS": (["LORA_SLOTS = {"]
                        + ["    %r: %r," % pair
-                          for pair in sorted(lora_slots(slots).items())]
+                          for pair in sorted(lora_slots(slots).items(),
+                                             key=lambda pair: slot_key(pair[0]))]
                        + ["}"]),
         # And the model all of them are attached to, from the same one place
         # the baseline script gets it from.

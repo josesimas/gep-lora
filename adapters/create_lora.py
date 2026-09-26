@@ -375,7 +375,7 @@ def slot_line(folder, slot="L?"):
     platform. Anything outside the repo goes in absolute, which LORA_SLOTS
     accepts and which is the only honest way to write a path the repo folder
     cannot reach. `slot` is left as a placeholder for one adapter, since only
-    the caller knows which of L1..L5 it is displacing; create_all_loras fills it
+    the caller knows which of L1..L10 it is filling; create_all_loras fills it
     in because it writes the whole set at once.
     """
     try:
@@ -692,12 +692,12 @@ def main(argv=None):
     journal.finish(answer)
 
     # The last mile: what to paste into settings.py so a tree can reach it.
-    # A slot is *repointed* rather than added -- L1..L5 is the grammar's own
-    # alphabet (UNARY_OPS in generate_population.py), so a sixth slot is a
-    # grammar change, not a configuration one.
+    # A slot is repointed, or added as the next of L1..L10 -- up to ten is a
+    # configuration change; an eleventh would widen the grammar's own alphabet
+    # (MAX_SLOTS in generate_population.py).
     print("\nTo put it in the search, point a slot at it in settings.py's "
-          "LORA_SLOTS (mind which rank you displace -- it decides which LIN "
-          "combinations are legal):")
+          "LORA_SLOTS, or add it as the next slot up to L10 (mind the ranks -- "
+          "they decide which LIN combinations are legal):")
     print("    " + slot_line(options.folder))
     print("then re-run `python start_run.py runs` so the generated scripts pick it up.")
     return 0

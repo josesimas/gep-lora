@@ -47,6 +47,7 @@ import subprocess
 import sys
 
 from adapters import create_lora
+from search.generate_population import MAX_SLOTS
 
 # The repo folder, one above this one. Every path a setting names is
 # resolved against it, so nothing here depends on the cwd a driver was
@@ -296,10 +297,11 @@ def report(results, options):
 
     print("\nLORA_SLOTS for settings.py:")
     for index, (folder, rank) in enumerate(good, start=1):
-        # Past L5 there is no slot to fill: L1..L5 is the grammar's alphabet
-        # (UNARY_OPS in generate_population.py), so a sixth adapter needs the
-        # alphabet widened before any tree can name it.
-        slot = "L%d" % index if index <= 5 else "L? (no slot: the grammar stops at L5)"
+        # Past MAX_SLOTS there is no slot to fill: L1..L10 is the grammar's
+        # alphabet (UNARY_OPS in generate_population.py), so an eleventh
+        # adapter needs the alphabet widened before any tree can name it.
+        slot = ("L%d" % index if index <= MAX_SLOTS
+                else "L? (no slot: the grammar stops at L%d)" % MAX_SLOTS)
         print("    " + create_lora.slot_line(folder, slot))
 
     # Whether the block above is what settings.py already says, rather than
