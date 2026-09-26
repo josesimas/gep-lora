@@ -2771,11 +2771,12 @@ python -m async_api.worker                   # the background half
 ```
 
 Then open **http://127.0.0.1:8780/** -- it lands on the guide. The server has
-four pages, and every one of them carries the same top bar, in this order:
+five pages, and every one of them carries the same top bar, in this order:
 
 | Page | Address | What it is for |
 |---|---|---|
 | **Guide** | `/guide.html` | start here: an assistant that trains LoRAs and blends them (below) |
+| **Visual guide** | `/visual_guide.html` | draw a blend of your LoRAs as a tree, and test it (below) |
 | **Runs** | `/runs.html` | every search you have run, and what came of it |
 | **Settings** | `/settings.html` | appearance, and what a new guide conversation starts from |
 | **Console** *(advanced)* | `/console.html` | every endpoint, by hand |
@@ -2783,7 +2784,7 @@ four pages, and every one of them carries the same top bar, in this order:
 A page's address ends in `.html` and an endpoint's never does (`GET /runs` is the
 JSON the Runs page reads). The bar is `async_api/nav.js`, the one file to edit
 to add a page or a link; the current page is highlighted, the API key is asked
-for once and shared by all four, and a search open in the guide or the console
+for once and shared by all of them, and a search open in the guide or the console
 (`?job=N`) goes with you when you switch between those two. The old addresses
 (`/agent`, `/demo`, `/guide_defaults`) redirect to the new ones.
 
@@ -3441,6 +3442,59 @@ refused by the tool; another user's search is "no search of yours".
 
 ---
 
+### The visual guide — a blend drawn by hand, and tested
+
+`/visual_guide.html` is the other way to a blend: instead of a search finding one,
+you **draw** it. The page is laid out like the guide -- the same top bar, themes,
+model chip and chat on the left -- and on the right:
+
+- **Pieces**, a row of what a blend is made of: your ready LoRAs (each with its
+  rank) and the three folds, **CAT** (stack: ranks add up), **SVD** (merge: the
+  larger rank) and **LIN** (average: equal ranks only). Drag one onto the tree, or
+  click a place in the tree and then a piece.
+- **Your blend**, the tree, drawn the way the report page draws a chromosome
+  (`generate_html_db_stats.tree_svg`): each LoRA at its weight, folded in pairs up
+  to a CAT at the top. Every node shows the rank PEFT gives it; a node PEFT cannot
+  build -- a LIN over two ranks -- is red, with the reason under the tree. Click a
+  node to change its fold, weight or sides, **Delete** empties a place, **Ctrl+Z**
+  undoes. Under it, the chromosome a search would hold the drawing as, and the
+  **weights**: what w1..w10 are worth under the drawing's seed, with *New weights*
+  to draw again.
+- **Test**: the questions (a demo dataset, the data one of your LoRAs was trained
+  on, or your own file or paste), how many, and **Test this blend**.
+- **Result**: the blend and each of its LoRAs alone, the same questions, the
+  same judge -- mean scores, wins/ties/losses with a sign test, and every answer.
+
+The chat can do all of it too ("stack poem-r8 and story-r16", "make the right one
+an SVD", "new weights", "test it on 30 questions"), through tools that edit the
+drawing the page sends and hand it back (`async_api_agent/visual.py`), exactly as
+the guide's tools edit its plan; starting a test is an action the page carries out
+with its own button's call.
+
+**Nothing about it is a second pipeline.** `async_api/drawn.py` turns the drawing
+into the chromosome and `LORA_SLOTS` a search would have held it as (slots in
+reading order, one per LoRA however often it is used), and checks it with
+`generate_population.check()` and `generate_runs.plan()` -- the grammar and the
+rank rule every individual meets (`POST /blends/check`). The weights are the draw
+`start_run.step_runs` makes for individual 1 under the drawing's
+`WEIGHT_MASTER_SEED`, so the numbers on screen are the ones the scripts use. And a
+test (`POST /blends/test`) is:
+
+1. a prepared sweep written by `submit.prepare()` -- the chosen questions as its
+   training split, `COUNT` 1, the drawing's seed, your LoRAs as its slots;
+2. the drawing put in as its only individual through start_run's own `trees` and
+   `runs` steps, and the job settled `done` at once with task `blend`: it is never
+   queued, and never resumed, evaluated or tested as a search would be (those
+   endpoints refuse it with a 409);
+3. a **verification** of that individual on those questions, queued for the worker
+   -- `testing/evaluate_chromosome_against_loras.py`, the same comparison as
+   *Verification* above.
+
+So a drawn blend is one of your runs like any other: it is listed on the Runs page
+(tagged *drawn*, opened in the visual guide with `?job=N`, which reads it back
+through `GET /blends/{job id}`), its database downloads from the console, and it
+can be put live with `POST /jobs/{id}/live`.
+
 ## Running a generated script
 
 The generated scripts need the project venv, which lives one level up at
@@ -3713,7 +3767,7 @@ reporting/    a sweep, written out as something to look at
 adapters/     making and checking the five LoRAs a sweep blends
 tools/        dev aids that are not part of the pipeline
 async_api/    the search as a web service: jobs, a worker, live inference
-async_api_agent/  the LoRA guide behind /guide.html: prompts, providers, tools, a dataset's facts
+async_api_agent/  the guides behind /guide.html and /visual_guide.html: prompts, providers, tools, a dataset's facts
 ```
 
 ### The drivers
@@ -3774,11 +3828,14 @@ async_api_agent/  the LoRA guide behind /guide.html: prompts, providers, tools, 
 | `testing/evaluate_chromosome_against_loras.py` | runs a sweep's best individual beside each of its LoRAs applied alone, grades all of them with one judge, and says which the blend beats |
 | `async_api/verify.py` | the API's half of that comparison: what a verification may ask for, the command the worker runs, and the report it leaves behind |
 | `async_api/guide.html` | the LoRA guide page at `/guide.html`: a chat model walks a user from a dataset to trained LoRAs, with the progress drawn beside it |
-| `async_api/nav.js` | the top bar every page shares: the four pages in order, the page's own buttons, the server's health and the API key |
+| `async_api/visual_guide.html` | the visual guide at `/visual_guide.html`: a blend of the user's LoRAs drawn as a tree and tested, with the guide's chat beside it |
+| `async_api/drawn.py` | a drawn blend in the pipeline's terms: the tree as a chromosome, its rank check and weights, and the sweep of one plus verification that tests it |
+| `async_api/nav.js` | the top bar every page shares: the pages in order, the page's own buttons, the server's health and the API key |
 | `async_api_agent/prompts.py` | every system prompt the guide sends, and the wording it falls back to without a model |
 | `async_api_agent/settings.py` | which provider and model the guide talks through, and what it plans |
 | `async_api_agent/tools.py` | what the guide's chat can do: choose part of the dataset, change ranks, epochs and options, switch dataset, start and stop |
 | `async_api_agent/ui_help.py` | "what is this?" for each block of the page: the blocks that can be explained, and one explained from what it shows |
+| `async_api_agent/visual.py` | the visual guide's chat: tools that edit the drawing, its intro, the test read back, and the debrief |
 | `async_api_agent/create_summary.py` | the journey so far: the user's own facts, the charts as data, the story in the model's words or built-in ones |
 
 ### The adapters, and the dev aids

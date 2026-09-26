@@ -1,5 +1,5 @@
 // The top bar every page shares, in three blocks: the brand on the left, the
-// four pages in the middle, and the page's own buttons, the server's health,
+// pages in the middle, and the page's own buttons, the server's health,
 // the API key and the theme on the right.
 //
 // A page asks for it with an empty header and this script right after it:
@@ -25,6 +25,8 @@
   var PAGES = [
     { id: "guide", label: "Guide", href: "/guide.html", job: true,
       about: "Train LoRAs and blend them, with an assistant" },
+    { id: "visual", label: "Visual guide", href: "/visual_guide.html",
+      about: "Draw a blend of your LoRAs as a tree, and test it" },
     { id: "runs", label: "Runs", href: "/runs.html",
       about: "Every search you have run, and what came of it" },
     { id: "settings", label: "Settings", href: "/settings.html",

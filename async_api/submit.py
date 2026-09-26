@@ -321,6 +321,18 @@ def submit(registry, user, payload):
     once the database is whole; anything that goes wrong in between removes
     both, so a failed submission leaves nothing for the worker to find.
     """
+    return prepare(registry, user, payload,
+                   lambda job, run_id, conf: registry.enqueue(job["id"], run_id))
+
+
+def prepare(registry, user, payload, finish):
+    """Write a submission's prepared sweep database, then `finish(job, run_id,
+    conf)` -> what it returns. submit() finishes by queueing the job; a blend
+    drawn by hand (drawn.py) by putting its one individual in and settling it.
+
+    `finish` runs inside the clean-up, so a failure there removes the row and
+    the folder exactly as a failure writing the database does.
+    """
     if not isinstance(payload, dict):
         raise SubmissionError("a submission is a JSON object")
     unknown = sorted(set(payload) - {"label", "settings", "datasets", "options"})
@@ -352,6 +364,7 @@ def submit(registry, user, payload):
             _checked(add_dataset.save_all, conn, run_id, conf, lambda *_: None)
         finally:
             conn.close()
+        return finish(job, run_id, conf)
     except BaseException:
         registry.discard(job["id"])
         shutil.rmtree(folder, ignore_errors=True)
@@ -360,5 +373,4 @@ def submit(registry, user, payload):
         except OSError:
             pass
         raise
-    return registry.enqueue(job["id"], run_id)
 

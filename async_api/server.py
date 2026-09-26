@@ -49,6 +49,18 @@ Verification
                                           report once it has one
     GET    /verifications/{id}/log        the tail of its console output
 
+Blends drawn by hand (drawn.py; the page is /visual_guide.html)
+    POST   /blends/check                  {tree, seed?} -> the drawing as a chromosome,
+                                          its ranks, whether PEFT can build it, and
+                                          what the weights are worth under the seed
+    POST   /blends/test                   {tree, seed, dataset, count?, label?, mock?,
+                                          settings?} -> 201 {job, verification}: a
+                                          sweep of that one blend, and a verification
+                                          of it beside each of its LoRAs alone on the
+                                          dataset -- read back with /verifications/{id}
+    GET    /blends/{job id}               a drawn blend's job as the page draws it
+                                          again: its tree, seed and latest verification
+
 Going live
     POST   /jobs/{id}/live                 {"individual": n?, "target": "local"?}
                                            -> 201 {token, deployment}; best by default
@@ -91,11 +103,13 @@ static file of the same name in async_api/, and every one of them draws the
 same top bar from /nav.js. None needs a key to be served; what they show does.
     GET    /  (-> /guide.html)             where a beginner starts
     GET    /guide.html[?job=N]             the LoRA guide: trains LoRAs and blends them
+    GET    /visual_guide.html              the visual guide: draw a blend of your LoRAs
+                                           as a tree, and test it on a dataset
     GET    /runs.html                      the user's runs (reads GET /runs)
     GET    /settings.html                  appearance, and the user's defaults for the
                                            guide (reads and writes /agent/defaults)
     GET    /console.html[?job=N]           the console: every endpoint above, by hand
-    GET    /nav.js                         the top bar all four pages share
+    GET    /nav.js                         the top bar every page shares
     /agent, /demo, /guide_defaults         the old addresses, redirected to the new
 
 The LoRA agent (async_api_agent/routes.py)
@@ -123,6 +137,7 @@ import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from async_api import drawn
 from async_api import evaluate
 from async_api import golive
 from async_api import inference
@@ -147,13 +162,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 #   guide.html     the API driven by a guide that walks a user through training
 #                  LoRAs and blending them (async_api_agent/); ?job=N opens that
 #                  search of the user's in it
+#   visual_guide.html  a blend drawn by hand as a tree of the user's LoRAs, and
+#                  tested (drawn.py), with the guide's chat beside it
 #   runs.html      every run of the user's, from GET /runs
 #   settings.html  appearance, and what a new guide conversation starts from,
 #                  read and saved through /agent/defaults
 #   console.html   a page that exercises every endpoint; ?job=N opens that job
-#   nav.js         the top bar all four draw
+#   nav.js         the top bar every page draws
 PAGES = {name: (os.path.join(HERE, name), "text/html; charset=utf-8")
-         for name in ("guide.html", "runs.html", "settings.html", "console.html")}
+         for name in ("guide.html", "visual_guide.html", "runs.html", "settings.html",
+                      "console.html")}
 PAGES["nav.js"] = (os.path.join(HERE, "nav.js"), "text/javascript; charset=utf-8")
 
 # Where a page used to be, so a bookmark or an old link still lands. The query
@@ -196,13 +214,25 @@ def job_json(app, job, with_summary=False):
     # to do next -- so a client need not know the rules to draw its buttons.
     out["task"] = job["task"]
     out["resumable"] = job["status"] in reg.RESUMABLE
-    out["can_evaluate"] = job["status"] in reg.REQUEUE_FROM[reg.EVALUATE]
-    out["can_test"] = job["status"] in reg.REQUEUE_FROM[reg.TEST]
+    out["can_evaluate"] = can_requeue(job, reg.EVALUATE)
+    out["can_test"] = can_requeue(job, reg.TEST)
     if job["status"] == reg.QUEUED:
         out["queue_position"] = app.registry.queue_position(job["id"])
     if with_summary and job["status"] != reg.DELETED:
         out["summary"] = results.summary(app.registry.database(job), job["run_id"])
     return out
+
+
+def can_requeue(job, task):
+    """May this job be queued again for `task`? A drawn blend never may: no
+    search made it, so there is nothing to resume, evaluate or test."""
+    return job["status"] in reg.REQUEUE_FROM[task] and job["task"] != reg.BLEND
+
+
+def refuse_drawn(job, what):
+    if job["task"] == reg.BLEND:
+        raise ApiError(409, "job %d is a blend drawn by hand, not a search; there is "
+                            "nothing to %s -- verify it instead" % (job["id"], what))
 
 
 def verification_json(row, report=None):
@@ -429,6 +459,7 @@ class App:
     def resume_job(self, user, job_id):
         """Queue a search that did not finish, to carry on from where it got to."""
         job = self.own_job(user, job_id)
+        refuse_drawn(job, "resume")
         if job["status"] not in reg.RESUMABLE:
             raise ApiError(409, "job %d is %s; only a stopped, cancelled or failed job "
                                 "can be resumed" % (job_id, job["status"]))
@@ -449,12 +480,13 @@ class App:
     def evaluate_form(self, user, job_id):
         job = self.own_job(user, job_id)
         out = self._grading(job)
-        out["can_evaluate"] = job["status"] in reg.REQUEUE_FROM[reg.EVALUATE]
+        out["can_evaluate"] = can_requeue(job, reg.EVALUATE)
         return 200, out
 
     def start_evaluation(self, user, job_id, body):
         """Queue the job to grade the answers it already holds."""
         job = self.own_job(user, job_id)
+        refuse_drawn(job, "evaluate")
         if job["status"] not in reg.REQUEUE_FROM[reg.EVALUATE]:
             raise ApiError(409, "job %d is %s; wait for it to stop before evaluating "
                                 "its answers" % (job_id, job["status"]))
@@ -479,12 +511,13 @@ class App:
     def test_form(self, user, job_id):
         job = self.own_job(user, job_id)
         out = self._testing(job)
-        out["can_test"] = job["status"] in reg.REQUEUE_FROM[reg.TEST]
+        out["can_test"] = can_requeue(job, reg.TEST)
         return 200, out
 
     def start_test(self, user, job_id, body):
         """Queue a finished job to put its blends in front of its testing split."""
         job = self.own_job(user, job_id)
+        refuse_drawn(job, "test")
         if job["status"] not in reg.REQUEUE_FROM[reg.TEST]:
             raise ApiError(409, "job %d is %s; only a finished search's blends can be "
                                 "tested" % (job_id, job["status"]))
@@ -609,6 +642,37 @@ class App:
             return 200, {"lines": []}
         with open(path, encoding="utf-8", errors="replace") as handle:
             return 200, {"lines": handle.read().splitlines()[-lines:]}
+
+    # --- blends drawn by hand ------------------------------------------------
+
+    def check_drawn(self, user, body):
+        """A drawing, read the way the pipeline would read it (drawn.check)."""
+        body = body or {}
+        try:
+            return 200, drawn.check(self.catalog, user, body.get("tree"), body.get("seed"))
+        except drawn.DrawnError as error:
+            raise ApiError(400, str(error))
+
+    def open_drawn(self, user, job_id):
+        """A drawn blend's job, as the visual guide draws it again."""
+        job = self.own_job(user, job_id)
+        if job["status"] == reg.DELETED:
+            raise ApiError(404, "job %d's run was deleted" % job_id)
+        try:
+            return 200, drawn.opened(self.registry, self.catalog, user, job)
+        except drawn.DrawnError as error:
+            raise ApiError(409, str(error))
+
+    def test_drawn(self, user, body):
+        """A drawing, stored as a sweep of one and queued to be verified."""
+        try:
+            job, row, found = drawn.create(self.registry, self.catalog, user, body,
+                                           functools.partial(self.verify_dataset, user))
+        except drawn.DrawnError as error:
+            raise ApiError(400, str(error))
+        return 201, {"job": job_json(self, job), "verification": verification_json(row),
+                     "blend": found,
+                     "note": "queued; the worker runs it after any queued job"}
 
     # --- live --------------------------------------------------------------
 
@@ -849,6 +913,9 @@ ROUTES = [
     ("DELETE", r"/jobs/(\d+)", "delete_job", ()),
     ("GET", r"/jobs/(\d+)/verify", "verify_form", ()),
     ("POST", r"/jobs/(\d+)/verify", "start_verification", ("body",)),
+    ("POST", r"/blends/check", "check_drawn", ("body",)),
+    ("POST", r"/blends/test", "test_drawn", ("body",)),
+    ("GET", r"/blends/(\d+)", "open_drawn", ()),
     ("GET", r"/verifications/(\d+)", "verification_detail", ()),
     ("GET", r"/verifications/(\d+)/log", "verification_log", ("query",)),
     ("POST", r"/jobs/(\d+)/live", "set_live", ("body",)),

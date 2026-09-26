@@ -257,30 +257,35 @@ function runRow(run) {
   const mock = conf.TEMPLATE === "template_code_mocked.py";
   const took = duration(run.started_at, run.finished_at);
   const verifications = run.verifications, lastCheck = verifications[0];
+  // A blend drawn by hand on the visual guide: no search, one blend, opened there.
+  const drawn = run.task === "blend";
   return el("article", { class: "run" },
     el("div", { class: "run-head" },
       el("span", { class: "muted", style: "font-variant-numeric:tabular-nums" }, `#${run.id}`),
       el("b", { title: run.label || "" }, run.label || "no label"),
       el("span", { class: "pill s-" + run.status }, run.status + (run.task !== "search" && ACTIVE.includes(run.status) ? ` · ${run.task}` : "")),
       mock ? el("span", { class: "tag mock" }, "practice") : null,
+      drawn ? el("span", { class: "tag", title: "a blend drawn by hand on the visual guide, not searched for" }, "drawn") : null,
       s.tested ? el("span", { class: "tag ok", title: "blends tested on questions the search never saw" }, `tested ${s.tested}`) : null,
       verifications.length ? el("span", { class: "tag" + (lastCheck.status === "done" ? " ok" : ""),
         title: `last: blend #${lastCheck.number}, ${lastCheck.status}` }, `verified ×${verifications.length}`) : null,
       run.live.length ? el("span", { class: "tag live", title: run.live.map((d) => `blend #${d.individual} · deployment ${d.id}`).join("\n") },
         `live ×${run.live.length}`) : null),
     el("div", { class: "run-actions" },
-      el("a", { class: "button primary", href: `/guide.html?job=${run.id}` }, "Open in the guide"),
+      drawn ? el("a", { class: "button primary", href: `/visual_guide.html?job=${run.id}` }, "Open in the visual guide")
+            : el("a", { class: "button primary", href: `/guide.html?job=${run.id}` }, "Open in the guide"),
       el("a", { class: "button", href: `/console.html?job=${run.id}`,
                 title: "The job's full detail: population, testing, verification, log, live" }, "Open in Console")),
     el("div", { class: "run-meta" },
       el("span", {}, `started ${when(run.created_at)}`),
       run.finished_at ? el("span", {}, `ended ${when(run.finished_at)}${took ? ` · took ${took}` : ""}`) : null,
-      conf.COUNT ? el("span", {}, `${1 + (conf.GENERATIONS || 0)} rounds × ${conf.COUNT} blends`) : null,
+      drawn ? el("span", {}, "drawn by hand") : conf.COUNT ? el("span", {}, `${1 + (conf.GENERATIONS || 0)} rounds × ${conf.COUNT} blends`) : null,
       conf.BASE_MODEL ? el("span", {}, conf.BASE_MODEL) : null,
       conf.EVALUATOR ? el("span", {}, `judged by ${conf.EVALUATOR}`) : null),
     el("div", {},
       run.loras.length ? el("div", { class: "chips", style: "margin:6px 0" }, run.loras.map((name) => el("span", { class: "chip" }, name))) : null,
-      best ? el("div", { class: "score" }, el("span", {}, "best"),
+      drawn ? el("div", { class: "muted small" }, lastCheck ? `tested beside its LoRAs: ${lastCheck.status}` : "not tested yet")
+      : best ? el("div", { class: "score" }, el("span", {}, "best"),
         el("span", { class: "meter", title: `blend #${best.number}` }, el("i", { style: `width:${Math.max(2, (best.fitness || 0) * 100)}%` })),
         el("b", { style: "color:var(--ink)" }, fmt(best.fitness)), el("span", { class: "chromosome", title: best.chromosome }, `#${best.number} ${best.chromosome}`))
         : el("div", { class: "muted small" }, run.status === "deleted" ? "its results were deleted" : "no blend scored yet"),

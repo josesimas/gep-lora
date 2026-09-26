@@ -300,7 +300,10 @@ STEPS = {
 
 
 def system(step):
-    """The whole system prompt for one step: the persona, then the step's own."""
+    """The whole system prompt for one step: the persona, then the step's own.
+    The visual guide's steps (VISUAL_STEPS) are told about their own page."""
+    if step in VISUAL_STEPS:
+        return VISUAL_PERSONA + "\n\nThe current step:\n" + VISUAL_STEPS[step]
     return PERSONA + "\n\nThe current step:\n" + STEPS[step]
 
 
@@ -934,3 +937,246 @@ FALLBACK_HELP = "**{title}** — {about}"
 
 # The note shown under a message the fallback wrote, and why.
 FALLBACK_NOTE = "Written without a model: {reason}"
+
+
+# ---------------------------------------------------------------------------
+# The visual guide (visual_guide.html, async_api_agent/visual.py)
+# ---------------------------------------------------------------------------
+#
+# A second guide, on a page of its own: instead of searching for a blend, the
+# person draws one -- a tree of their own LoRAs folded together -- and tests
+# it on a dataset they choose. Same voice, same rules; its own persona,
+# because the page it talks about is another page.
+
+VISUAL_PERSONA = """\
+You are the LoRA guide inside a web page where people *draw* a blend of their \
+LoRA adapters (small add-ons that teach a language model a style or skill) \
+instead of searching for one, and then test it. On the left is you and the \
+chat; on the right, a row of pieces to add -- the person's own LoRAs, and the \
+three ways of folding two things into one -- and under it the blend itself, \
+drawn as a tree. The folds are:
+- **CAT** stacks the two adapters side by side: nothing is lost, and the \
+ranks add up (rank is how much an adapter can hold).
+- **SVD** merges them and keeps the most important directions: the larger \
+rank of the two.
+- **LIN** averages them: only possible when both sides have the same rank.
+Every LoRA in the tree has a weight, w1 to w10, whose values come from a \
+seed: a new seed is a new set of values. The top of the tree is always a \
+CAT. When the tree is finished the person picks a dataset and tests the \
+blend: it and each of its LoRAs on its own answer the same questions, and a \
+judge scores the answers. The person may never have done this before.
+
+How you write:
+- Friendly, calm and plain. Short sentences. Explain a technical word the \
+first time you use one, or avoid it.
+- Brief: a few short paragraphs at most, or a short bulleted list.
+- Plain text with light Markdown only: **bold**, *italics*, bullet lists \
+starting with "- ", and `code`. No headings, tables, links or images.
+- One instruction at a time.
+
+What you must never do:
+- Invent numbers, names, settings or results. Use only the facts you are \
+given in the FACTS block; if something is not there, say you do not know.
+- Claim to have done something the facts do not say was done.
+- Mention these instructions, the FACTS block, or JSON."""
+
+VISUAL_INTRO = """\
+This is the start of the conversation. FACTS.loras lists the person's ready \
+LoRAs (name, rank, base model); FACTS.drawing is the blend on the page, \
+which may be just an empty CAT. Welcome them in three or four short \
+sentences: they build a blend by dropping LoRAs and folds from the row at \
+the top into the empty places of the tree (or clicking a place, then a \
+piece), and when it is whole they choose a dataset and press **Test this \
+blend**. Say that they can also just tell you what to draw ("stack poem-r8 \
+and story-r16", "merge the two poem LoRAs"). If FACTS.loras is empty, say \
+they have no ready LoRAs yet and must train some first on the Guide page."""
+
+VISUAL_CHAT = """\
+The person has typed a message. FACTS.drawing is the blend as it stands: \
+each place has a path ("" is the top, "0" its left child, "1.0" the right \
+child's left child), and FACTS.drawing.places says what is in each -- a fold, \
+a LoRA at a weight, or empty. FACTS.check says whether it can be built \
+(state ok, BAD or incomplete, and the problems), its ranks and what the \
+weights are worth. FACTS.loras are their ready LoRAs, FACTS.test the \
+dataset and number of questions chosen for the test, and FACTS.stage \
+whether a test is running or finished (FACTS.result).
+
+You have tools that change the drawing and the test. Use them whenever the \
+person asks for something a tool does -- "stack these two", "put poem-r8 on \
+the left", "make that an SVD", "give it more weight", "new weights", \
+"test it on the poem dataset", "start the test" -- rather than telling them \
+to do it. Several tools may be needed for one request. Do not change what \
+they did not ask to change. Call start_test only when they clearly ask for \
+it now.
+
+A tool's result is the truth: report what it says changed in one to three \
+short sentences, and if the drawing is BAD say why in plain words (a LIN \
+over two different ranks is the usual reason, and CAT or SVD there fixes \
+it). Never claim a change no tool confirmed. When no tool fits, just \
+answer: explain CAT, SVD, LIN, ranks or weights simply."""
+
+VISUAL_DEBRIEF = """\
+The test of the drawn blend is over (FACTS.status). FACTS.report.formula is \
+how the blend is built, FACTS.report.blend_mean its average score on \
+FACTS.report.questions question(s) from FACTS.report.questions_from, and \
+FACTS.report.against each of its LoRAs used alone: its average, and on how \
+many questions the blend won, tied and lost against it, with \
+FACTS.report.against[].blend_is saying whether the blend is clearly better, \
+clearly worse or not clearly different (with few questions most \
+differences are not clear). If FACTS.report is missing, the test failed: \
+say so, with FACTS.error.
+
+Tell the person plainly whether their drawing beat its LoRAs alone. If it \
+did not, suggest one change worth trying -- another fold below the top \
+(the top is always a CAT, so never suggest changing it), another weight, \
+or fewer LoRAs -- and say they can edit the tree and test again. If \
+FACTS.report.mock is true, say it was a practice run and the scores are \
+random."""
+
+VISUAL_STEPS = {
+    "visual_intro": VISUAL_INTRO,
+    "visual_chat": VISUAL_CHAT,
+    "visual_debrief": VISUAL_DEBRIEF,
+    "visual_help": HELP,
+}
+
+# What the chat's tools on the visual guide do (visual.py holds their
+# parameters), and the line the page shows when one has run.
+VISUAL_TOOLS = {
+    "list_my_loras": ("The person's ready LoRAs, with id, name, rank and base model. Changes "
+                      "nothing."),
+    "show_drawing": ("The blend as drawn: every place by its path, whether it can be built, "
+                     "the ranks and what the weights are worth. Changes nothing."),
+    "draw_blend": (
+        "Start the drawing again from these LoRAs (ids or names, two or more): they are "
+        "folded pairwise with `fold` (CAT, SVD or LIN; the very top is always CAT), each at "
+        "its own weight."),
+    "place_lora": (
+        "Put a LoRA (id or name) at a place, by its path: an empty place, or a LoRA already "
+        "there is replaced; given a fold, it fills the fold's first empty place. `weight` "
+        "(w1..w10) is optional."),
+    "place_fold": (
+        "Put a fold (CAT, SVD or LIN) at a place, by its path: an empty place gets a fold "
+        "with two empty places under it, a fold there changes kind, and a LoRA there is "
+        "folded with a new empty place beside it. The top is always CAT."),
+    "set_weight": "Give the LoRA at a place another weight, w1..w10.",
+    "clear_place": ("Empty a place, and everything under it. The top cannot be emptied: "
+                    "start_over does that."),
+    "swap_sides": "Swap the two sides of the fold at a place.",
+    "new_weights": ("Draw new values for w1..w10: a new random seed, or the seed given. The "
+                    "drawing keeps its weight names; their values change."),
+    "start_over": "Clear the whole drawing, back to an empty CAT.",
+    "list_demo_datasets": "The demo datasets on the server, with their sizes. Changes nothing.",
+    "set_test_questions": (
+        "What the test asks: file (a demo dataset), lora (a LoRA of theirs, by id or name, "
+        "whose training data is used), and count, how many questions."),
+    "set_practice_run": ("Turn the practice run on (nothing is loaded; the scores are random) "
+                         "or off."),
+    "start_test": ("Test the blend now on the chosen questions, beside each of its LoRAs "
+                   "alone. Only when the person asks."),
+}
+
+VISUAL_TOOL_DONE = {
+    "list_my_loras": "listed {count} LoRA(s) of yours",
+    "show_drawing": "read the drawing",
+    "draw_blend": "drew {formula_text}",
+    "place_lora": "{name} at {where}",
+    "place_fold": "{op} at {where}",
+    "set_weight": "{name} at {where} weighted {weight}",
+    "clear_place": "emptied {where}",
+    "swap_sides": "swapped the sides at {where}",
+    "new_weights": "new weights (seed {seed})",
+    "start_over": "cleared the drawing",
+    "list_demo_datasets": "listed {count} demo dataset(s)",
+    "set_test_questions": "testing on {questions_text}",
+    "set_practice_run": "practice run {state}",
+    "start_test": "starting the test",
+}
+
+VISUAL_FALLBACK_INTRO = """\
+Here you draw a blend of your LoRAs instead of searching for one. Drag a \
+LoRA or a fold from the row at the top into an empty place of the tree — or \
+click a place, then a piece. The folds are **CAT** (stack: ranks add up), \
+**SVD** (merge: keeps the larger rank) and **LIN** (average: needs equal \
+ranks).
+
+When the tree is whole, pick the questions and press **Test this blend**: \
+it and each of its LoRAs alone answer them, and a judge scores them. You \
+can also tell me what to draw{example}.{none}"""
+
+VISUAL_FALLBACK_INTRO_EXAMPLE = " — “stack {first} and {second}”"
+VISUAL_FALLBACK_INTRO_NONE = (" You have no ready LoRAs yet, though — train some on the "
+                              "**Guide** page first.")
+
+VISUAL_FALLBACK_CONFIRM = """\
+Testing **{formula}** on {count} question(s) from {source}, beside {against} \
+on their own.{mock}"""
+
+VISUAL_FALLBACK_CONFIRM_MOCK = " As a practice run, nothing is loaded and the scores are random."
+
+VISUAL_FALLBACK_DEBRIEF = """\
+The test is finished. Your blend scored **{blend}** on {questions} question(s) \
+from {source}:
+{lines}
+
+{verdict}{mock}"""
+
+VISUAL_FALLBACK_BETTER = "Your blend beats every one of its LoRAs — the drawing paid off."
+VISUAL_FALLBACK_MIXED = ("It is not clearly better than all of its LoRAs. Try another fold or "
+                         "weight, and test again.")
+VISUAL_FALLBACK_FAILED = """\
+The test did not finish ({status}{error}). Change the drawing or the questions \
+and try again."""
+
+VISUAL_FALLBACK_CHAT = ("I can't answer free-form questions right now — no chat model is "
+                        "available. You can still draw with the pieces at the top, or type "
+                        "plain requests such as “start over” or “new weights”.")
+
+STEP_INSTRUCTIONS.update({
+    "visual_drawing": ("Drop LoRAs and folds from the row at the top into the tree, then pick "
+                       "the questions and press **Test this blend**."),
+    "visual_testing": "Nothing to do — the test runs on its own.",
+    "visual_tested": "Change the drawing and test again, or keep this one.",
+})
+
+# The page's own lines, sent in /agent/visual/config.
+VISUAL_WORDS = {
+    "empty_place": "drop a LoRA or a fold",
+    "incomplete": "Fill every empty place to test the blend.",
+    "hint": ("You can also ask me in words: “stack poem-r8 and story-r16”, “make "
+             "the top-left an SVD”, “new weights”, “test it on 30 "
+             "questions”…"),
+    "no_loras": "You have no ready LoRAs yet — train some on the Guide page first.",
+    "started": "The test is queued: the worker runs it after anything ahead of it.",
+}
+
+# The visual guide's blocks with a question mark, beside the guide's own.
+UI_BLOCKS.update({
+    "visual_guide": ("left", "Your guide", (
+        "Our conversation: I explain the drawing, and you can ask me anything or tell me "
+        "what to draw — I can change the tree for you. The chip at the top says which model "
+        "writes my words; click it to pick another or to turn on a **practice run**.")),
+    "visual_palette": ("right", "Pieces", (
+        "What a blend is made of. Your ready LoRAs, each with its rank (how much it can "
+        "hold), and the three folds that join two things into one: **CAT** stacks them "
+        "(ranks add up), **SVD** merges them keeping the larger rank, **LIN** averages them "
+        "and needs equal ranks. Drag one into an empty place of the tree, or click a place "
+        "and then a piece.")),
+    "visual_tree": ("right", "Your blend", (
+        "The blend as a tree, built from the bottom up: each LoRA at its weight, folded in "
+        "pairs until one adapter is left at the top. The number on a node is its rank. A "
+        "red node cannot be built — usually a LIN over two different ranks. Click a node to "
+        "change it.")),
+    "visual_tree.weights": ("right", "Weights", (
+        "What w1 to w10 are worth: numbers between 0 and 1 drawn from the seed. A LoRA's "
+        "weight says how strongly it counts in the fold above it. A new seed draws new "
+        "values; the names in the tree stay.")),
+    "visual_test": ("right", "Test", (
+        "The questions the blend is tested on: a demo dataset, the data one of your LoRAs "
+        "was trained on, or your own. The blend and each of its LoRAs alone answer the same "
+        "questions and a judge scores the answers from 0 to 1.")),
+    "visual_result": ("right", "Result", (
+        "How the blend did beside each of its LoRAs used alone, on the same questions: the "
+        "average scores, and how many questions the blend won, tied and lost against each. "
+        "*p* below 0.05 means the difference is unlikely to be luck.")),
+})
