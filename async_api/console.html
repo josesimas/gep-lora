@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GEP LoRA console</title>
+<title>Console · GEP LoRA</title>
 <style>
   :root {
     color-scheme: light;
@@ -119,32 +119,13 @@
   .chromo.chips span { padding: 2px 8px; border-radius: 6px;
                        background: color-mix(in srgb, currentColor 11%, transparent); }
 
-  /* --- top bar ---------------------------------------------------------------------- */
-  .topbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px;
-            min-height: var(--top); padding: 8px 20px; background: color-mix(in srgb, var(--panel) 92%, transparent);
-            backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .brand svg { width: 26px; height: 26px; flex: none; }
-  .brand b { display: block; font-size: 14px; line-height: 1.1; }
-  .brand span { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
-  .viewnav { display: flex; gap: 2px; padding: 3px; background: var(--panel-2); border: 1px solid var(--line);
-             border-radius: 10px; }
-  .viewnav button { border: 0; background: transparent; min-height: 28px; padding: 0 12px; color: var(--muted); }
-  .viewnav button:hover:not(:disabled) { background: var(--panel); color: var(--ink); }
-  .viewnav button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
-  .toplink { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; font-size: 13px;
-             color: var(--ink); text-decoration: none; border: 1px solid var(--line-2); border-radius: 8px;
-             white-space: nowrap; }
-  .toplink:hover { background: var(--panel-2); }
-  .spacer { flex: 1; }
-  .health { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
-            max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .health::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
-  .health.up::before { background: var(--ok); }
-  .health.busy::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-  .health.down::before { background: var(--bad); }
-  .keybox { display: flex; gap: 6px; align-items: center; }
-  .keybox input { width: 250px; min-height: 32px; font-family: var(--mono); font-size: 12px; }
+  /* --- views and the key --------------------------------------------------------------- */
+  .viewtabs { margin: 0 auto 20px; max-width: 1240px; }
+  main.locked > .view, main.locked > .viewtabs { display: none; }
+  .keygate { max-width: 520px; margin: 40px auto; }
+  .keygate h2 { margin: 0 0 6px; }
+  .keyrow { display: flex; gap: 8px; margin-top: 12px; }
+  .keyrow input { flex: 1; font-family: var(--mono); font-size: 12px; }
 
   /* --- shell: sidebar and views ---------------------------------------------------------- */
   .shell { display: grid; grid-template-columns: 290px minmax(0, 1fr); min-height: calc(100vh - var(--top)); }
@@ -184,12 +165,6 @@
     .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
     .joblist { max-height: 230px; }
     main { padding: 20px 16px 40px; }
-  }
-  @media (max-width: 640px) {
-    .topbar { position: static; padding: 8px 16px; gap: 10px; }
-    .keybox { flex: 1 1 100%; }
-    .keybox input { width: auto; flex: 1; }
-    .health { order: 3; max-width: 100%; }
   }
 
   /* --- cards ------------------------------------------------------------------------------- */
@@ -402,33 +377,8 @@
 <script src="/themes/themes.js"></script>
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <svg viewBox="0 0 26 26" aria-hidden="true">
-      <rect width="26" height="26" rx="7" fill="var(--accent)"/>
-      <path d="M13 8 L8 17 M13 8 L18 17" stroke="var(--accent-ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
-      <circle cx="13" cy="7.5" r="2.6" fill="var(--accent-ink)"/>
-      <circle cx="8" cy="18" r="2.2" fill="var(--accent-ink)"/>
-      <circle cx="18" cy="18" r="2.2" fill="var(--accent-ink)"/>
-    </svg>
-    <div><b>GEP LoRA</b><span>API console</span></div>
-  </div>
-  <nav class="viewnav" aria-label="Views">
-    <button type="button" data-view="new">New job</button>
-    <button type="button" data-view="job" id="navJob" disabled>Job</button>
-    <button type="button" data-view="loras">LoRAs</button>
-    <button type="button" data-view="infer">Inference</button>
-  </nav>
-  <div class="spacer"></div>
-  <a class="toplink" href="/runs.html" title="Every search you have run">Your runs</a>
-  <a class="toplink" href="/agent" title="The LoRA guide">LoRA guide</a>
-  <span id="health" class="health"></span>
-  <div class="keybox">
-    <input id="key" type="password" autocomplete="off" placeholder="API key"
-           title="Create one with: python -m async_api.users add <name>">
-    <button id="saveKey">Use key</button>
-  </div>
-</header>
+<header class="topbar" id="nav" data-page="console" data-about="every API call, by hand: jobs, LoRAs and inference"></header>
+<script src="/nav.js"></script>
 
 <div class="shell">
   <aside class="sidebar" data-side="jobs">
@@ -452,7 +402,27 @@
     <div id="loras" class="joblist"><p class="empty">Enter an API key to see the LoRAs.</p></div>
   </aside>
 
-  <main>
+  <main id="main">
+    <nav class="tabs viewtabs" role="tablist" aria-label="Console views">
+      <button type="button" role="tab" data-view="new">New job</button>
+      <button type="button" role="tab" data-view="job" id="navJob" disabled>Job</button>
+      <button type="button" role="tab" data-view="loras">LoRAs</button>
+      <button type="button" role="tab" data-view="infer">Inference</button>
+    </nav>
+
+    <!-- no key yet, or another one asked for: every view waits behind this -->
+    <section class="card keygate" id="keyGate" hidden>
+      <h2>Your API key</h2>
+      <p class="muted small">Every call the console makes is made as the user this key belongs to. Create one on the
+        server with <code>python -m async_api.users add &lt;name&gt;</code>. It is kept in this browser, and every
+        page here uses the same one.</p>
+      <form class="keyrow" id="keyForm">
+        <input id="key" type="password" autocomplete="off" placeholder="paste it here" aria-label="API key">
+        <button type="submit" class="primary" id="saveKey">Use key</button>
+      </form>
+      <p class="msg" id="keyMsg"></p>
+    </section>
+
     <!-- new job -->
     <section class="view" data-view="new">
       <div class="page-head">
@@ -839,8 +809,8 @@ function setView(name) {
   view = name;
   remember("view", name);
   for (const section of document.querySelectorAll(".view")) section.hidden = section.dataset.view !== name;
-  for (const button of document.querySelectorAll(".viewnav [data-view]")) {
-    button.classList.toggle("active", button.dataset.view === name);
+  for (const button of document.querySelectorAll(".viewtabs [data-view]")) {
+    button.setAttribute("aria-selected", String(button.dataset.view === name));
   }
   // The sidebar lists what the view is about: LoRAs beside the LoRAs, jobs elsewhere.
   for (const side of document.querySelectorAll(".sidebar")) {
@@ -892,16 +862,34 @@ function recall(name) {
   try { return localStorage.getItem("gep-api-" + name) || ""; } catch (_) { return ""; }
 }
 
-// --- key, health, datasets ---------------------------------------------------
+// --- key, datasets ---------------------------------------------------
+
+function keyGate(message) {
+  $("main").classList.add("locked");
+  $("keyGate").hidden = false;
+  $("changeKey").hidden = true;
+  say("keyMsg", message || "", message ? "err" : "");
+  setTimeout(() => $("key").focus(), 0);
+}
 
 async function useKey() {
   key = $("key").value.trim();
+  if (!key) return keyGate("Paste a key first.");
+  try {
+    await api("GET", "/datasets");
+  } catch (error) {
+    key = "";
+    return keyGate(error.message);
+  }
   remember("key", key);
+  $("keyGate").hidden = true;
+  $("main").classList.remove("locked");
+  $("changeKey").hidden = false;
   const wanted = resumeView;
   resumeView = null;
   await loadDatasets();
   await Promise.all([loadForm(), loadLoraForm(), refreshJobs(), refreshLive()]);
-  // /demo?job=N (the runs page links here): that job, if it is one of the
+  // /console.html?job=N (the runs page links here): that job, if it is one of the
   // user's -- another's is a 404 from the API, and said so, not shown.
   const linked = Number(new URLSearchParams(location.search).get("job"));
   if (Number.isInteger(linked) && linked > 0) {
@@ -922,21 +910,6 @@ async function useKey() {
     const lora = Number(recall("lora"));
     if (lora) selectLora(lora);
     else setView("loras");
-  }
-}
-
-async function refreshHealth() {
-  try {
-    const health = await (await fetch("/health")).json();
-    const loaded = health.models.filter((m) => m.loaded);
-    $("health").textContent = loaded.length
-      ? "loaded: " + loaded.map((m) => `${m.base_model} (${m.engine}, unloads in ${Math.round(m.unloads_in)}s)`).join(", ")
-      : "server up · no model loaded";
-    $("health").className = "health " + (loaded.length ? "busy" : "up");
-    $("health").title = $("health").textContent;
-  } catch (_) {
-    $("health").textContent = "server unreachable";
-    $("health").className = "health down";
   }
 }
 
@@ -2980,14 +2953,14 @@ async function ask() {
     $("inferStats").textContent = "";
   } finally {
     $("ask").disabled = false;
-    refreshHealth();
+    gepNav.refreshHealth();
   }
 }
 
 // --- wiring -------------------------------------------------------------------
 
-$("saveKey").addEventListener("click", useKey);
-$("key").addEventListener("keydown", (event) => { if (event.key === "Enter") useKey(); });
+$("keyForm").addEventListener("submit", (event) => { event.preventDefault(); useKey(); });
+$("changeKey").addEventListener("click", () => keyGate());
 $("submit").addEventListener("click", submitJob);
 $("presetDemo").addEventListener("click", () => applyPreset("demo"));
 $("presetDefaults").addEventListener("click", () => applyPreset("defaults"));
@@ -3040,7 +3013,7 @@ const evalPicker = modelPicker($("eModel"), {
 });
 $("eModelBox").append(evalPicker.wrap);
 
-for (const button of document.querySelectorAll(".viewnav [data-view]")) {
+for (const button of document.querySelectorAll(".viewtabs [data-view]")) {
   button.addEventListener("click", () => setView(button.dataset.view));
 }
 $("newJob").addEventListener("click", () => setView("new"));
@@ -3096,8 +3069,7 @@ setTab("overview");
 
 $("key").value = recall("key");
 $("token").value = recall("token");
-refreshHealth();
-if ($("key").value) useKey();
+if ($("key").value) useKey(); else keyGate();
 
 setInterval(() => {
   refreshJobs();
@@ -3109,7 +3081,6 @@ setInterval(() => {
   // The LoRAs follow a training while they are on screen, or while one runs.
   if (view === "loras" || catalogue.some((one) => IN_FLIGHT.includes(one.status))) refreshLoras();
 }, 3000);
-setInterval(refreshHealth, 10000);
 </script>
 </body>
 </html>

@@ -730,7 +730,7 @@ FALLBACK_DEBRIEF_MOCK = (" This was a practice run — a real one is the same st
                          "*Practice run* turned off.")
 
 # What each step asks of the person, told to the model when they chat and
-# said by the fallback. The controls named here are the ones agent-ui.html draws.
+# said by the fallback. The controls named here are the ones guide.html draws.
 STEP_INSTRUCTIONS = {
     "intro": "Press **Yes, let's start** when you're ready.",
     "dataset": ("Paste your dataset into the box, upload a file, or pick one of the demo "
@@ -796,7 +796,7 @@ CHAT_HINT = ("You can also ask me in words: \u201conly use the first 20\u201d, \
 # What each block of the page is
 # ---------------------------------------------------------------------------
 #
-# Every block the page puts a question mark on, by the key agent-ui.html
+# Every block the page puts a question mark on, by the key guide.html
 # names it with: (which half of the page, its title, what it is). ui_help.py
 # hands the model the "what" as a fact and says it itself when no model
 # answers, so a block missing here gets no question mark. A key with a dot is

@@ -5,7 +5,7 @@ The guide starts every conversation from the knobs in settings.py (and
 create_lora.py's recipe, through train.defaults()). Those are the server's, the
 same for everyone; this module is the layer above them that is a person's own:
 the values they want a new conversation to start from, set once on the
-/guide_defaults page and kept in the API's database (registry.py's
+/settings.html page and kept in the API's database (registry.py's
 `guide_defaults` table, one JSON document per user).
 
     FIELDS         every default a person may set: its group, its words, its

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Guide defaults</title>
+<title>Settings · GEP LoRA</title>
 <style>
   :root {
     color-scheme: light;
@@ -55,16 +55,8 @@
   .tag.own { color: var(--accent); background: var(--accent-soft); }
   .tag.edit { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
 
-  .topbar { height: var(--top); display: flex; align-items: center; gap: 10px; padding: 0 18px;
-            background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 3; }
-  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .brand svg { width: 26px; height: 26px; flex: none; }
-  .brand b { display: block; font-size: 14px; line-height: 1.1; }
-  .brand span { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
-  .spacer { flex: 1; }
-  .topbar a.button { min-height: 28px; padding: 0 10px; }
 
-  main { max-width: 980px; margin: 0 auto; padding: 22px 18px 110px; display: grid; gap: 16px; }
+  main { max-width: 980px; margin: 0 auto; padding: 22px 18px 0; display: grid; gap: 16px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
   .card-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
   .card-head .spacer { flex: 1; }
@@ -110,8 +102,9 @@
   .savebar .status.ok { color: var(--ok); } .savebar .status.bad { color: var(--bad); }
 
 
-  /* Appearance: the page theme, kept in this browser rather than with the defaults. */
-  .above { max-width: 980px; margin: 22px auto 0; padding: 0 18px; }
+  /* Appearance: the page theme, kept in this browser rather than with the defaults.
+     Last on the page, so it keeps the room the save bar needs below it. */
+  .below { max-width: 980px; margin: 16px auto 0; padding: 0 18px 110px; }
   .themes { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-top: 10px; }
   .theme { display: grid; gap: 8px; text-align: left; padding: 10px; min-height: 0; white-space: normal;
            border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); cursor: pointer; }
@@ -129,32 +122,17 @@
   .gate form { display: flex; gap: 8px; margin-top: 12px; }
   @media (max-width: 680px) {
     .field { grid-template-columns: minmax(0, 1fr); }
-    .brand span { display: none; }
-    .topbar .button.wide { display: none; }
   }
 </style>
 <script src="/themes/themes.js"></script>
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <svg viewBox="0 0 26 26" aria-hidden="true">
-      <rect width="26" height="26" rx="7" fill="var(--accent)"/>
-      <path d="M7 16.5c2.2-5 4.2-7.5 6-7.5s3.8 2.5 6 7.5" stroke="var(--accent-ink)" stroke-width="1.7" fill="none" stroke-linecap="round"/>
-      <circle cx="13" cy="9" r="2.3" fill="var(--accent-ink)"/>
-      <circle cx="7" cy="17" r="2" fill="var(--accent-ink)"/>
-      <circle cx="19" cy="17" r="2" fill="var(--accent-ink)"/>
-    </svg>
-    <div><b>Guide defaults</b><span>what a new conversation starts from, from training to going live</span></div>
-  </div>
-  <div class="spacer"></div>
-  <a class="button" href="/agent">LoRA guide</a>
-  <a class="button wide" href="/runs.html">Your runs</a>
-  <a class="button wide" href="/demo">Console</a>
-  <button type="button" class="ghost" id="changeKey" hidden>Change key</button>
-</header>
+<header class="topbar" id="nav" data-page="settings" data-about="what a new guide conversation starts from, and how the pages look"></header>
+<script src="/nav.js"></script>
 
-<div class="above">
+<main id="main"></main>
+
+<div class="below">
   <section class="card" id="appearance" aria-labelledby="appearanceTitle">
     <div class="card-head">
       <h2 id="appearanceTitle">Appearance</h2>
@@ -163,8 +141,6 @@
     <div class="themes" id="themes" role="group" aria-label="Theme"></div>
   </section>
 </div>
-
-<main id="main"></main>
 
 <div class="savebar" id="savebar" hidden>
   <div class="savebar-in">
@@ -235,8 +211,8 @@ const ADVANCED = ["alpha", "dropout", "max_seq", "batch_size", "grad_accum", "wa
 // browser; cleared when the matching default is saved, so it takes effect.
 const GUIDE_REMEMBERS = { provider: "gep-agent-agent", model: "gep-agent-agent", mock: "gep-agent-mock" };
 
-function recallKey() { try { return localStorage.getItem("gep-api-key") || ""; } catch (_) { return ""; } }
-function rememberKey(value) { try { localStorage.setItem("gep-api-key", value); } catch (_) { /* private mode */ } }
+// The key is kept under one name for every page (nav.js).
+const recallKey = gepNav.recallKey, rememberKey = gepNav.rememberKey;
 
 async function api(method, path, body) {
   let response;
@@ -262,7 +238,7 @@ function keyGate(message) {
   $("main").replaceChildren(el("section", { class: "card gate" },
     el("h3", {}, "Your API key"),
     el("p", { class: "muted small" }, "Defaults are yours alone: this page reads and saves the ones of the key you give it. ",
-      "It is the key the LoRA guide and the console use, kept in this browser."),
+      "It is the key every page here uses, kept in this browser."),
     el("form", { onsubmit: (e) => { e.preventDefault(); useKey($("keyInput").value.trim()); } },
       el("input", { id: "keyInput", type: "password", autocomplete: "off", placeholder: "paste it here", "aria-label": "API key" }),
       el("button", { class: "primary", type: "submit" }, "Open my defaults")),
@@ -360,7 +336,7 @@ function draw() {
   $("main").replaceChildren(
     el("div", {}, el("h1", {}, "Guide defaults"),
       el("p", { class: "muted small", style: "margin-top:4px" },
-        "What every new conversation in the ", el("a", { href: "/agent" }, "LoRA guide"),
+        "What every new conversation in the ", el("a", { href: "/guide.html" }, "guide"),
         " starts from: the LoRAs it plans, the search that blends them and the questions a blend is checked on. ",
         "They are only a start: you can still change any of them in the chat. A value you leave at the server's follows the server.")),
     el("section", { class: "card" }, el("div", { class: "card-head" }, el("h2", {}, "A new conversation, under these defaults")),

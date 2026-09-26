@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LoRA guide</title>
+<title>Guide · GEP LoRA</title>
 <style>
   :root {
     color-scheme: light;
@@ -88,23 +88,6 @@
   .tag.mock { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
   .tag.rec { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
 
-  /* --- top bar ---------------------------------------------------------------------- */
-  .topbar { height: var(--top); display: flex; align-items: center; gap: 14px; padding: 0 18px;
-            background: var(--panel); border-bottom: 1px solid var(--line); }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .brand svg { width: 26px; height: 26px; flex: none; }
-  .brand b { display: block; font-size: 14px; line-height: 1.1; }
-  .brand span { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
-  .spacer { flex: 1; }
-  .health { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
-            max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .health::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
-  .health.up::before { background: var(--ok); }
-  .health.down::before { background: var(--bad); }
-  .topbar a.button { display: inline-flex; align-items: center; text-decoration: none; color: var(--ink);
-                     border: 1px solid var(--line-2); border-radius: 8px; padding: 0 10px; min-height: 28px; font-size: 13px; }
-  .topbar a.button:hover { background: var(--panel-2); }
-
   /* --- the two halves ----------------------------------------------------------------- */
   .halves { display: grid; grid-template-columns: minmax(360px, 480px) minmax(0, 1fr); height: calc(100vh - var(--top)); }
   .agent { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--line); }
@@ -113,16 +96,12 @@
     .halves { grid-template-columns: minmax(0, 1fr); height: auto; }
     .agent { height: 78vh; border-right: 0; border-bottom: 1px solid var(--line); }
     .board { overflow: visible; padding: 16px; }
-    .health { display: none; }
   }
   @media (max-width: 560px) {
-    .topbar { padding: 0 16px; gap: 8px; }
-    .brand span { display: none; }
     .agent-head { flex-wrap: wrap; row-gap: 4px; }
     .model-chip { max-width: 100%; order: 5; }
     .pipeline .stage b { font-size: 11px; }
   }
-  .topbar a.button, .topbar button { white-space: nowrap; }
 
   /* --- the agent: header, model picker, transcript, action, composer ------------------------ */
   .agent-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
@@ -391,25 +370,10 @@
 <script src="/themes/themes.js"></script>
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <svg viewBox="0 0 26 26" aria-hidden="true">
-      <rect width="26" height="26" rx="7" fill="var(--accent)"/>
-      <path d="M7 16.5c2.2-5 4.2-7.5 6-7.5s3.8 2.5 6 7.5" stroke="var(--accent-ink)" stroke-width="1.7" fill="none" stroke-linecap="round"/>
-      <circle cx="13" cy="9" r="2.3" fill="var(--accent-ink)"/>
-      <circle cx="7" cy="17" r="2" fill="var(--accent-ink)"/>
-      <circle cx="19" cy="17" r="2" fill="var(--accent-ink)"/>
-    </svg>
-    <div><b>LoRA guide</b><span>train LoRAs and blend them, with an assistant</span></div>
-  </div>
-  <div class="spacer"></div>
-  <span id="health" class="health" title="The async API server"></span>
+<header class="topbar" id="nav" data-page="guide" data-about="train LoRAs and blend them, with an assistant">
   <button type="button" class="sm" id="summaryButton" title="What you have done and learned so far, as a short illustrated story you can save as a PDF" hidden>Summary</button>
-  <a class="button" href="/runs.html" title="Every search you have run">Your runs</a>
-  <a class="button" href="/guide_defaults" title="What a new conversation starts from: training, blending, testing">Defaults</a>
-  <a class="button" href="/demo" target="_blank" rel="noopener">Console ↗</a>
-  <button type="button" class="sm ghost" id="changeKey" hidden>Change key</button>
 </header>
+<script src="/nav.js"></script>
 
 <div class="halves">
   <!-- left: the agent -->
@@ -589,8 +553,8 @@ function recall(name, parse = false) {
   } catch (_) { return parse ? null : ""; }
 }
 // The API key is the demo page's, so one key serves both pages.
-function recallKey() { try { return localStorage.getItem("gep-api-key") || ""; } catch (_) { return ""; } }
-function rememberKey(value) { try { localStorage.setItem("gep-api-key", value); } catch (_) { /* private mode */ } }
+// The key is kept under one name for every page (nav.js).
+const recallKey = gepNav.recallKey, rememberKey = gepNav.rememberKey;
 
 // The conversation is kept per API key, so two people sharing a browser each
 // get their own back and never see the other's. The name is a hash of the key,
@@ -610,7 +574,7 @@ function save() {
   linkToJob();
 }
 
-// The address says which search is on screen (/agent?job=N), so a reload, a
+// The address says which search is on screen (/guide.html?job=N), so a reload, a
 // bookmark or the runs page brings it back. Only the owner's key can read it:
 // anyone else's gets "no search of yours".
 function linkToJob() {
@@ -625,7 +589,7 @@ const linkedJob = () => {
   return Number.isInteger(id) && id > 0 ? id : null;
 };
 
-// /agent?job=N: that search of the user's, opened here -- read back the way a
+// /guide.html?job=N: that search of the user's, opened here -- read back the way a
 // search that just finished is, or watched if it is still running. The rest
 // of the conversation stays; only the search part is replaced.
 async function openJob(id) {
@@ -3046,19 +3010,7 @@ function drawChip() {
   $("mockTag").hidden = !(S.mock === null ? $("mock").checked : S.mock);
 }
 
-// --- health, key, start -------------------------------------------------------------------------
-
-async function refreshHealth() {
-  try {
-    const health = await (await fetch("/health")).json();
-    const loaded = health.models.filter((m) => m.loaded);
-    $("health").textContent = loaded.length ? "API up · " + loaded.map((m) => m.base_model).join(", ") + " loaded" : "API up";
-    $("health").className = "health up";
-  } catch (_) {
-    $("health").textContent = "API unreachable";
-    $("health").className = "health down";
-  }
-}
+// --- key, start -------------------------------------------------------------------------
 
 function keyGate(message) {
   $("action").replaceChildren();
@@ -3071,7 +3023,7 @@ function keyGate(message) {
       el("div", { style: "display:flex;gap:8px" },
         el("input", { id: "keyInput", type: "password", autocomplete: "off", placeholder: "paste it here" }),
         el("button", { class: "primary", type: "submit" }, "Connect"))),
-    el("p", { class: message ? "help error" : "help", id: "keyHelp" }, message || "It is kept in this browser only, shared with the console page.")));
+    el("p", { class: message ? "help error" : "help", id: "keyHelp" }, message || "It is kept in this browser only, shared with the other pages.")));
   $("composer").hidden = true;
   $("changeKey").hidden = true;
   $("summaryButton").hidden = true;
@@ -3108,7 +3060,7 @@ async function useKey(value) {
     try { localStorage.removeItem("gep-agent-session"); } catch (_) { /* private mode */ }
   }
   const wanted = linkedJob();
-  // /agent?new=1 (the runs page's New job): a fresh conversation, as Start over.
+  // /guide.html?new=1 (the runs page's New search): a fresh conversation, as Start over.
   const url = new URL(location.href);
   if (url.searchParams.has("new")) {
     url.searchParams.delete("new");
@@ -3186,8 +3138,6 @@ tickTimer = setInterval(() => {
   if (S.startedAt && !S.finishedAt && S.stage === "training") { drawBoard(); drawAction(); }
   else if (S.blend.startedAt && !S.blend.finishedAt && S.stage === "blending") drawBoard();
 }, 1000);
-refreshHealth();
-setInterval(refreshHealth, 10000);
 const stored = recallKey();
 if (stored) useKey(stored); else keyGate();
 </script>

@@ -48,7 +48,7 @@ App and the user, like an App method, and returns (status, payload).
                                                               -> the blend beside its LoRAs
     POST /agent/live/started        {agent, deployment: id, history}
 
-  the user's defaults (guide_defaults.py; the page is /guide_defaults)
+  the user's defaults (guide_defaults.py; the page is /settings.html)
     GET    /agent/defaults          every default: the server's, the saved, what is in force
     PUT    /agent/defaults          {values: {key: value}}    -> the same, saved; replaces
                                                                  what was saved, whole
@@ -84,7 +84,7 @@ tries it through POST /infer. The token that call returns stays in the page:
 is ever shown one.
 
 Every handler runs under the user's own defaults (`_theirs`): what they saved
-on /guide_defaults is what settings.py's knobs read as for that request, so a
+on /settings.html is what settings.py's knobs read as for that request, so a
 plan, a search and the config the page starts from are all theirs.
 """
 
@@ -254,7 +254,7 @@ def config(app, user):
                  "release": {"splits": list(release.SPLITS),
                              "questions": value("VERIFY_QUESTIONS"),
                              "max_questions": settings.MAX_VERIFY_QUESTIONS},
-                 # Whether the defaults in force are the user's own (/guide_defaults).
+                 # Whether the defaults in force are the user's own (/settings.html).
                  "own_defaults": sorted(guide_defaults.stored(_saved(app, user)[0]))}
 
 

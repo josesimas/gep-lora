@@ -2763,7 +2763,24 @@ python -m async_api.server                   # http://127.0.0.1:8780
 python -m async_api.worker                   # the background half
 ```
 
-Then open **http://127.0.0.1:8780/demo**: a test page, served by the API itself,
+Then open **http://127.0.0.1:8780/** -- it lands on the guide. The server has
+four pages, and every one of them carries the same top bar, in this order:
+
+| Page | Address | What it is for |
+|---|---|---|
+| **Guide** | `/guide.html` | start here: an assistant that trains LoRAs and blends them (below) |
+| **Runs** | `/runs.html` | every search you have run, and what came of it |
+| **Settings** | `/settings.html` | appearance, and what a new guide conversation starts from |
+| **Console** *(advanced)* | `/console.html` | every endpoint, by hand |
+
+A page's address ends in `.html` and an endpoint's never does (`GET /runs` is the
+JSON the Runs page reads). The bar is `async_api/nav.js`, the one file to edit
+to add a page or a link; the current page is highlighted, the API key is asked
+for once and shared by all four, and a search open in the guide or the console
+(`?job=N`) goes with you when you switch between those two. The old addresses
+(`/agent`, `/demo`, `/guide_defaults`) redirect to the new ones.
+
+**The console** is a test page, served by the API itself,
 that drives every endpoint -- paste the key, submit a job from a settings form
 built from `GET /settings` (the server's own values, with only what you change
 sent; *Quick demo* is a one-generation mocked sweep, done in seconds; training and
@@ -2771,7 +2788,8 @@ testing questions come from a shared file, a file you upload, or pasted lines),
 watch it run, download its database, read its population,
 fitness chart, transcripts and log, **verify a blend against the LoRAs it is made
 of** (see below), set an individual live, stream answers in either
-format, unset and delete. It is `async_api/demo.html`, one file with no dependencies.
+format, unset and delete. It is `async_api/console.html`, one file with no dependencies
+but the shared bar.
 
 Start the worker with the venv's python, as you would `main.py` -- it runs
 `main.py` under its own interpreter. Start the server with it too if a real
@@ -3059,7 +3077,7 @@ that matters is the one the worker's machine can reach -- with
 `discover_model()` does, and giving up after `JUDGE_MODELS_TIMEOUT` (5s). An
 endpoint that cannot be reached says so under the box, which still works. On
 the `unsloth` backend there is no list to ask for, and none is shown.
-| `GET /demo` (or `/`) | no key needed; the test page |
+| `GET /console.html` | no key needed; the test page (`/` opens the guide) |
 
 Every endpoint but `/health` and `/infer` takes `Authorization: Bearer <key>`,
 and another user's job is a 404. Only hashes of keys and tokens are stored.
@@ -3088,7 +3106,7 @@ took 53s to its first token (24.5s of it the model load), the next 0.3s.
 
 ### The LoRA guide — an agent that trains LoRAs, then blends them
 
-**http://127.0.0.1:8780/agent** is a second page on the same server, for
+**http://127.0.0.1:8780/guide.html** is the page the server opens on, for
 someone who has never trained a model. The screen is split in two. On the
 left, a guide -- a chat model -- asks for one thing at a time: a friendly
 summary of the process and *Yes, let's start*; a dataset (pasted, uploaded, or
@@ -3102,8 +3120,8 @@ guide carries out** (below). On the right, what is
 happening: where the process is, the dataset's numbers (answer lengths, topic
 words, samples), the plan, and during training each LoRA's progress and ETA,
 the loss curves, the worker's log and every API call the page makes -- redrawn
-every second and a half. It is `async_api/agent-ui.html`, one file with no
-dependencies, and it uses the same key as the console (and remembers the
+every second and a half. It is `async_api/guide.html`, one file with no
+dependencies but the shared bar, and it uses the same key as the console (and remembers the
 conversation in the browser, so a reload mid-training carries on watching).
 
 The Python behind it is `async_api_agent/`, mounted into the server as the
@@ -3216,7 +3234,7 @@ model's `<think>` block is stripped from an OpenAI-compatible reply.
 
 | Endpoint | What it does |
 |---|---|
-| `GET /agent` | the page (no key needed to load it) |
+| `GET /guide.html` | the page (no key needed to load it) |
 | `GET /agent/config` | providers (and whether the server has each key), the default, the ranks, the wait options, the shared datasets described, and the page's own wording |
 | `GET /agent/models?provider=[&base_url=]` | the chat models a provider lists |
 | `POST /agent/intro`, `/analyse`, `/wait`, `/plan`, `/started`, `/debrief` | one step of the conversation each; `agent: {provider, model, base_url}` picks who phrases it, `session` what has been set up |
@@ -3336,22 +3354,22 @@ requests, sent by the page:
    `DELETE /live/{id}`.
 
 **Every run has an address, and a page of them.** The guide keeps the search
-on screen in its address -- `/agent?job=12` -- so a reload, a bookmark or a
+on screen in its address -- `/guide.html?job=12` -- so a reload, a bookmark or a
 link brings that search back into the conversation: finished, it is read back
 and offers its next step; still running, it is watched. **`/runs.html`**
-(*Your runs* in the guide's top bar) lists every search of the user's from
+(*Runs* in the top bar) lists every search of the user's from
 `GET /runs`: status, when, rounds and blends, the LoRAs, the best score, and
 tags for tested, verified and live, with a filter and a search box, and on
 each *Open in the guide* and *Open in Console* -- the console takes
-`/demo?job=12` too, opening that job's detail when it is the caller's own. Both are **private to the key**: the pages are
+`/console.html?job=12` too, opening that job's detail when it is the caller's own. Both are **private to the key**: the pages are
 static and every row comes from the API, which answers only with the caller's
 own jobs -- someone else's `?job=` is "no search of yours" -- and the guide's
 saved conversation is kept per key (under a hash of it), so two people
 sharing a browser never see each other's.
 
 **Every default the guide starts from can be a person's own.**
-**`/guide_defaults`** (*Defaults* in the guide's and the runs page's top bar)
-is one form for the whole process: the chat's provider and model; for
+**`/settings.html`** (*Settings* in the top bar) is, below its *Appearance*
+card, one form for the whole process: the chat's provider and model; for
 training, the base model, chat template, the ranks, the number of LoRAs
 (`LORA_COUNT`: empty is one per rank; a number takes the ranks in turn until
 there are that many, at most `MAX_LORAS`, and a rank's second LoRA is trained
@@ -3685,7 +3703,7 @@ reporting/    a sweep, written out as something to look at
 adapters/     making and checking the five LoRAs a sweep blends
 tools/        dev aids that are not part of the pipeline
 async_api/    the search as a web service: jobs, a worker, live inference
-async_api_agent/  the LoRA guide behind /agent: prompts, providers, tools, a dataset's facts
+async_api_agent/  the LoRA guide behind /guide.html: prompts, providers, tools, a dataset's facts
 ```
 
 ### The drivers
@@ -3745,7 +3763,8 @@ async_api_agent/  the LoRA guide behind /agent: prompts, providers, tools, a dat
 | `testing/test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
 | `testing/evaluate_chromosome_against_loras.py` | runs a sweep's best individual beside each of its LoRAs applied alone, grades all of them with one judge, and says which the blend beats |
 | `async_api/verify.py` | the API's half of that comparison: what a verification may ask for, the command the worker runs, and the report it leaves behind |
-| `async_api/agent-ui.html` | the LoRA guide page at `/agent`: a chat model walks a user from a dataset to trained LoRAs, with the progress drawn beside it |
+| `async_api/guide.html` | the LoRA guide page at `/guide.html`: a chat model walks a user from a dataset to trained LoRAs, with the progress drawn beside it |
+| `async_api/nav.js` | the top bar every page shares: the four pages in order, the page's own buttons, the server's health and the API key |
 | `async_api_agent/prompts.py` | every system prompt the guide sends, and the wording it falls back to without a model |
 | `async_api_agent/settings.py` | which provider and model the guide talks through, and what it plans |
 | `async_api_agent/tools.py` | what the guide's chat can do: choose part of the dataset, change ranks, epochs and options, switch dataset, start and stop |

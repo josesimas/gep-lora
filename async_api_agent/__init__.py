@@ -25,7 +25,7 @@ then combining them, served by the async API beside the demo page.
     routes.py      the /agent endpoints the async API serves
 
 The agent **proposes and the API does**: nothing here trains, queues or stores
-anything. The page (async_api/agent-ui.html) takes the plan it is handed and
+anything. The page (async_api/guide.html) takes the plan it is handed and
 sends it to the async API's own POST /loras, then watches the LoRAs through
 GET /loras/{id} and its log -- the same endpoints the demo page uses. The
 blend is the same: a POST /jobs body naming the user's own LoRAs, sent by the

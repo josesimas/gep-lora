@@ -104,7 +104,7 @@ html[data-theme="bauhaus"] .topbar .health { color: color-mix(in srgb, var(--bg)
 html[data-theme="bauhaus"] .topbar a.button,
 html[data-theme="bauhaus"] .topbar .toplink,
 html[data-theme="bauhaus"] .topbar button,
-html[data-theme="bauhaus"] .viewnav button {
+html[data-theme="bauhaus"] .viewnav :is(button, a) {
   background: transparent; border: 0; border-radius: 0; color: var(--bg); text-decoration: none;
   font-weight: 700; font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
 }
@@ -112,10 +112,10 @@ html[data-theme="bauhaus"] .viewnav { background: transparent; border: 0; }
 html[data-theme="bauhaus"] .topbar a.button:hover,
 html[data-theme="bauhaus"] .topbar .toplink:hover,
 html[data-theme="bauhaus"] .topbar button:hover:not(:disabled),
-html[data-theme="bauhaus"] .viewnav button:hover:not(:disabled) { background: #e39a98; color: #1c1b19; }
-html[data-theme="bauhaus"] .viewnav button[aria-current],
-html[data-theme="bauhaus"] .viewnav button.active,
-html[data-theme="bauhaus"] .viewnav button[aria-selected="true"] { background: #e6b43c; color: #1c1b19; }
+html[data-theme="bauhaus"] .viewnav :is(button, a):hover:not(:disabled) { background: #e39a98; color: #1c1b19; }
+html[data-theme="bauhaus"] .viewnav :is(button, a)[aria-current],
+html[data-theme="bauhaus"] .viewnav :is(button, a).active,
+html[data-theme="bauhaus"] .viewnav :is(button, a)[aria-selected="true"] { background: #e6b43c; color: #1c1b19; }
 html[data-theme="bauhaus"] .topbar input { background: var(--bg); color: var(--ink); border-color: var(--bg); }
 html[data-theme="bauhaus"] .theme-pick {
   border-radius: 0 !important; background: var(--bg) !important; color: var(--ink) !important; border: 0 !important;

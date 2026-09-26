@@ -86,13 +86,19 @@ Other
                                            tested, its verifications and what of it is live
     GET    /settings                       settings.py's values and the choices, for a form
     GET    /datasets                       shared dataset files a submission may name
-    GET    /  or  /demo                    a test page that drives all of the above
-    GET    /runs.html                      the user's runs as a page (reads GET /runs)
-    GET    /guide_defaults                 the user's defaults for the guide, as a form
-                                           (reads and writes /agent/defaults)
+Pages -- a page's address ends in .html, an endpoint's never does. Each is a
+static file of the same name in async_api/, and every one of them draws the
+same top bar from /nav.js. None needs a key to be served; what they show does.
+    GET    /  (-> /guide.html)             where a beginner starts
+    GET    /guide.html[?job=N]             the LoRA guide: trains LoRAs and blends them
+    GET    /runs.html                      the user's runs (reads GET /runs)
+    GET    /settings.html                  appearance, and the user's defaults for the
+                                           guide (reads and writes /agent/defaults)
+    GET    /console.html[?job=N]           the console: every endpoint above, by hand
+    GET    /nav.js                         the top bar all four pages share
+    /agent, /demo, /guide_defaults         the old addresses, redirected to the new
 
 The LoRA agent (async_api_agent/routes.py)
-    GET    /agent                          the agent page: a guide that trains LoRAs
     GET    /agent/config, /agent/models    its providers, plan and demo datasets
     POST   /agent/{intro,analyse,wait,plan,started,debrief}
                                            one step of the conversation each; the
@@ -132,23 +138,29 @@ from adapters import catalog as lora_catalog
 from config import settings as config
 
 
-# A page that exercises every endpoint, served at / and /demo. Same origin as
-# the API, so it needs no CORS; it holds no secrets of its own.
-DEMO_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo.html")
+HERE = os.path.dirname(os.path.abspath(__file__))
 
-# The agent page, served at /agent: the same API driven by a guide that walks a
-# user through training LoRAs (async_api_agent/). Same origin, same key.
-# /agent?job=N opens that search of the user's in it.
-AGENT_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-ui.html")
+# The pages, by address: each is async_api/<name>, static and same-origin, so
+# they need no CORS and hold no secrets; what they show comes from endpoints
+# that need the user's key.
+#   guide.html     the API driven by a guide that walks a user through training
+#                  LoRAs and blending them (async_api_agent/); ?job=N opens that
+#                  search of the user's in it
+#   runs.html      every run of the user's, from GET /runs
+#   settings.html  appearance, and what a new guide conversation starts from,
+#                  read and saved through /agent/defaults
+#   console.html   a page that exercises every endpoint; ?job=N opens that job
+#   nav.js         the top bar all four draw
+PAGES = {name: (os.path.join(HERE, name), "text/html; charset=utf-8")
+         for name in ("guide.html", "runs.html", "settings.html", "console.html")}
+PAGES["nav.js"] = (os.path.join(HERE, "nav.js"), "text/javascript; charset=utf-8")
 
-# Every run of the user's on one page, served at /runs.html. Static like the
-# others: what it shows comes from GET /runs, which needs the user's key.
-RUNS_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs.html")
-
-# The guide's defaults as a form, served at /guide_defaults: what a new
-# conversation starts from, for the whole process -- training and blending.
-# Static too; it reads and saves through /agent/defaults, under the user's key.
-DEFAULTS_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guide_defaults.html")
+# Where a page used to be, so a bookmark or an old link still lands. The query
+# goes along, so /agent?job=3 is /guide.html?job=3.
+MOVED = {"/": "/guide.html",
+         "/agent": "/guide.html", "/agent-ui": "/guide.html", "/agent-ui.html": "/guide.html",
+         "/demo": "/console.html",
+         "/guide_defaults": "/settings.html", "/guide_defaults.html": "/settings.html"}
 
 # The pages' themes, served at /themes/<file>: themes.js picks one and each is a
 # stylesheet over the pages' own colours. A flat folder of static files, so a
@@ -929,14 +941,10 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         path = url.path.rstrip("/") or "/"
         try:
-            if path in ("/", "/demo") and self.command == "GET":
-                return self._page(DEMO_PAGE)
-            if path in ("/agent", "/agent-ui", "/agent-ui.html") and self.command == "GET":
-                return self._page(AGENT_PAGE)
-            if path == "/runs.html" and self.command == "GET":
-                return self._page(RUNS_PAGE)
-            if path in ("/guide_defaults", "/guide_defaults.html") and self.command == "GET":
-                return self._page(DEFAULTS_PAGE)
+            if self.command == "GET" and path in MOVED:
+                return self._redirect(MOVED[path] + ("?" + url.query if url.query else ""))
+            if self.command == "GET" and path[1:] in PAGES:
+                return self._page(*PAGES[path[1:]])
             theme = re.fullmatch(r"/themes/([A-Za-z0-9_-]+(\.[a-z]+))", path)
             if theme and self.command == "GET" and theme.group(2) in THEME_TYPES:
                 return self._page(os.path.join(THEMES_DIR, theme.group(1)), THEME_TYPES[theme.group(2)])
@@ -991,6 +999,12 @@ class Handler(BaseHTTPRequestHandler):
                 shutil.copyfileobj(handle, self.wfile, 1024 * 1024)
         finally:
             os.remove(reply.path)
+
+    def _redirect(self, location):
+        self.send_response(302)          # not 301: a browser would keep that for good
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _page(self, path, content_type="text/html; charset=utf-8"):
         try:

@@ -33,3 +33,6 @@ loras/*
 api_jobs
 
 .claude
+
+biology_*
+science_*

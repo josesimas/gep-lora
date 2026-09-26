@@ -83,17 +83,17 @@ html[data-theme="bloom"] .brand svg path { stroke: #14323a; }
 html[data-theme="bloom"] .brand svg circle { fill: #14323a; }
 html[data-theme="bloom"] .topbar a.button,
 html[data-theme="bloom"] .topbar .toplink,
-html[data-theme="bloom"] .viewnav button {
+html[data-theme="bloom"] .viewnav :is(button, a) {
   border-color: transparent; background: transparent; border-radius: 999px; text-decoration: none;
   color: var(--ink); font-weight: 700; font-size: 12.5px;
 }
 html[data-theme="bloom"] .viewnav { background: transparent; border: 0; }
 html[data-theme="bloom"] .topbar a.button:hover,
 html[data-theme="bloom"] .topbar .toplink:hover,
-html[data-theme="bloom"] .viewnav button:hover:not(:disabled) { background: var(--accent-soft); color: var(--ink); }
-html[data-theme="bloom"] .viewnav button[aria-current],
-html[data-theme="bloom"] .viewnav button.active,
-html[data-theme="bloom"] .viewnav button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+html[data-theme="bloom"] .viewnav :is(button, a):hover:not(:disabled) { background: var(--accent-soft); color: var(--ink); }
+html[data-theme="bloom"] .viewnav :is(button, a)[aria-current],
+html[data-theme="bloom"] .viewnav :is(button, a).active,
+html[data-theme="bloom"] .viewnav :is(button, a)[aria-selected="true"] { background: var(--ink); color: var(--bg); }
 html[data-theme="bloom"] .theme-pick { border-radius: 999px !important; font-weight: 600; }
 
 /* --- surfaces: soft cream cards, olive rules ------------------------------------------------------- */

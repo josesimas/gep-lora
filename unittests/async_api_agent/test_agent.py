@@ -547,9 +547,9 @@ class ToolboxTests(JobsTestCase):
 class EndpointTests(ServerTestCase):
 
     def test_the_page_is_served_and_the_agent_needs_a_key(self):
-        status, _, body = self.download("/agent")
+        status, _, body = self.download("/guide.html")
         self.assertEqual(status, 200)
-        self.assertIn(b"<title>LoRA guide</title>", body)
+        self.assertIn("<title>Guide · GEP LoRA</title>".encode("utf-8"), body)
         self.assertEqual(self.call("GET", "/agent/config", key="nope")[0], 401)
         status, config = self.call("GET", "/agent/config")
         self.assertEqual(status, 200, config)
@@ -662,7 +662,7 @@ class EndpointTests(ServerTestCase):
 
 
 PAGE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                    "async_api", "agent-ui.html")
+                    "async_api", "guide.html")
 
 
 class UiHelpTests(JobsTestCase):
@@ -1350,9 +1350,9 @@ class GuideDefaultsTests(JobsTestCase):
 class GuideDefaultsEndpointTests(ServerTestCase):
 
     def test_the_page_is_served(self):
-        status, _, body = self.download("/guide_defaults")
+        status, _, body = self.download("/settings.html")
         self.assertEqual(status, 200)
-        self.assertIn(b"<title>Guide defaults</title>", body)
+        self.assertIn("<title>Settings · GEP LoRA</title>".encode("utf-8"), body)
 
     def test_defaults_saved_read_back_used_and_forgotten(self):
         status, form = self.call("GET", "/agent/defaults")

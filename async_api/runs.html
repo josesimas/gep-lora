@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Your runs</title>
+<title>Runs · GEP LoRA</title>
 <style>
   :root {
     color-scheme: light;
@@ -61,15 +61,6 @@
   .tag.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
   .tag.live { color: var(--accent); background: var(--accent-soft); }
 
-  .topbar { height: var(--top); display: flex; align-items: center; gap: 10px; padding: 0 18px;
-            background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
-  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .brand svg { width: 26px; height: 26px; flex: none; }
-  .brand b { display: block; font-size: 14px; line-height: 1.1; }
-  .brand span { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
-  .spacer { flex: 1; }
-  .topbar a.button { min-height: 28px; padding: 0 10px; }
-
   main { max-width: 1180px; margin: 0 auto; padding: 22px 18px 48px; display: grid; gap: 16px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
   .tiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
@@ -104,30 +95,15 @@
   @media (max-width: 640px) {
     .run { grid-template-columns: minmax(0, 1fr); }
     .run-actions { grid-row: auto; }
-    .brand span { display: none; }
   }
 </style>
 <script src="/themes/themes.js"></script>
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <svg viewBox="0 0 26 26" aria-hidden="true">
-      <rect width="26" height="26" rx="7" fill="var(--accent)"/>
-      <path d="M7 16.5c2.2-5 4.2-7.5 6-7.5s3.8 2.5 6 7.5" stroke="var(--accent-ink)" stroke-width="1.7" fill="none" stroke-linecap="round"/>
-      <circle cx="13" cy="9" r="2.3" fill="var(--accent-ink)"/>
-      <circle cx="7" cy="17" r="2" fill="var(--accent-ink)"/>
-      <circle cx="19" cy="17" r="2" fill="var(--accent-ink)"/>
-    </svg>
-    <div><b>Your runs</b><span>every search you have run, and what came of it</span></div>
-  </div>
-  <div class="spacer"></div>
-  <a class="button primary" href="/agent?new=1" title="Start a new search in the LoRA guide">New job</a>
-  <a class="button" href="/agent">LoRA guide</a>
-  <a class="button" href="/guide_defaults">Defaults</a>
-  <a class="button" href="/demo">Console</a>
-  <button type="button" class="ghost" id="changeKey" hidden>Change key</button>
+<header class="topbar" id="nav" data-page="runs" data-about="every search you have run, and what came of it">
+  <a class="button primary" href="/guide.html?new=1" title="Start a new search in the guide">New search</a>
 </header>
+<script src="/nav.js"></script>
 
 <main id="main"></main>
 
@@ -170,8 +146,8 @@ let timer = null;
 const ACTIVE = ["queued", "preparing", "running"];
 const FILTERS = [["all", "All"], ["active", "Running"], ["done", "Finished"], ["unfinished", "Stopped or failed"]];
 
-function recallKey() { try { return localStorage.getItem("gep-api-key") || ""; } catch (_) { return ""; } }
-function rememberKey(value) { try { localStorage.setItem("gep-api-key", value); } catch (_) { /* private mode */ } }
+// The key is kept under one name for every page (nav.js).
+const recallKey = gepNav.recallKey, rememberKey = gepNav.rememberKey;
 
 async function api(path) {
   let response;
@@ -196,7 +172,7 @@ function keyGate(message) {
   $("main").replaceChildren(el("section", { class: "card gate" },
     el("h3", {}, "Your API key"),
     el("p", { class: "muted small" }, "Runs are private: this page shows only the searches of the key you give it. ",
-      "It is the key the LoRA guide and the console use, kept in this browser."),
+      "It is the key every page here uses, kept in this browser."),
     el("form", { onsubmit: (e) => { e.preventDefault(); useKey($("keyInput").value.trim()); } },
       el("input", { id: "keyInput", type: "password", autocomplete: "off", placeholder: "paste it here", "aria-label": "API key" }),
       el("button", { class: "primary", type: "submit" }, "Show my runs")),
@@ -271,7 +247,7 @@ function draw() {
 function drawList(list = shown()) {
   $("count").textContent = list.length === runs.length ? `${runs.length} run(s)` : `${list.length} of ${runs.length}`;
   if (!runs.length) return $("list").replaceChildren(el("div", { class: "empty" }, el("b", {}, "No runs yet"),
-    "Start one in the ", el("a", { href: "/agent" }, "LoRA guide"), ": train some LoRAs, then blend them."));
+    "Start one in the ", el("a", { href: "/guide.html" }, "guide"), ": train some LoRAs, then blend them."));
   if (!list.length) return $("list").replaceChildren(el("div", { class: "empty" }, "Nothing matches."));
   $("list").replaceChildren(...list.map(runRow));
 }
@@ -293,8 +269,8 @@ function runRow(run) {
       run.live.length ? el("span", { class: "tag live", title: run.live.map((d) => `blend #${d.individual} · deployment ${d.id}`).join("\n") },
         `live ×${run.live.length}`) : null),
     el("div", { class: "run-actions" },
-      el("a", { class: "button primary", href: `/agent?job=${run.id}` }, "Open in the guide"),
-      el("a", { class: "button", href: `/demo?job=${run.id}`,
+      el("a", { class: "button primary", href: `/guide.html?job=${run.id}` }, "Open in the guide"),
+      el("a", { class: "button", href: `/console.html?job=${run.id}`,
                 title: "The job's full detail: population, testing, verification, log, live" }, "Open in Console")),
     el("div", { class: "run-meta" },
       el("span", {}, `started ${when(run.created_at)}`),

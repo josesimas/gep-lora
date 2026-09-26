@@ -200,11 +200,36 @@ class RefusalTests(ServerTestCase):
         self.assertEqual(self.call("GET", "/nothing")[0], 404)
         self.assertEqual(self.call("PUT", "/jobs")[0], 405)
 
-    def test_the_demo_page_is_served_without_a_key(self):
-        request = urllib.request.Request(self.base + "/demo")
+    def test_the_console_page_is_served_without_a_key(self):
+        request = urllib.request.Request(self.base + "/console.html")
         with urllib.request.urlopen(request, timeout=10) as reply:
             self.assertIn("text/html", reply.headers["Content-Type"])
             self.assertIn(b"/infer", reply.read())
+
+    def test_every_page_draws_the_shared_bar(self):
+        for name, page in (("guide", "/guide.html"), ("runs", "/runs.html"),
+                           ("settings", "/settings.html"), ("console", "/console.html")):
+            with urllib.request.urlopen(self.base + page, timeout=10) as reply:
+                body = reply.read().decode("utf-8")
+            self.assertIn('id="nav" data-page="%s"' % name, body, page)
+            self.assertIn('<script src="/nav.js"></script>', body, page)
+        with urllib.request.urlopen(self.base + "/nav.js", timeout=10) as reply:
+            self.assertIn("javascript", reply.headers["Content-Type"])
+            script = reply.read().decode("utf-8")
+        for page in ("/guide.html", "/runs.html", "/settings.html", "/console.html"):
+            self.assertIn('"%s"' % page, script)
+
+    def test_the_old_addresses_are_redirected_with_their_query(self):
+        class Stay(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+        opener = urllib.request.build_opener(Stay)
+        for old, new in (("/", "/guide.html"), ("/agent?job=3", "/guide.html?job=3"),
+                         ("/demo?job=3", "/console.html?job=3"), ("/guide_defaults", "/settings.html")):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                opener.open(self.base + old, timeout=10)
+            self.assertEqual(caught.exception.code, 302, old)
+            self.assertEqual(caught.exception.headers["Location"], new, old)
 
     def test_shared_datasets_are_listed(self):
         status, reply = self.call("GET", "/datasets")

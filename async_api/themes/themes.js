@@ -67,7 +67,8 @@
 
   // The picker: a small select at the end of the top bar.
   function picker() {
-    var bar = document.querySelector(".topbar");
+    // The end of the bar's right-hand block when nav.js drew one, else the bar.
+    var bar = document.querySelector(".topbar .nav-end") || document.querySelector(".topbar");
     if (!bar || bar.querySelector(".theme-pick")) return;
     var select = document.createElement("select");
     select.className = "theme-pick";

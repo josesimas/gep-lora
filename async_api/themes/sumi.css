@@ -105,19 +105,19 @@ html[data-theme="sumi"] .brand span { letter-spacing: .06em; }
 html[data-theme="sumi"] .brand svg rect { rx: 1.5px; }
 html[data-theme="sumi"] .topbar a.button,
 html[data-theme="sumi"] .topbar .toplink,
-html[data-theme="sumi"] .viewnav button {
+html[data-theme="sumi"] .viewnav :is(button, a) {
   border-color: transparent; background: transparent; border-radius: 0; font-size: 11px;
   letter-spacing: .16em; text-transform: uppercase; color: var(--ink-2); text-decoration: none;
   border-bottom: 1px solid transparent;
 }
 html[data-theme="sumi"] .topbar a.button:hover,
 html[data-theme="sumi"] .topbar .toplink:hover,
-html[data-theme="sumi"] .viewnav button:hover:not(:disabled) {
+html[data-theme="sumi"] .viewnav :is(button, a):hover:not(:disabled) {
   background: transparent; border-bottom-color: var(--accent); color: var(--ink);
 }
-html[data-theme="sumi"] .viewnav button[aria-current],
-html[data-theme="sumi"] .viewnav button.active,
-html[data-theme="sumi"] .viewnav button[aria-selected="true"] {
+html[data-theme="sumi"] .viewnav :is(button, a)[aria-current],
+html[data-theme="sumi"] .viewnav :is(button, a).active,
+html[data-theme="sumi"] .viewnav :is(button, a)[aria-selected="true"] {
   background: transparent; color: var(--accent); border-bottom-color: var(--accent);
 }
 html[data-theme="sumi"] .theme-pick { border-radius: 2px !important; }

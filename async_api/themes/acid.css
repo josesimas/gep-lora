@@ -102,7 +102,7 @@ html[data-theme="acid"] .page h1::after {
 
 /* --- top bar: black ink, the brand on an acid block, crosshair at the end ---------------- */
 html[data-theme="acid"] .topbar { background: var(--bg); border-bottom: 2px solid var(--ink); }
-html[data-theme="acid"] .topbar::after {
+html[data-theme="acid"] .topbar .nav-end::after {
   content: "+"; font: 400 22px/1 var(--label); color: #c9d22b; margin-left: 4px;
   -webkit-text-stroke: 1px #9aa31a;
 }
@@ -118,17 +118,17 @@ html[data-theme="acid"] .brand svg path { stroke: #161616; }
 html[data-theme="acid"] .brand svg circle { fill: #161616; }
 html[data-theme="acid"] .topbar a.button,
 html[data-theme="acid"] .topbar .toplink,
-html[data-theme="acid"] .viewnav button {
+html[data-theme="acid"] .viewnav :is(button, a) {
   background: transparent; border: 0; border-radius: 0; color: var(--ink); text-decoration: none;
   font-family: var(--label); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
 }
 html[data-theme="acid"] .viewnav { background: transparent; border: 0; }
 html[data-theme="acid"] .topbar a.button:hover,
 html[data-theme="acid"] .topbar .toplink:hover,
-html[data-theme="acid"] .viewnav button:hover:not(:disabled) { background: #c9d22b; color: #161616; }
-html[data-theme="acid"] .viewnav button[aria-current],
-html[data-theme="acid"] .viewnav button.active,
-html[data-theme="acid"] .viewnav button[aria-selected="true"] { background: #161616; color: #c9d22b; }
+html[data-theme="acid"] .viewnav :is(button, a):hover:not(:disabled) { background: #c9d22b; color: #161616; }
+html[data-theme="acid"] .viewnav :is(button, a)[aria-current],
+html[data-theme="acid"] .viewnav :is(button, a).active,
+html[data-theme="acid"] .viewnav :is(button, a)[aria-selected="true"] { background: #161616; color: #c9d22b; }
 html[data-theme="acid"] .theme-pick { border-radius: 0 !important; border: 2px solid var(--ink) !important; font-family: var(--label) !important; }
 
 /* --- surfaces: thin ink rules, a crosshair in each card's corner -------------------------- */

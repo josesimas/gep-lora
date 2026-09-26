@@ -50,13 +50,15 @@ tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
 async_api/    server, worker, submit, registry, results, golive, inference,
               users, verify, evaluate, testpass, train -- the search as a web
-              service. See "The async API" below. agent-ui.html is the LoRA guide
-              page (/agent, /agent?job=N opens a search); runs.html lists the
-              user's runs (/runs.html, from GET /runs); guide_defaults.html
-              is the user's defaults for the guide (/guide_defaults).
+              service. See "The async API" below. Four pages, each served
+              at its own file name: guide.html (the LoRA guide, where / lands;
+              ?job=N opens a search), runs.html (the user's runs, from
+              GET /runs), settings.html (appearance and the user's defaults
+              for the guide) and console.html (every endpoint by hand).
+              nav.js is the top bar all four draw.
 async_api_agent/  settings, prompts, providers, analysis, selection, planner, blending,
               release, tools, commands, agent, ui_help, create_summary, routes -- the chat model behind
-              /agent that walks a user to trained LoRAs, a search that blends
+              /guide.html that walks a user to trained LoRAs, a search that blends
               them, and then testing, verifying and putting a blend live, and
               acts on what they ask in the chat
 ```
@@ -1042,13 +1044,26 @@ change to it. These rules hold it together:
   Results go in `verify<id>/` inside the job's folder, so deleting the run takes
   them with it -- a reading of a sweep is worth nothing without the sweep.
 
-- **Every page is static and private by the key.** `/agent`, `/runs.html` and
-  `/demo` are served to anyone; what they show comes from endpoints that read by
+- **Every page draws the same top bar, from `async_api/nav.js`.** A page is
+  `async_api/<name>.html`, served at `/<name>.html` (`server.PAGES`), and holds only
+  `<header class="topbar" id="nav" data-page="...">` -- with its own buttons inside,
+  which the bar moves to its right -- followed by `<script src="/nav.js">`, loaded
+  there and not deferred so `#health` and `#changeKey` exist before the page's script
+  runs. The four links, their order (Guide, Runs, Settings, Console) and the key's
+  storage name are `nav.js`'s alone; a new page is an entry in its `PAGES` and in
+  `server.PAGES`, and a test checks each page asks for the bar. A page's address ends
+  in `.html` because `/runs` and `/settings` are already JSON endpoints. The old
+  addresses are `server.MOVED`, redirected with their query. Each page still shows
+  its own key gate when `#changeKey` is clicked -- what a missing key blocks is the
+  page's business.
+
+- **Every page is static and private by the key.** `/guide.html`, `/runs.html`,
+  `/settings.html` and `/console.html` are served to anyone; what they show comes from endpoints that read by
   the caller's user id (`GET /runs`, `GET /jobs/{id}` -- another's is a 404),
   and a slot's LoRA is named only from the caller's own catalogue rows
   (`Catalog.slot_names`). The guide's saved conversation is per key
   (`sessionName()`), and its address carries the search on screen (`?job=N`); the console takes
-  `/demo?job=N` the same way.
+  `/console.html?job=N` the same way.
   Its conversation-so-far helper is `pastTurns()`, not `history()`, which would
   hide `window.history`.
 
@@ -1080,7 +1095,7 @@ change to it. These rules hold it together:
 - **The page lists a judge endpoint's models through the API** (`GET /judge/models`,
   `evaluators.common.list_models()` -- the same read `discover_model()` takes the first
   of), because the browser cannot ask LM Studio itself (no CORS) and the endpoint worth
-  listing is the one the server's machine reaches. In `demo.html` the model *textbox* is
+  listing is the one the server's machine reaches. In `console.html` the model *textbox* is
   the truth and `modelPicker()` only fills it in; keep it that way, so a model the
   endpoint does not list can still be typed.
 
@@ -1109,7 +1124,7 @@ change to it. These rules hold it together:
   template is the mocked one.
 
 - **The LoRA guide proposes; the API does.** `async_api_agent/` (mounted by
-  `server.py` as `/agent/*`, page `async_api/agent-ui.html`) never trains, queues or
+  `server.py` as `/agent/*`, page `async_api/guide.html`) never trains, queues or
   stores: `/agent/plan` returns `POST /loras` bodies and the *page* sends them, then
   watches `/loras/{id}`; `/agent/blend/plan` returns one `POST /jobs` body naming the
   user's own LoRAs by id (`blending.py`), and the page submits it and watches
@@ -1127,7 +1142,7 @@ change to it. These rules hold it together:
   `async_api_agent/settings.py` (`GEP_AGENT_<NAME>` overrides), for the same reason
   the API's are not in `config/settings.py`.
 - **A user's defaults sit over those knobs** (`guide_defaults.py`, the page
-  `/guide_defaults`, `GET`/`PUT`/`DELETE /agent/defaults`, the registry's
+  `/settings.html`, `GET`/`PUT`/`DELETE /agent/defaults`, the registry's
   `guide_defaults` table). Every `/agent/*` handler runs inside
   `guide_defaults.applied()` (`routes._theirs`), so read a default through
   `guide_defaults.value(NAME)` / `wait_choices()` / `recipe()` rather than
