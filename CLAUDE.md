@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A Gene Expression Programming search over **LoRA adapter blends**. A chromosome is a
-K-expression (Karva notation, level-order, dot-separated, always rooted at `CAT`) that
+K-expression (Karva notation, level-order, dot-separated, rooted at any operator --
+`CAT`, `SVD`, `LIN` or a lone `L*`) that
 describes how to fold up to ten LoRA adapters (the sweep's `LORA_SLOTS`) into one model. Each chromosome is compiled into a
 standalone Python script that builds that blend with PEFT and answers the eval prompts;
 the `evaluate` step then scores the answers, the way `EVALUATOR` in `settings.py` says.
@@ -768,7 +769,12 @@ rows of its own, so `add_dataset.py` is still the only INSERT.
 `generate_population.py` is the root module — it owns the alphabet (`BINARY_OPS`,
 `UNARY_OPS`, `VARIABLES`, `ARITY`), the `Node` type, and `decode`/`encode`/`levels`.
 Everything else imports from it; there is no second parser. Grammar invariants enforced
-there: root is `CAT`; `CAT`/`SVD`/`LIN` take two *operators*; `L1`–`L10` take one *variable*
+there: the root is any operator (`CAT`/`SVD`/`LIN`, or an `L*` alone -- `L3.w2`, one adapter,
+never a variable; `ROOTS`), and the draw makes it a lone adapter with probability
+`ROOT_LEAF_PROB` (`root_leaf_prob(conf)`, the sweep's stored value first), else a fold
+drawn uniformly. A lone adapter runs at full strength: its `w` is carried by the grammar
+but nothing applies it, since weights are applied by the `combine()` above a leaf and
+there is none; `CAT`/`SVD`/`LIN` take two *operators*; `L1`–`L10` take one *variable*
 (`w1`–`w10`). **The alphabet is a ceiling (`MAX_SLOTS`), not what a sweep draws**: a sweep
 uses `L1..Ln`/`w1..wn`, n = its own `LORA_SLOTS` (`slots_of(conf)`, validated by
 `slot_count()` in `start_run.freeze()` -- L1..Ln, 1 <= n <= 10, no gap). `decode()` accepts
@@ -858,7 +864,8 @@ randomness at all.
 
 `mutation.py` is point mutation with the grammar built in: `mutate(chromosome, rate, rng)`
 gives each symbol probability `rate` of becoming a *different symbol of its own class*
-(`CAT`/`SVD`/`LIN`, `L1`-`Ln`, `w1`-`wn` for the sweep's n slots) and never touches the root. Class-local swaps are
+(`CAT`/`SVD`/`LIN`, `L1`-`Ln`, `w1`-`wn` for the sweep's n slots), the root included -- so a
+fold at the top stays a fold and a lone adapter stays a lone adapter. Class-local swaps are
 the only ones that preserve both arity and the child alphabet -- `children_alphabet()`
 depends on the class, not the symbol -- so the tree keeps its shape and every result still
 decodes; `generate_population.check()` is run on each one before it is stored, so a broken
@@ -1196,7 +1203,8 @@ change to it. These rules hold it together:
 - **A drawn blend is a sweep of one and a verification, never a second
   pipeline** (`async_api/drawn.py`, the page `/visual_guide.html`). The page's
   tree (`{"op", "children"}` / `{"lora": id, "weight": "wN"}`, `null` for an empty
-  place, root always CAT) becomes a chromosome and `LORA_SLOTS` through
+  place; the root may be any fold, one LoRA alone, or `null` -- nothing drawn -- and a
+  new drawing starts as an empty CAT) becomes a chromosome and `LORA_SLOTS` through
   `drawn.encode()` -- slots in level order, one per LoRA -- and is judged by
   `generate_population.check()` and `generate_runs.plan()` (`POST /blends/check`).
   Its weights are the draw `step_runs` makes for individual `drawn.NUMBER` under

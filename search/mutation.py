@@ -26,7 +26,9 @@ A symbol may only be replaced by one of its own kind:
 (n being how many adapters the sweep's LORA_SLOTS names, at most
 generate_population.MAX_SLOTS.)
 
-and the root is never touched at all, because the grammar fixes it at CAT.
+The root is no exception: a CAT at the top may become an SVD or a LIN, and a
+lone L3 may become another slot, but a fold never becomes a lone adapter or
+the other way round -- that would change the tree's shape, not a symbol of it.
 
 That restriction is the whole trick. A symbol's arity and the alphabet its
 children are drawn from are properties of its *class*, not of the symbol, so a
@@ -75,15 +77,13 @@ from storage import store
 Change = namedtuple("Change", "number before after symbols")
 
 
-def alternatives(symbol, position, slots=generate_population.MAX_SLOTS):
-    """The symbols `symbol` may legally become at `position`.
+def alternatives(symbol, slots=generate_population.MAX_SLOTS):
+    """The symbols `symbol` may legally become, wherever it stands.
 
-    Empty for the root, which the grammar fixes at CAT, and for anything that
-    is not in the alphabet at all. An L* or w* only ever becomes one of the
-    first `slots` -- the sweep's own adapters -- never one it has none for.
+    Empty for anything that is not in the alphabet at all. An L* or w* only
+    ever becomes one of the first `slots` -- the sweep's own adapters -- never
+    one it has none for.
     """
-    if position == 0:
-        return ()
     for symbol_class, family in (
             (generate_population.BINARY_OPS, generate_population.BINARY_OPS),
             (generate_population.UNARY_OPS, generate_population.slot_symbols(slots)),
@@ -103,8 +103,8 @@ def mutate(chromosome, rate, rng, slots=generate_population.MAX_SLOTS):
     """
     symbols = chromosome.split(".")
     drawn = []
-    for position, symbol in enumerate(symbols):
-        choices = alternatives(symbol, position, slots)
+    for symbol in symbols:
+        choices = alternatives(symbol, slots)
         drawn.append(rng.choice(choices)
                      if choices and rng.random() < rate else symbol)
     mutated = ".".join(drawn)

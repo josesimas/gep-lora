@@ -171,9 +171,12 @@ class FreshTests(unittest.TestCase):
         with mock.patch.object(gp, "build_population",
                                return_value=["CAT.L1.L2.w1.w2"]) as drawn:
             selection.fresh([], rng(75), CONF)
-        _count, _generator, max_depth, branch_prob, unique, slots = drawn.call_args[0]
+        (_count, _generator, max_depth, branch_prob, unique, slots,
+         leaf_prob) = drawn.call_args[0]
         self.assertEqual((max_depth, branch_prob, unique),
                          (CONF["MAX_DEPTH"], CONF["BRANCH_PROB"], False))
+        # And no ROOT_LEAF_PROB either, so settings.py's.
+        self.assertEqual(leaf_prob, gp.root_leaf_prob(CONF))
         # CONF names no LORA_SLOTS, so settings.py's say how many there are.
         self.assertEqual(slots, gp.slots_of(CONF))
 

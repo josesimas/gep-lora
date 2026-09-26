@@ -25,7 +25,7 @@ Three things, in this order, and the arithmetic is the point:
    the round -- never the elite.
 3. **Appends one brand-new individual**, drawn from
    `generate_population.random_tree()` under the sweep's own `MAX_DEPTH`,
-   `BRANCH_PROB` and `UNIQUE`: the same draw the first population came from.
+   `BRANCH_PROB`, `ROOT_LEAF_PROB` and `UNIQUE`: the same draw the first population came from.
 
 `n + 1` in and `n + 1` out, so a generation ends **exactly the size it began**:
 a sweep drawn at `COUNT = 10` is still ten individuals after ten generations.
@@ -209,7 +209,7 @@ def fresh(rows, rng, conf):
     """A brand-new chromosome, drawn the way the first population was.
 
     generate_population.build_population() with a count of one, so the newcomer
-    is grown by the same random_tree() under the same MAX_DEPTH and BRANCH_PROB
+    is grown by the same random_tree() under the same MAX_DEPTH, BRANCH_PROB and ROOT_LEAF_PROB
     and validated by the same check() -- there is no second draw and no second
     grammar. Its own `unique` flag is left off because it only dedupes within
     the batch it draws, and a batch of one has nothing to dedupe against.
@@ -228,7 +228,8 @@ def fresh(rows, rng, conf):
     for _ in range(FRESH_ATTEMPTS if conf.get("UNIQUE", True) else 1):
         chromosome = generate_population.build_population(
             1, rng, conf["MAX_DEPTH"], conf["BRANCH_PROB"], False,
-            generate_population.slots_of(conf))[0]
+            generate_population.slots_of(conf),
+            generate_population.root_leaf_prob(conf))[0]
         if chromosome not in held:
             break
     return chromosome

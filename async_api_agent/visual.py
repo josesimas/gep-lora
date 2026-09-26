@@ -45,7 +45,8 @@ from async_api_agent import prompts
 from async_api_agent import providers
 from async_api_agent import release
 from async_api_agent import settings
-from search.generate_population import BINARY_OPS, ROOT, VARIABLES
+from async_api.drawn import ROOT
+from search.generate_population import BINARY_OPS, VARIABLES
 
 STAGES = ("drawing", "testing", "tested")
 
@@ -96,7 +97,8 @@ def empty_tree():
 def session_of(raw):
     """The page's session, checked, with the defaults filled. Raises VisualError."""
     raw = raw if isinstance(raw, dict) else {}
-    tree = raw.get("tree") or empty_tree()
+    # A null tree is a drawing whose top was emptied, not a missing one.
+    tree = raw["tree"] if "tree" in raw else empty_tree()
     try:
         drawn.walk(tree)
     except drawn.DrawnError as error:
@@ -284,19 +286,20 @@ class Toolbox:
     def _draw_blend(self, loras, fold=ROOT):
         if fold not in BINARY_OPS:
             raise VisualError("a fold is one of %s" % ", ".join(BINARY_OPS))
-        if not isinstance(loras, list) or len(loras) < 2:
-            raise VisualError("name two or more of your LoRAs to draw a blend of")
+        if not isinstance(loras, list) or not loras:
+            raise VisualError("name one or more of your LoRAs to draw a blend of")
         if len(loras) > drawn.MAX_LEAVES:
             raise VisualError("a drawing holds at most %d LoRAs" % drawn.MAX_LEAVES)
         rows = [self._lora(one) for one in loras]
         level = [{"lora": row["id"], "weight": VARIABLES[index % len(VARIABLES)]}
                  for index, row in enumerate(rows)]
         # Folded in pairs, bottom up; an odd one out goes up a level as it is.
-        while len(level) > 2:
+        # One LoRA is a blend of one: it stands at the top on its own.
+        while len(level) > 1:
             paired = [{"op": fold, "children": level[index:index + 2]}
                       for index in range(0, len(level) - 1, 2)]
             level = paired + (level[-1:] if len(level) % 2 else [])
-        tree = {"op": ROOT, "children": level}
+        tree = level[0]
         self._edit(tree)
         names = {row["id"]: row["name"] for row in rows}
         return {"formula_text": ", ".join(names[one["lora"]] for _, one in drawn.walk(tree)
@@ -317,10 +320,11 @@ class Toolbox:
                                   % (node["op"], _where(path)))
             parent, index, node = node, empty[0], None
             path = (path + "." if path else "") + str(index)
-        if parent is None:
-            raise VisualError("the top is always a CAT; put the LoRA on one of its sides")
         chosen = weight or (node["weight"] if node is not None else self._next_weight())
-        parent["children"][index] = {"lora": row["id"], "weight": chosen}
+        if parent is None:                  # the top: a blend of this one LoRA
+            tree = {"lora": row["id"], "weight": chosen}
+        else:
+            parent["children"][index] = {"lora": row["id"], "weight": chosen}
         self._edit(tree)
         return {"name": row["name"], "where": _where(path), "weight": chosen}
 
@@ -330,14 +334,14 @@ class Toolbox:
         path = path_of(where)
         tree = copy.deepcopy(self.session["tree"])
         parent, index, node = at(tree, path)
-        if parent is None and op != ROOT:
-            raise VisualError("the top is always a CAT")
-        if node is None:
-            parent["children"][index] = {"op": op, "children": [None, None]}
-        elif "op" in node:
+        if node is not None and "op" in node:
             node["op"] = op
         else:
-            parent["children"][index] = {"op": op, "children": [node, None]}
+            made = {"op": op, "children": [node, None]}
+            if parent is None:
+                tree = made
+            else:
+                parent["children"][index] = made
         self._edit(tree)
         return {"op": op, "where": _where(path)}
 
@@ -356,11 +360,12 @@ class Toolbox:
 
     def _clear_place(self, where):
         path = path_of(where)
-        if path == "":
-            raise VisualError("the top cannot be emptied; start over instead")
         tree = copy.deepcopy(self.session["tree"])
         parent, index, _ = at(tree, path)
-        parent["children"][index] = None
+        if parent is None:                  # the top: nothing left at all
+            tree = None
+        else:
+            parent["children"][index] = None
         self._edit(tree)
         return {"where": _where(path)}
 

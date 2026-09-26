@@ -1090,6 +1090,8 @@ const FIELDS = [
   { group: "Search", name: "MAX_DEPTH", label: "Max tree depth", type: "int", min: 1 },
   { group: "Search", name: "BRANCH_PROB", label: "Branch probability", type: "float", min: 0, max: 1, step: 0.05,
     help: "Chance a node keeps branching when a tree is drawn." },
+  { group: "Search", name: "ROOT_LEAF_PROB", label: "Lone-LoRA probability", type: "float", min: 0, max: 1, step: 0.05,
+    help: "Chance a drawn tree is one LoRA alone rather than CAT, SVD or LIN at the top." },
   { group: "Search", name: "UNIQUE", label: "No duplicate chromosomes", type: "bool" },
 
   { group: "Model", name: "TEMPLATE", label: "How individuals run", type: "choice", wide: true,

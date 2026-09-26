@@ -46,8 +46,9 @@ class AlphabetTests(unittest.TestCase):
         self.assertEqual({gp.ARITY[symbol] for symbol in gp.UNARY_OPS}, {1})
         self.assertEqual({gp.ARITY[symbol] for symbol in gp.VARIABLES}, {0})
 
-    def test_the_root_is_a_binary_op(self):
-        self.assertIn(gp.ROOT, gp.BINARY_OPS)
+    def test_any_operator_may_be_the_root_but_no_variable(self):
+        self.assertEqual(set(gp.ROOTS), set(gp.BINARY_OPS) | set(gp.UNARY_OPS))
+        self.assertFalse(set(gp.ROOTS) & set(gp.VARIABLES))
 
     def test_children_alphabet_follows_the_class_too(self):
         for symbol in gp.BINARY_OPS:
@@ -126,8 +127,15 @@ class DecodeTests(unittest.TestCase):
         self.assertEqual(used, 5)
         self.assertEqual(gp.encode(root), "CAT.L1.L2.w1.w2")
 
-    def test_the_root_must_be_CAT(self):
-        for expression in ("SVD.L1.L2.w1.w2", "L1.w1", "w1"):
+    def test_any_operator_may_start_a_chromosome(self):
+        for expression, levels in (("SVD.L1.L2.w1.w2", [["SVD"], ["L1", "L2"], ["w1", "w2"]]),
+                                   ("LIN.L3.L3.w1.w2", [["LIN"], ["L3", "L3"], ["w1", "w2"]]),
+                                   ("L1.w1", [["L1"], ["w1"]]),
+                                   ("L10.w7", [["L10"], ["w7"]])):
+            self.assertEqual(gp.levels(gp.check(expression)), levels)
+
+    def test_a_variable_may_not_start_a_chromosome(self):
+        for expression in ("w1", "w1.L1.w2", "", "L11.w1"):
             with self.assertRaises(ValueError):
                 gp.decode(expression)
 
@@ -178,10 +186,26 @@ class RandomTreeTests(unittest.TestCase):
             tree = gp.random_tree(generator, generator.randint(1, 5), 0.5)
             gp.check(gp.encode(tree))       # raises if it is not
 
-    def test_the_root_is_always_CAT(self):
+    def test_the_root_is_any_fold_by_default(self):
         generator = rng(12)
-        for _ in range(100):
-            self.assertEqual(gp.random_tree(generator, 3, 0.5).symbol, "CAT")
+        roots = {gp.random_tree(generator, 3, 0.5).symbol for _ in range(200)}
+        self.assertEqual(roots, set(gp.BINARY_OPS))
+
+    def test_leaf_prob_draws_lone_adapters(self):
+        generator = rng(18)
+        trees = [gp.random_tree(generator, 3, 0.5, 5, 0.5) for _ in range(400)]
+        lone = [tree for tree in trees if tree.symbol in gp.UNARY_OPS]
+        self.assertTrue(80 < len(lone) < 320)
+        for tree in lone:
+            self.assertIn(tree.symbol, gp.slot_symbols(5))
+            gp.check(gp.encode(tree))
+            self.assertEqual(len(gp.levels(tree)), 2)
+
+    def test_leaf_prob_one_draws_only_lone_adapters(self):
+        generator = rng(19)
+        for _ in range(50):
+            self.assertIn(gp.random_tree(generator, 4, 0.9, 3, 1.0).symbol,
+                          {"L1", "L2", "L3"})
 
     def test_every_node_has_the_children_its_arity_asks_for(self):
         generator = rng(13)
@@ -264,11 +288,11 @@ class BuildPopulationTests(unittest.TestCase):
                             gp.build_population(10, rng(26), 4, 0.3, True))
 
     def test_it_gives_up_rather_than_looping_forever(self):
-        # Depth 1 with no branching over five slots has 5*5*5*5 trees in it;
-        # asking for more unique ones than the budget can find has to raise,
-        # not spin.
+        # Depth 1 with no branching over five slots has 3*5*5*5*5 trees in it
+        # (three folds at the root); asking for more unique ones than there are
+        # has to raise, not spin.
         with self.assertRaises(RuntimeError) as caught:
-            gp.build_population(700, rng(27), 1, 0.0, True, 5)
+            gp.build_population(2000, rng(27), 1, 0.0, True, 5)
         self.assertIn("unique", str(caught.exception))
 
     def test_it_never_exceeds_the_depth_it_was_given(self):

@@ -679,8 +679,10 @@ class App:
     def test_drawn(self, user, body):
         """A drawing, stored as a sweep of one and queued to be verified."""
         try:
+            # No job yet: drawn.create asks this only for {"lora": id}, and reads
+            # a pasted or uploaded dataset itself, so the job's folder is never needed.
             job, row, found = drawn.create(self.registry, self.catalog, user, body,
-                                           functools.partial(self.verify_dataset, user))
+                                           functools.partial(self.verify_dataset, user, None))
         except drawn.DrawnError as error:
             raise ApiError(400, str(error))
         return 201, {"job": job_json(self, job), "verification": verification_json(row),

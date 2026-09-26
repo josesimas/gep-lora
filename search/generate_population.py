@@ -26,7 +26,9 @@ Grammar
     L1 .. L10       arity 1, their child must be a variable
     w1 .. w10       variables, the leaves of the tree
 
-The first symbol is always CAT.
+The first symbol is the root, and may be any operator -- CAT, SVD, LIN, or
+an L* on its own (`L3.w2`, one adapter and nothing folded into it). Only a
+variable cannot start a chromosome: a bare weight is not a blend.
 
 How many of the L*/w* a sweep may use is how many adapters its LORA_SLOTS
 names -- L1..Ln, 1 <= n <= MAX_SLOTS, and w1..wn beside them. The alphabet
@@ -49,7 +51,8 @@ BINARY_OPS = ("CAT", "SVD", "LIN")                                  # arity 2, f
 UNARY_OPS = tuple("L%d" % n for n in range(1, MAX_SLOTS + 1))        # arity 1, feed on variables
 VARIABLES = tuple("w%d" % n for n in range(1, MAX_SLOTS + 1))
 
-ROOT = "CAT"
+# The symbols a chromosome may start with: any operator, never a variable.
+ROOTS = BINARY_OPS + UNARY_OPS
 
 ARITY = {}
 ARITY.update({op: 2 for op in BINARY_OPS})
@@ -123,8 +126,22 @@ class Node:
 # --- growing a random tree ------------------------------------------------
 
 
-def random_tree(rng, max_depth, branch_prob, slots=MAX_SLOTS):
-    """Grow a random valid tree rooted at CAT, over the first `slots` L*/w*.
+def root_leaf_prob(conf):
+    """The chance a drawn tree is one adapter alone -- the sweep's stored
+    ROOT_LEAF_PROB, or settings.py's when it stored none."""
+    value = (conf or {}).get("ROOT_LEAF_PROB")
+    if value is None:
+        from config import settings
+        value = settings.ROOT_LEAF_PROB
+    return float(value)
+
+
+def random_tree(rng, max_depth, branch_prob, slots=MAX_SLOTS, leaf_prob=0.0):
+    """Grow a random valid tree over the first `slots` L*/w*.
+
+    The root is an L* on its own with probability `leaf_prob` -- a blend of
+    one adapter -- and otherwise one of CAT/SVD/LIN, drawn uniformly, with the
+    tree growing beneath it.
 
     `max_depth` is the deepest level an *operator* may sit at (the root is
     level 0), so a variable can appear at most one level below that. At that
@@ -133,7 +150,8 @@ def random_tree(rng, max_depth, branch_prob, slots=MAX_SLOTS):
     i.e. that the branch keeps growing instead of closing off with an L*.
     """
     leaves, weights = slot_symbols(slots), weight_symbols(slots)
-    root = Node(ROOT)
+    root = Node(rng.choice(leaves) if rng.random() < leaf_prob
+                else rng.choice(BINARY_OPS))
     pending = deque([(root, 0)])
     while pending:
         node, depth = pending.popleft()
@@ -176,8 +194,9 @@ def decode(expression):
     the returned count rather than silently dropped.
     """
     tokens = expression.split(".")
-    if not tokens or tokens[0] != ROOT:
-        raise ValueError("expression must start with %s" % ROOT)
+    if not tokens or tokens[0] not in ROOTS:
+        raise ValueError("expression must start with an operator (%s or an L*), not %s"
+                         % ("/".join(BINARY_OPS), tokens[0] or "nothing"))
 
     root = Node(tokens[0])
     pending = deque([root])
@@ -213,8 +232,12 @@ def check(expression):
 # --- the population --------------------------------------------------------
 
 
-def build_population(count, rng, max_depth, branch_prob, unique, slots=MAX_SLOTS):
-    """Generate `count` validated expressions over the first `slots` L*/w*."""
+def build_population(count, rng, max_depth, branch_prob, unique, slots=MAX_SLOTS,
+                     leaf_prob=0.0):
+    """Generate `count` validated expressions over the first `slots` L*/w*.
+
+    `leaf_prob` is random_tree()'s: the chance a member is one adapter alone.
+    """
     population = []
     seen = set()
     attempts = 0
@@ -224,11 +247,12 @@ def build_population(count, rng, max_depth, branch_prob, unique, slots=MAX_SLOTS
         if attempts > attempt_budget:
             raise RuntimeError(
                 "could only find %d unique expressions out of %d requested; "
-                "raise MAX_DEPTH or BRANCH_PROB in settings.py, or clear UNIQUE"
+                "raise MAX_DEPTH, BRANCH_PROB or ROOT_LEAF_PROB in settings.py, "
+                "or clear UNIQUE"
                 % (len(population), count)
             )
         depth = rng.randint(1, max_depth)
-        expression = encode(random_tree(rng, depth, branch_prob, slots))
+        expression = encode(random_tree(rng, depth, branch_prob, slots, leaf_prob))
         check(expression)   # never store something we cannot read back
         if unique:
             if expression in seen:

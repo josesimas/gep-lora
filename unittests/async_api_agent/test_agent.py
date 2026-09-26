@@ -811,6 +811,9 @@ class BlendingTests(JobsTestCase):
         said = blending.formula("CAT.SVD.L3.L1.L2.w1.w2.w3", {"L1": "a", "L2": "b", "L3": "c"},
                                 {"w1": 0.5, "w2": 1.0})
         self.assertEqual(said, "stack(merge(a ×1.00, b ×w3), c ×0.50)")
+        # A lone adapter has no fold to apply its weight, so none is claimed.
+        self.assertEqual(blending.formula("L2.w1", {"L2": "b"}, {"w1": 0.5}),
+                         "b alone, at full strength")
 
     def test_the_plan_is_a_job_naming_the_loras_by_id(self):
         session = planner.session_of({"blend": {"loras": [self.a["id"], self.b["id"]],

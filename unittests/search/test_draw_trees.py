@@ -57,7 +57,7 @@ class DrawTests(unittest.TestCase):
 
     def test_it_refuses_what_the_decoder_refuses(self):
         with self.assertRaises(ValueError):
-            draw_trees.draw("SVD.L1.L2.w1.w2")
+            draw_trees.draw("w1.L1.w2")
 
     def test_every_drawn_population_member_draws(self):
         for chromosome in gp.build_population(40, rng(31), 4, 0.5, True):

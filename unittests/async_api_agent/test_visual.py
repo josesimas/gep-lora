@@ -4,7 +4,7 @@ test_visual.py - The visual guide: the chat's tools on a drawing, and its steps.
   * every tool is described, summarised and in the schema the model is sent;
   * the tools edit the session's drawing the way the page's clicks do -- a LoRA
     at a place, a fold at a place, weights, swaps, clearing -- and refuse what
-    would not be a drawing (the top is always a CAT);
+    would not be a drawing -- the top may be any fold, one LoRA, or emptied;
   * a place may be named as a path or in words ("right › left");
   * starting a test is an action for the page, and only for a drawing that can
     be built with questions chosen;
@@ -90,22 +90,40 @@ class ToolTests(Mixin, JobsTestCase):
         self.assertTrue(self.box.changed)
 
     def test_the_refusals(self):
-        self.refused("place_fold", "always a CAT", where="top", op="SVD")
-        self.refused("clear_place", "cannot be emptied", where="top")
         self.refused("place_lora", "no LoRA of yours", where="left", lora="nobody's")
         self.refused("set_weight", "no LoRA at", where="left", weight="w2")
         self.refused("swap_sides", "no fold", where="left")
         self.refused("place_lora", "not a place", where="up", lora="slot-L1")
-        self.refused("draw_blend", "two or more", loras=["slot-L1"])
+        self.refused("draw_blend", "one or more", loras=[])
         self.refused("set_test_questions", "no demo dataset", file="nope.json")
         self.refused("start_test", "Fill every empty place")
         self.refused("nothing", "no tool")
 
-    def test_draw_blend_folds_in_pairs_under_a_cat(self):
+    def test_draw_blend_folds_in_pairs_the_top_included(self):
         done = self.run_ok("draw_blend", loras=["slot-L1", "slot-L2", "slot-L3"], fold="SVD")
         self.assertEqual(done["formula_text"], "slot-L3, slot-L1, slot-L2")
         chromosome, _ = drawn.encode(self.box.session["tree"])
-        self.assertEqual(chromosome, "CAT.SVD.L1.L2.L3.w3.w1.w2")
+        self.assertEqual(chromosome, "SVD.SVD.L1.L2.L3.w3.w1.w2")
+
+    def test_draw_blend_of_one_lora_is_that_lora_alone(self):
+        self.run_ok("draw_blend", loras=["slot-L2"])
+        self.assertEqual(drawn.encode(self.box.session["tree"])[0], "L1.w1")
+
+    def test_the_top_can_be_changed_emptied_and_refilled(self):
+        self.run_ok("place_fold", where="top", op="SVD")         # an empty CAT becomes an SVD
+        self.assertEqual(self.box.session["tree"], {"op": "SVD", "children": [None, None]})
+        self.run_ok("clear_place", where="top")                  # nothing drawn at all
+        self.assertIsNone(self.box.session["tree"])
+        self.assertEqual(self.box.outcome()["check"]["empty"], [""])
+        self.run_ok("place_lora", where="top", lora="slot-L1", weight="w3")
+        self.assertEqual(drawn.encode(self.box.session["tree"])[0], "L1.w3")
+        self.assertEqual(self.box.outcome()["check"]["state"], "ok")
+        self.run_ok("place_fold", where="top", op="LIN")         # the LoRA is folded, not lost
+        tree = self.box.session["tree"]
+        self.assertEqual((tree["op"], tree["children"][0]["weight"], tree["children"][1]),
+                         ("LIN", "w3", None))
+        # A session whose top was emptied stays empty rather than becoming a CAT again.
+        self.assertIsNone(visual.session_of({"tree": None})["tree"])
 
     def test_a_test_is_an_action_once_it_can_run(self):
         self.run_ok("draw_blend", loras=["slot-L1", "slot-L2"])
@@ -120,7 +138,7 @@ class ToolTests(Mixin, JobsTestCase):
 
     def test_the_session_is_checked(self):
         with self.assertRaises(visual.VisualError):
-            visual.session_of({"tree": {"op": "SVD", "children": [None, None]}})
+            visual.session_of({"tree": {"op": "XOR", "children": [None, None]}})
         with self.assertRaises(visual.VisualError):
             visual.session_of({"count": 0})
         with self.assertRaises(visual.VisualError):

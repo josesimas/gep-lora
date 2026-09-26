@@ -636,7 +636,8 @@ function edit(change, note) {
   if (outcome === false) return false;
   undo.push(before);
   if (undo.length > 100) undo.shift();
-  S.session.tree = tree;
+  // A change at the top hands back the new top, since it cannot be changed in place.
+  S.session.tree = outcome && outcome.tree !== undefined ? outcome.tree : tree;
   if (outcome && outcome.select !== undefined) S.selected = outcome.select;
   save(); drawBoard(); drawAction();
   scheduleCheck();
@@ -655,7 +656,7 @@ let flashText = "";
 function flash(text) { flashText = text; drawBoard(); setTimeout(() => { if (flashText === text) { flashText = ""; drawBoard(); } }, 2600); }
 
 // A LoRA put at a place: an empty one, or over a LoRA (keeping its weight); on
-// a fold, into its first empty side.
+// a fold, into its first empty side. At the top, that makes a blend of one LoRA.
 function putLora(path, id) {
   return edit((tree) => {
     let found = at(tree, path);
@@ -666,7 +667,6 @@ function putLora(path, id) {
       path = path === "" ? String(i) : path + "." + i;
       found = { parent: found.node, index: i, node: null };
     }
-    if (!found.parent) return false;
     const others = blendModels(tree, path), mine = modelOf(loraById(id));
     if (others.length && !others.includes(mine)) {
       flash(`${loraName(id)} was trained on ${mine}, and your blend is on ${others.join(", ")} — `
@@ -674,25 +674,28 @@ function putLora(path, id) {
       return false;
     }
     const weight = found.node && found.node.lora !== undefined ? found.node.weight : nextWeight(tree);
-    found.parent.children[found.index] = { lora: id, weight };
+    const made = { lora: id, weight };
+    if (!found.parent) return { tree: made, select: "" };
+    found.parent.children[found.index] = made;
     const next = firstEmpty(tree);
     return { select: next };
   });
 }
 
 // A fold put at a place: an empty one gets two empty sides, a fold changes
-// kind, and a LoRA is folded with a new empty place beside it.
+// kind, and a LoRA is folded with a new empty place beside it. The top too.
 function putFold(path, op) {
   return edit((tree) => {
     const found = at(tree, path);
     if (!found) return false;
-    if (!found.parent) {
-      flash(op === "CAT" ? "The top is already a CAT." : "The top is always a CAT — that is the grammar every blend is written in.");
-      return false;
+    if (found.node && found.node.op) {
+      if (found.node.op === op) return false;
+      found.node.op = op;
+      return { select: firstEmpty(tree) ?? path };
     }
-    if (found.node === null) found.parent.children[found.index] = { op, children: [null, null] };
-    else if (found.node.op) found.node.op = op;
-    else found.parent.children[found.index] = { op, children: [found.node, null] };
+    const made = { op, children: [found.node, null] };
+    if (!found.parent) return { tree: made, select: firstEmpty(made) ?? path };
+    found.parent.children[found.index] = made;
     return { select: firstEmpty(tree) ?? path };
   });
 }
@@ -701,8 +704,13 @@ function setWeight(path, weight) {
   edit((tree) => { const found = at(tree, path); if (!found || !found.node || found.node.lora === undefined) return false; found.node.weight = weight; });
 }
 function clearPlace(path) {
-  if (path === "") return startDrawingOver();
-  edit((tree) => { const found = at(tree, path); if (!found || !found.parent) return false; found.parent.children[found.index] = null; return { select: path }; });
+  edit((tree) => {
+    const found = at(tree, path);
+    if (!found || found.node === null) return false;
+    if (!found.parent) return { tree: null, select: "" };     // the top: nothing drawn
+    found.parent.children[found.index] = null;
+    return { select: path };
+  });
 }
 function swapSides(path) {
   edit((tree) => { const found = at(tree, path); if (!found || !found.node || !found.node.op) return false; found.node.children.reverse(); });
@@ -898,17 +906,19 @@ function toolbar() {
     said = [el("b", {}, "Empty place"), ` at ${where(path)} — press a piece above to fill it.`];
   } else if (node.op) {
     said = [el("b", {}, node.op), ` at ${where(path)} — ${visual.folds[node.op]}`];
-    if (path !== "") tools.push(el("div", { class: "seg" }, ...FOLDS.map((op) =>
+    tools.push(el("div", { class: "seg" }, ...FOLDS.map((op) =>
       el("button", { type: "button", class: op === node.op ? "active" : "", onclick: () => putFold(path, op) }, op))));
     tools.push(el("button", { type: "button", class: "sm", onclick: () => swapSides(path) }, "Swap sides"));
   } else {
     const weights = (S.check || {}).weights || {};
     said = [el("b", {}, loraName(node.lora)), ` at ${where(path)}`];
-    tools.push(el("label", { class: "check" }, "weight",
+    if (path === "") said.push(" — alone, at full strength. Put a fold here to blend it with another.");
+    else tools.push(el("label", { class: "check" }, "weight",
       el("select", { onchange: (e) => setWeight(path, e.target.value) },
         ...WEIGHTS.map((w) => el("option", { value: w, selected: w === node.weight }, weights[w] !== undefined ? `${w} = ${fmt(weights[w], 3)}` : w)))));
   }
-  if (path !== "" && node !== null) tools.push(el("button", { type: "button", class: "sm danger", onclick: () => clearPlace(path) }, "Remove"));
+  if (node !== null) tools.push(el("button", { type: "button", class: "sm danger", onclick: () => clearPlace(path),
+    title: path === "" ? "Empty the top, and everything under it" : null }, "Remove"));
   return el("div", { class: "toolbar" }, el("span", { class: "what" }, ...said), ...tools);
 }
 
@@ -974,14 +984,17 @@ function treeSvg() {
         + (info.broken ? ". PEFT cannot build this: its two sides have different ranks." : "");
     } else if (entry.kind === "leaf") {
       const name = loraName(entry.node.lora);
+      // A LoRA alone at the top has no fold to apply its weight: it runs at full strength.
+      const alone = entry.path === "";
       const value = weights[entry.node.weight];
       const body = make("rect", { class: "body", x: x0, y: top, width: w, height: h, rx: 10 });
       body.style.fill = loraColour(entry.node.lora); body.style.stroke = loraColour(entry.node.lora);
       g.append(body);
       g.append(make("text", { class: "name", x: entry.x, y: top + 21, "text-anchor": "middle" }, name.length > 17 ? name.slice(0, 16) + "…" : name));
       g.append(make("text", { class: "wt", x: entry.x, y: top + 38, "text-anchor": "middle" },
-        `${entry.node.weight}${value !== undefined ? " = " + fmt(value, 3) : ""}${info.rank !== undefined ? " · r" + info.rank : ""}`));
-      title = `${name} at ${entry.node.weight}${value !== undefined ? " = " + fmt(value, 4) : ""}${info.rank !== undefined ? ", rank " + info.rank : ""}`;
+        `${alone ? "full strength" : entry.node.weight + (value !== undefined ? " = " + fmt(value, 3) : "")}${info.rank !== undefined ? " · r" + info.rank : ""}`));
+      title = alone ? `${name} alone, at full strength${info.rank !== undefined ? ", rank " + info.rank : ""} — fold it with something to weight it`
+        : `${name} at ${entry.node.weight}${value !== undefined ? " = " + fmt(value, 4) : ""}${info.rank !== undefined ? ", rank " + info.rank : ""}`;
     } else {
       g.append(make("rect", { class: "body", x: x0, y: top, width: w, height: h, rx: 10 }));
       g.append(make("text", { x: entry.x, y: top + 22, "text-anchor": "middle" }, "+"));
@@ -1456,7 +1469,7 @@ document.addEventListener("keydown", (e) => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "");
   if (typing || !visual) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undoLast(); }
-  else if ((e.key === "Delete" || e.key === "Backspace") && S.selected !== null && S.selected !== "") { e.preventDefault(); clearPlace(S.selected); }
+  else if ((e.key === "Delete" || e.key === "Backspace") && S.selected !== null) { e.preventDefault(); clearPlace(S.selected); }
   else if (e.key === "Escape") { S.selected = null; flashText = ""; drawBoard(); }
 });
 

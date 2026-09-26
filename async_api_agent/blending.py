@@ -351,6 +351,9 @@ def formula(chromosome, names, weights=None):
     except ValueError:
         return chromosome
     verbs = {"CAT": "stack", "SVD": "merge", "LIN": "mix"}
+    if root.symbol in SLOTS:
+        # A lone adapter: no fold above it, so no weight is applied to it.
+        return "%s alone, at full strength" % names.get(root.symbol, root.symbol)
 
     def said(node):
         if node.symbol in SLOTS:

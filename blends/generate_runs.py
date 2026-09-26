@@ -646,10 +646,10 @@ def render(expression, steps, final, script_name, provenance, label,
     and loading the model it was created with even if settings.py has since
     moved on.
 
-    `root` is the tree `steps` were planned from, for a caller whose tree is not
-    a chromosome: a single adapter on its own is a leaf with no CAT above it,
-    which the grammar refuses to decode but plan() builds and every template
-    runs. Left out, it is decoded from `expression`, as for any individual.
+    `root` is the tree `steps` were planned from, for a caller that built it
+    by hand rather than from `expression` -- a single adapter on its own, say,
+    which plan() builds and every template runs with no combine() above it.
+    Left out, it is decoded from `expression`, as for any individual.
     """
     template_lines = (load_template(template_path) if template_lines is None
                       else template_lines)

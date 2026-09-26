@@ -223,7 +223,7 @@ def step_population(context):
     rng = random.Random(conf["SEED"])
     chromosomes = generate_population.build_population(
         conf["COUNT"], rng, conf["MAX_DEPTH"], conf["BRANCH_PROB"], conf["UNIQUE"],
-        generate_population.slots_of(conf))
+        generate_population.slots_of(conf), generate_population.root_leaf_prob(conf))
     store.add_individuals(context.conn, context.run_id, chromosomes)
 
     context.count(len(chromosomes), "individuals")

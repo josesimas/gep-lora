@@ -51,9 +51,29 @@ class DrawingTests(JobsTestCase):
         self.assertEqual(drawn.decode_tree(chromosome, slots), tree)
         self.assertEqual(drawn.loras_in(fold("CAT", leaf(c), leaf(a))), [c, a])
 
+    def test_the_top_may_be_any_fold_or_one_lora(self):
+        a, b = self.ids["L3"], self.ids["L1"]
+        for tree, chromosome in ((fold("SVD", leaf(a, "w2"), leaf(b, "w5")), "SVD.L1.L2.w2.w5"),
+                                 (fold("LIN", leaf(a), leaf(a, "w3")), "LIN.L1.L1.w1.w3"),
+                                 (leaf(b, "w4"), "L1.w4")):
+            encoded, slots = drawn.encode(tree)
+            self.assertEqual(encoded, chromosome)
+            self.assertEqual(drawn.decode_tree(encoded, slots), tree)
+        # Nothing drawn at all is a drawing with one empty place: the top.
+        self.assertEqual(drawn.walk(None), [("", None)])
+        with self.assertRaises(drawn.DrawnError):
+            drawn.encode(None)
+
+    def test_one_lora_alone_can_be_built(self):
+        found = drawn.check(self.registry.catalog, self.user, leaf(self.ids["L5"], "w2"))
+        self.assertEqual((found["state"], found["chromosome"]), ("ok", "L1.w2"))
+        self.assertEqual(found["rank"], found["nodes"][""]["rank"])
+        empty = drawn.check(self.registry.catalog, self.user, None)
+        self.assertEqual((empty["state"], empty["empty"]), ("incomplete", [""]))
+
     def test_what_is_not_a_drawing(self):
         for tree, fragment in (
-                (fold("SVD", leaf(1), leaf(2)), "CAT at the top"),
+                ("CAT", "not a node"),
                 ({"op": "CAT", "children": [leaf(1)]}, "exactly two"),
                 (fold("CAT", {"op": "XOR", "children": [None, None]}, leaf(1)), "not a fold"),
                 (fold("CAT", leaf(1, "w11"), leaf(2)), "weight"),

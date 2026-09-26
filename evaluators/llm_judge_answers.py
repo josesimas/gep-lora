@@ -60,6 +60,10 @@ You will be shown:
   REFERENCE ANSWER  ground truth
   ANSWER            the answer to be evaluated against ground truth (REFERENCE ANSWER)
 
+The REFERENCE ANSWER is an example of the intended manner, not the only good
+answer. Do not reward copying it, and do not punish different wording,
+different examples or different details.
+
 Judge how well the ANSWER stands in for the REFERENCE ANSWER:
 - Manner: the same style, voice, form, length and register? This matters most
 - Substance: does it say the same kind of thing, so that someone expecting the

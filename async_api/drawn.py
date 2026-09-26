@@ -33,8 +33,11 @@ The tree, as the page and the chat hold it:
     {"op": "CAT", "children": [<node or null>, <node or null>]}
     {"lora": <catalogue id>, "weight": "w3"}
 
-A null child is a place not filled yet. The root is always a CAT (the grammar's
-rule). The same LoRA may appear at several leaves, at the same weight or not;
+A null child is a place not filled yet. The top may be anything a place may
+hold, as a chromosome's root may: a fold, one LoRA on its own (a blend of one,
+at full strength -- no fold above it applies its weight), or null, a drawing
+with nothing in it yet. A new drawing starts from an empty CAT, since most
+blends fold something, but that is where it starts rather than a rule. The same LoRA may appear at several leaves, at the same weight or not;
 it takes one slot, L1..Ln numbered in the order the drawing is read (level
 order, left to right), which is the order a Karva expression is written in.
 """
@@ -51,10 +54,13 @@ from async_api import verify
 from blends import generate_runs
 from config import settings as config
 from search.generate_population import (
-    BINARY_OPS, MAX_SLOTS, ROOT, UNARY_OPS, VARIABLES, Node, check as check_expression,
+    BINARY_OPS, MAX_SLOTS, UNARY_OPS, VARIABLES, Node, check as check_expression,
     encode as encode_tree, decode)
 from storage import db_datasets
 from storage import store
+
+# The fold a new drawing starts from (see the module note).
+ROOT = "CAT"
 
 # The one individual a drawn blend's sweep holds. Its number is what the weight
 # seed is derived from, as for any individual of any sweep.
@@ -101,9 +107,9 @@ def place(path):
 def walk(tree):
     """Every place in a drawing, checked. -> [(path, node or None)] in level
     order; the root's path is "" and a child's is its parent's plus its index,
-    so "1.0" is the root's second child's first. Raises DrawnError."""
-    if not isinstance(tree, dict) or tree.get("op") != ROOT:
-        raise DrawnError("a blend starts from a %s at the top" % ROOT)
+    so "1.0" is the root's second child's first. The top is checked like any
+    other place: a fold, a LoRA, or None for a drawing still empty. Raises
+    DrawnError."""
     places, frontier, leaves = [], [("", tree)], 0
     while frontier:
         path, node = frontier.pop(0)

@@ -30,6 +30,13 @@ UNIQUE = True
 MAX_DEPTH = 4
 BRANCH_PROB = 0.2
 
+# The chance a drawn tree is a single LoRA and nothing else (`L3.w2`) rather
+# than a CAT, SVD or LIN with a tree under it. The root may be any operator;
+# this keeps lone adapters a minority of the draw, since there are only as many
+# of them as there are slots. Its weight is not applied: with no fold above it,
+# a lone adapter runs at full strength.
+ROOT_LEAF_PROB = 0.1
+
 # --- continuing a sweep ----------------------------------------------------
 
 # How many generations continue_run.py runs when it is not told otherwise. One

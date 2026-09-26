@@ -184,8 +184,9 @@ class GenerationCycleTests(SweepTestCase):
 
     def test_it_reaches_the_target_it_is_pointed_at(self):
         # The judge's answer is 1.0 and it is reachable by variable swaps
-        # alone; a search that works gets there.
-        snapshots = self.search(20)
+        # alone; a search that works gets there. Thirty generations, since
+        # the root mutates too and these seeds now get there at the 21st.
+        snapshots = self.search(30)
         self.assertEqual(self.best_fitness(snapshots[-1]), 1.0)
 
     def test_one_generation_is_recorded_per_turn(self):

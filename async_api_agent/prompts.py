@@ -961,8 +961,9 @@ ranks add up (rank is how much an adapter can hold).
 rank of the two.
 - **LIN** averages them: only possible when both sides have the same rank.
 Every LoRA in the tree has a weight, w1 to w10, whose values come from a \
-seed: a new seed is a new set of values. The top of the tree is always a \
-CAT. When the tree is finished the person picks a dataset and tests the \
+seed: a new seed is a new set of values. The top of the tree may be any \
+fold, or a single LoRA on its own -- a blend of one, used at full strength, \
+since only a fold applies weights. When the tree is finished the person picks a dataset and tests the \
 blend: it and each of its LoRAs on its own answer the same questions, and a \
 judge scores the answers. The person may never have done this before.
 
@@ -983,7 +984,7 @@ given in the FACTS block; if something is not there, say you do not know.
 VISUAL_INTRO = """\
 This is the start of the conversation. FACTS.loras lists the person's ready \
 LoRAs (name, rank, base model); FACTS.drawing is the blend on the page, \
-which may be just an empty CAT. Welcome them in three or four short \
+which may be just an empty CAT or nothing at all. Welcome them in three or four short \
 sentences: they build a blend by dropping LoRAs and folds from the row at \
 the top into the empty places of the tree (or clicking a place, then a \
 piece), and when it is whole they choose a dataset and press **Test this \
@@ -1027,9 +1028,8 @@ differences are not clear). If FACTS.report is missing, the test failed: \
 say so, with FACTS.error.
 
 Tell the person plainly whether their drawing beat its LoRAs alone. If it \
-did not, suggest one change worth trying -- another fold below the top \
-(the top is always a CAT, so never suggest changing it), another weight, \
-or fewer LoRAs -- and say they can edit the tree and test again. If \
+did not, suggest one change worth trying -- another fold (the top \
+included), another weight, or fewer LoRAs -- and say they can edit the tree and test again. If \
 FACTS.report.mock is true, say it was a practice run and the scores are \
 random."""
 
@@ -1048,20 +1048,21 @@ VISUAL_TOOLS = {
     "show_drawing": ("The blend as drawn: every place by its path, whether it can be built, "
                      "the ranks and what the weights are worth. Changes nothing."),
     "draw_blend": (
-        "Start the drawing again from these LoRAs (ids or names, two or more): they are "
-        "folded pairwise with `fold` (CAT, SVD or LIN; the very top is always CAT), each at "
-        "its own weight."),
+        "Start the drawing again from these LoRAs (ids or names, one or more): they are "
+        "folded pairwise with `fold` (CAT, SVD or LIN), the top included, each at its own "
+        "weight. One LoRA alone is a blend of one, with no fold."),
     "place_lora": (
         "Put a LoRA (id or name) at a place, by its path: an empty place, or a LoRA already "
-        "there is replaced; given a fold, it fills the fold's first empty place. `weight` "
+        "there is replaced; given a fold, it fills the fold's first empty place. At an empty "
+        "top, or over a LoRA at the top, the blend becomes that one LoRA alone. `weight` "
         "(w1..w10) is optional."),
     "place_fold": (
         "Put a fold (CAT, SVD or LIN) at a place, by its path: an empty place gets a fold "
         "with two empty places under it, a fold there changes kind, and a LoRA there is "
-        "folded with a new empty place beside it. The top is always CAT."),
+        "folded with a new empty place beside it. The top may be any of the three."),
     "set_weight": "Give the LoRA at a place another weight, w1..w10.",
-    "clear_place": ("Empty a place, and everything under it. The top cannot be emptied: "
-                    "start_over does that."),
+    "clear_place": ("Empty a place, and everything under it. Emptying the top leaves "
+                    "nothing drawn, ready for a fold or one LoRA alone."),
     "swap_sides": "Swap the two sides of the fold at a place.",
     "new_weights": ("Draw new values for w1..w10: a new random seed, or the seed given. The "
                     "drawing keeps its weight names; their values change."),
@@ -1164,7 +1165,8 @@ UI_BLOCKS.update({
         "and then a piece.")),
     "visual_tree": ("right", "Your blend", (
         "The blend as a tree, built from the bottom up: each LoRA at its weight, folded in "
-        "pairs until one adapter is left at the top. The number on a node is its rank. A "
+        "pairs until one adapter is left at the top — or a single LoRA on its own, which "
+        "is used at full strength since only a fold applies weights. The number on a node is its rank. A "
         "red node cannot be built — usually a LIN over two different ranks. Click a node to "
         "change it.")),
     "visual_tree.weights": ("right", "Weights", (

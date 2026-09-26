@@ -45,7 +45,10 @@ class SlotTests(JobsTestCase):
 
     def test_a_chromosome_that_does_not_decode_is_refused(self):
         with self.assertRaises(verify.VerifyError):
-            verify.blend_slots("L3.w1")
+            verify.blend_slots("w1.L3.w1")
+
+    def test_a_lone_adapter_names_its_one_slot(self):
+        self.assertEqual(verify.blend_slots("L3.w1"), ["L3"])
 
 
 class OfferedTests(JobsTestCase):

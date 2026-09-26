@@ -40,26 +40,23 @@ def classes(chromosome):
 class AlternativesTests(unittest.TestCase):
     """What a symbol may legally become."""
 
-    def test_the_root_is_never_touched(self):
-        self.assertEqual(mutation.alternatives("CAT", 0), ())
-
     def test_a_binary_op_becomes_another_binary_op(self):
-        self.assertEqual(set(mutation.alternatives("CAT", 3)), {"SVD", "LIN"})
+        self.assertEqual(set(mutation.alternatives("CAT")), {"SVD", "LIN"})
 
     def test_a_unary_op_becomes_another_unary_op(self):
-        self.assertEqual(set(mutation.alternatives("L2", 1)),
+        self.assertEqual(set(mutation.alternatives("L2")),
                          set(gp.UNARY_OPS) - {"L2"})
 
     def test_a_variable_becomes_another_variable(self):
-        self.assertEqual(set(mutation.alternatives("w4", 7)),
+        self.assertEqual(set(mutation.alternatives("w4")),
                          set(gp.VARIABLES) - {"w4"})
 
     def test_a_sweep_of_five_slots_only_swaps_among_its_five(self):
-        self.assertEqual(set(mutation.alternatives("L2", 1, 5)),
+        self.assertEqual(set(mutation.alternatives("L2", 5)),
                          {"L1", "L3", "L4", "L5"})
-        self.assertEqual(set(mutation.alternatives("w4", 7, 5)),
+        self.assertEqual(set(mutation.alternatives("w4", 5)),
                          {"w1", "w2", "w3", "w5"})
-        self.assertEqual(set(mutation.alternatives("CAT", 3, 5)), {"SVD", "LIN"})
+        self.assertEqual(set(mutation.alternatives("CAT", 5)), {"SVD", "LIN"})
 
     def test_a_mutant_never_names_a_slot_the_sweep_lacks(self):
         generator = rng(48)
@@ -70,16 +67,16 @@ class AlternativesTests(unittest.TestCase):
 
     def test_a_symbol_is_never_its_own_alternative(self):
         for symbol in gp.BINARY_OPS + gp.UNARY_OPS + gp.VARIABLES:
-            self.assertNotIn(symbol, mutation.alternatives(symbol, 1))
+            self.assertNotIn(symbol, mutation.alternatives(symbol))
 
     def test_the_alternatives_are_the_rest_of_the_class(self):
         for family in (gp.BINARY_OPS, gp.UNARY_OPS, gp.VARIABLES):
             for symbol in family:
-                self.assertEqual(set(mutation.alternatives(symbol, 1)),
+                self.assertEqual(set(mutation.alternatives(symbol)),
                                  set(family) - {symbol})
 
     def test_a_symbol_outside_the_alphabet_has_none(self):
-        self.assertEqual(mutation.alternatives("L11", 1), ())
+        self.assertEqual(mutation.alternatives("L11"), ())
 
 
 class MutateTests(unittest.TestCase):
@@ -90,23 +87,24 @@ class MutateTests(unittest.TestCase):
             self.assertEqual(mutation.mutate(chromosome, NEVER, rng(41)),
                              chromosome)
 
-    def test_rate_one_changes_every_symbol_but_the_root(self):
+    def test_rate_one_changes_every_symbol_the_root_included(self):
         for chromosome in VALID:
             mutated = mutation.mutate(chromosome, ALWAYS, rng(42))
             before, after = chromosome.split("."), mutated.split(".")
-            self.assertEqual(after[0], "CAT")
             for position, (one, other) in enumerate(zip(before, after)):
-                if position == 0:
-                    self.assertEqual(one, other)
-                else:
-                    self.assertNotEqual(one, other,
-                                        "position %d did not move" % position)
+                self.assertNotEqual(one, other,
+                                    "position %d did not move" % position)
 
-    def test_the_root_survives_any_rate(self):
+    def test_the_root_only_moves_within_its_class(self):
         generator = rng(43)
         for _ in range(200):
             mutated = mutation.mutate(generator.choice(VALID), ALWAYS, generator)
-            self.assertTrue(mutated.startswith("CAT."))
+            self.assertIn(mutated.split(".")[0], gp.BINARY_OPS)
+        for _ in range(50):
+            mutated = mutation.mutate("L3.w2", ALWAYS, generator, 5)
+            root, weight = mutated.split(".")
+            self.assertIn(root, {"L1", "L2", "L4", "L5"})
+            self.assertIn(weight, {"w1", "w3", "w4", "w5"})
 
     def test_the_result_always_decodes(self):
         # The guarantee, not a hope: mutate() runs check() itself, so this
@@ -230,7 +228,8 @@ class ApplyTests(SweepTestCase):
             self.assertEqual(held[change.number], change.after)
             self.assertEqual(change.symbols,
                              mutation.differences(change.before, change.after))
-            self.assertEqual(change.symbols, len(change.before.split(".")) - 1)
+            # Every symbol, the root included: it moves within its class too.
+            self.assertEqual(change.symbols, len(change.before.split(".")))
 
     def test_the_rows_returned_are_the_population_before_the_round(self):
         _changes, rows = mutation.apply(self.conn, self.run, ALWAYS, rng(58))

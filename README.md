@@ -39,7 +39,11 @@ No brackets are needed, because every symbol's arity is fixed.
 | `L1`–`L10` | 1 | a variable | one LoRA adapter |
 | `w1`–`w10` | 0 | — | a blend weight |
 
-The first symbol is always `CAT`.
+The first symbol is the root, and may be any operator: `CAT`, `SVD`, `LIN`,
+or an `L*` on its own — `L3.w2` is one adapter and nothing folded into it.
+Only a variable cannot start a chromosome. A lone adapter runs at full
+strength: weights are applied by the fold above a leaf, and it has none, so its
+`w` is carried by the grammar but not used.
 
 The alphabet is a ceiling (`MAX_SLOTS = 10` in `generate_population.py`). A
 sweep draws from as many slots as its own `LORA_SLOTS` names -- `L1`..`Ln`, one
@@ -49,7 +53,8 @@ ceiling was raised, and adding `"L6": ...` .. `"L10": ...` to `LORA_SLOTS`
 widens the search. `start_run.freeze()` refuses slots that are not `L1..Ln`.
 
 Because `L*` only accepts variables and `CAT`/`SVD`/`LIN` only accept operators,
-every leaf `w` sits under an `L`, and every `L` sits under a binary operator.
+every leaf `w` sits under an `L`, and every `L` sits under a binary operator
+or is the root.
 
 ### How it maps onto PEFT
 
@@ -362,6 +367,7 @@ row per chromosome.
 | `SEED` | 42 | RNG seed; `None` draws one and records it |
 | `MAX_DEPTH` | 4 | deepest level an *operator* may sit at (root is level 0) |
 | `BRANCH_PROB` | 0.6 | chance an operator is arity 2 and keeps the branch growing |
+| `ROOT_LEAF_PROB` | 0.1 | chance the whole tree is one adapter alone; otherwise the root is `CAT`, `SVD` or `LIN`, uniformly |
 | `UNIQUE` | on | reject duplicate expressions |
 
 Size varies per individual: a max operator depth is drawn from `1..MAX_DEPTH`,
@@ -1105,6 +1111,10 @@ score a different quantity from the answers around it. Its rubric is
 [`evaluators/llm_judge_answers.py`](evaluators/llm_judge_answers.py), and it
 opens by telling the judge the question is withheld deliberately, because a
 judge that has not been told looks for it and complains instead of grading.
+Like `llm_judge_reference`'s, it does not reward copying the reference: a blend
+that reproduced it word for word would have learned that one answer and nothing
+else. That line arrived after the evaluator did, so a sweep graded by it before
+then is not strictly comparable with one graded after.
 
 #### `llm_judge_baseline` — grading the improvement on the base model
 
@@ -1725,15 +1735,18 @@ does not write.
 
 #### Only valid changes
 
-A symbol may only be replaced by one of its own kind, and the root is never
-touched at all:
+A symbol may only be replaced by one of its own kind, wherever it stands —
+the root included:
 
 | Class | Swaps with | Why it stays valid |
 |---|---|---|
 | `CAT` `SVD` `LIN` | each other | arity 2, children still operators |
 | `L1`–`Ln` | each other | arity 1, child still a variable |
 | `w1`–`wn` | each other | arity 0 |
-| the root | nothing | the grammar fixes it at `CAT` |
+
+So a fold at the root stays a fold (`CAT` may become `SVD`) and a lone adapter
+stays a lone adapter (`L3.w2` may become `L1.w2`); neither becomes the other,
+since that would change the tree's shape rather than a symbol of it.
 
 That restriction is the whole trick. A symbol's arity, and the alphabet its
 children are drawn from, are properties of its **class** rather than of the
@@ -2273,7 +2286,7 @@ Bad input is reported rather than half-processed:
 | Input | Result |
 |---|---|
 | `CAT.w1.L2.w5` | `not a valid chromosome: w1 is not a legal child of CAT` |
-| `SVD.L1.L2.w1.w2` | `not a valid chromosome: expression must start with CAT` |
+| `w1.L1.w2` | `not a valid chromosome: expression must start with an operator (CAT/SVD/LIN or an L*), not w1` |
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
@@ -3458,7 +3471,9 @@ model chip and chat on the left -- and on the right:
   click a place in the tree and then a piece.
 - **Your blend**, the tree, drawn the way the report page draws a chromosome
   (`generate_html_db_stats.tree_svg`): each LoRA at its weight, folded in pairs up
-  to a CAT at the top. Every node shows the rank PEFT gives it; a node PEFT cannot
+  to one fold at the top -- CAT, SVD or LIN -- or a single LoRA on its own, used at
+  full strength since only a fold applies weights. A new drawing starts as an empty
+  CAT; select the top to change its fold or **Remove** it. Every node shows the rank PEFT gives it; a node PEFT cannot
   build -- a LIN over two ranks -- is red, with the reason under the tree. Click a
   node to change its fold, weight or sides, **Delete** empties a place, **Ctrl+Z**
   undoes. Under it, the chromosome a search would hold the drawing as, and the
