@@ -49,18 +49,20 @@ adapters/     create_lora, create_all_loras, test_lora -- the five LoRAs
 tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
 async_api/    server, worker, submit, registry, results, golive, inference,
-              users, verify, evaluate, testpass, train -- the search as a web
-              service. See "The async API" below. Four pages, each served
+              users, verify, evaluate, testpass, train, drawn -- the search as a web
+              service. See "The async API" below. Five pages, each served
               at its own file name: guide.html (the LoRA guide, where / lands;
-              ?job=N opens a search), runs.html (the user's runs, from
-              GET /runs), settings.html (appearance and the user's defaults
-              for the guide) and console.html (every endpoint by hand).
-              nav.js is the top bar all four draw.
+              ?job=N opens a search), visual_guide.html (a blend drawn by
+              hand as a tree and tested; ?job=N opens a drawn one), runs.html
+              (the user's runs, from GET /runs), settings.html (appearance and
+              the user's defaults for the guide) and console.html (every
+              endpoint by hand). nav.js is the top bar all five draw.
 async_api_agent/  settings, prompts, providers, analysis, selection, planner, blending,
-              release, tools, commands, agent, ui_help, create_summary, routes -- the chat model behind
+              release, tools, commands, agent, ui_help, create_summary, visual, routes -- the chat model behind
               /guide.html that walks a user to trained LoRAs, a search that blends
               them, and then testing, verifying and putting a blend live, and
-              acts on what they ask in the chat
+              acts on what they ask in the chat; visual.py is the same for
+              /visual_guide.html, acting on the drawing
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -1056,7 +1058,7 @@ change to it. These rules hold it together:
   `<header class="topbar" id="nav" data-page="...">` -- with its own buttons inside,
   which the bar moves to its right -- followed by `<script src="/nav.js">`, loaded
   there and not deferred so `#health` and `#changeKey` exist before the page's script
-  runs. The four links, their order (Guide, Runs, Settings, Console) and the key's
+  runs. The five links, their order (Guide, Visual guide, Runs, Settings, Console) and the key's
   storage name are `nav.js`'s alone; a new page is an entry in its `PAGES` and in
   `server.PAGES`, and a test checks each page asks for the bar. A page's address ends
   in `.html` because `/runs` and `/settings` are already JSON endpoints. The old
@@ -1064,8 +1066,8 @@ change to it. These rules hold it together:
   its own key gate when `#changeKey` is clicked -- what a missing key blocks is the
   page's business.
 
-- **Every page is static and private by the key.** `/guide.html`, `/runs.html`,
-  `/settings.html` and `/console.html` are served to anyone; what they show comes from endpoints that read by
+- **Every page is static and private by the key.** `/guide.html`, `/visual_guide.html`,
+  `/runs.html`, `/settings.html` and `/console.html` are served to anyone; what they show comes from endpoints that read by
   the caller's user id (`GET /runs`, `GET /jobs/{id}` -- another's is a 404),
   and a slot's LoRA is named only from the caller's own catalogue rows
   (`Catalog.slot_names`). The guide's saved conversation is per key
@@ -1190,6 +1192,28 @@ change to it. These rules hold it together:
   fact handed to a model carries a token. `commands.py` is the no-model path to
   the same calls; keep it narrow -- an unrecognised request must produce no call,
   not a guess.
+
+- **A drawn blend is a sweep of one and a verification, never a second
+  pipeline** (`async_api/drawn.py`, the page `/visual_guide.html`). The page's
+  tree (`{"op", "children"}` / `{"lora": id, "weight": "wN"}`, `null` for an empty
+  place, root always CAT) becomes a chromosome and `LORA_SLOTS` through
+  `drawn.encode()` -- slots in level order, one per LoRA -- and is judged by
+  `generate_population.check()` and `generate_runs.plan()` (`POST /blends/check`).
+  Its weights are the draw `step_runs` makes for individual `drawn.NUMBER` under
+  the drawing's `WEIGHT_MASTER_SEED`, so a change to how weight seeds are derived
+  belongs in `drawn.weight_seed()` too. `POST /blends/test` writes the sweep with
+  `submit.prepare()` (the questions as its training split, `COUNT` 1), puts the
+  individual in with start_run's own `step_trees`/`step_runs`, settles the job
+  `done` with task `registry.BLEND` -- never queued, and refused by resume,
+  evaluate and test (`registry.requeue`, `server.refuse_drawn`) -- and queues a
+  verification of it on split `training`. `GET /blends/{job}` reads one back for
+  `?job=N`. The chat is `async_api_agent/visual.py`: its own `SPECS`, with
+  `prompts.VISUAL_TOOLS`/`VISUAL_TOOL_DONE` (a test checks all three agree),
+  `VISUAL_PERSONA` and `VISUAL_STEPS` (`prompts.system()` picks them), tools that
+  edit the session's drawing, and `start_test` as an action the page carries out;
+  `/agent/visual/plan` returns the POST /blends/test body, which the page sends.
+  Its question-mark blocks are `UI_BLOCKS` keys starting `visual_`, explained under
+  the visual persona.
 
 Its knobs live in `async_api/settings.py`, deliberately outside `config/settings.py`,
 whose `snapshot()` would store them in every sweep.

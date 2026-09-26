@@ -54,6 +54,17 @@ App and the user, like an App method, and returns (status, payload).
                                                                  what was saved, whole
     DELETE /agent/defaults          back to the server's, all of them
 
+  the visual guide: a blend drawn by hand (visual.py; the page is /visual_guide.html)
+    GET  /agent/visual/config       the user's ready LoRAs, the folds, the page's words
+    POST /agent/visual/intro        {agent, session}          -> the welcome
+    POST /agent/visual/chat         {agent, message, stage, session, context, history}
+                                                              -> the reply, the drawing the
+                                                                 tools changed, its check
+    POST /agent/visual/plan         {session}                 -> the POST /blends/test body,
+                                                                 read back
+    POST /agent/visual/debrief      {agent, verification: id, history}
+                                                              -> how the test went
+
   the journey so far (create_summary.py)
     POST /agent/summary             {agent, stage, mock, dataset?: the page's analysis,
                                      loras?: [id], job?, verification?, deployment?,
@@ -91,6 +102,7 @@ plan, a search and the config the page starts from are all theirs.
 import functools
 import os
 
+from async_api import drawn
 from async_api import settings as api_settings
 from async_api_agent import agent
 from async_api_agent import analysis
@@ -103,6 +115,8 @@ from async_api_agent import providers
 from async_api_agent import release
 from async_api_agent import settings
 from async_api_agent import ui_help
+from async_api_agent import visual
+from search.generate_population import VARIABLES
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -535,6 +549,59 @@ def summary(app, user, body):
                                       _choice(body))
 
 
+# --- the visual guide (visual.py; the page is /visual_guide.html) -----------------
+
+
+def _visual_session(body):
+    try:
+        return visual.session_of((body or {}).get("session"))
+    except visual.VisualError as error:
+        raise AgentError(400, "session: %s" % error)
+
+
+def visual_config(app, user):
+    """What the visual guide's page draws from: the pieces, the page's words."""
+    return 200, {"loras": [blending.describe(row) for row in blending.mine(app.catalog, user)],
+                 "folds": drawn.FOLDS, "weights": list(VARIABLES),
+                 "max_leaves": drawn.MAX_LEAVES, "max_questions": drawn.MAX_QUESTIONS,
+                 "default_count": visual.DEFAULT_COUNT, "datasets": demo_datasets(),
+                 "words": dict(prompts.VISUAL_WORDS,
+                               instructions={stage: prompts.STEP_INSTRUCTIONS["visual_" + stage]
+                                             for stage in visual.STAGES})}
+
+
+def visual_intro(app, user, body):
+    return 200, visual.intro(app.catalog, user, _visual_session(body), _choice(body))
+
+
+def visual_chat(app, user, body):
+    message = (body or {}).get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise AgentError(400, "message must be what you want to ask")
+    context = (body or {}).get("context")
+    return 200, visual.chat(app.catalog, user, message.strip()[:4000],
+                            str((body or {}).get("stage") or ""), _visual_session(body),
+                            context if isinstance(context, dict) else None,
+                            _choice(body), _history(body), demo_datasets)
+
+
+def visual_plan(app, user, body):
+    """The POST /blends/test body for the session's drawing, read back."""
+    try:
+        return 200, visual.plan(app.catalog, user, _visual_session(body))
+    except visual.VisualError as error:
+        raise AgentError(400, str(error))
+
+
+def visual_debrief(app, user, body):
+    verification_id = _id(body, "verification")
+    row = app.registry.verification(verification_id, user["id"])
+    if row is None:
+        raise AgentError(404, "no verification %d" % verification_id)
+    return 200, visual.debrief(app.registry, app.catalog, user, row, _choice(body),
+                               _history(body))
+
+
 # (method, path pattern, handler, extras) -- the shape of server.ROUTES, with
 # a function where the server's own routes name an App method.
 ROUTES = [
@@ -562,5 +629,10 @@ ROUTES = [
     ("POST", r"/agent/verify/debrief", verify_debrief, ("body",)),
     ("POST", r"/agent/live/started", live_started, ("body",)),
     ("POST", r"/agent/summary", summary, ("body",)),
+    ("GET", r"/agent/visual/config", visual_config, ()),
+    ("POST", r"/agent/visual/intro", visual_intro, ("body",)),
+    ("POST", r"/agent/visual/chat", visual_chat, ("body",)),
+    ("POST", r"/agent/visual/plan", visual_plan, ("body",)),
+    ("POST", r"/agent/visual/debrief", visual_debrief, ("body",)),
 ]
 ROUTES = [(method, pattern, _theirs(handler), extras) for method, pattern, handler, extras in ROUTES]

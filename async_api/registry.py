@@ -72,6 +72,11 @@ RESUMABLE = (STOPPED, CANCELLED, FAILED)
 # split (see testpass.py). See worker.command().
 SEARCH, RESUME, EVALUATE, TEST = "search", "resume", "evaluate", "test"
 TASKS = (SEARCH, RESUME, EVALUATE, TEST)
+# A blend drawn by hand on the visual guide (drawn.py): a sweep of one
+# individual that no search produced. It is never queued -- it is `done` the
+# moment its database is whole -- and never requeued, since there is no search
+# to resume, evaluate or test; what is asked of it is a verification.
+BLEND = "blend"
 # Which statuses each requeued task may be asked of: resuming a finished
 # search has nothing left to do, evaluating asks only for answers, which a
 # finished search has and a stopped one may, and testing asks for the blends
@@ -354,6 +359,17 @@ class Registry:
                          (run_id, job_id))
         return self.job(job_id)
 
+    def settle_drawn(self, job_id, run_id):
+        """Finish a reserved job as a drawn blend: done, with nothing to run.
+        The row was `preparing` until its database was whole, as a submitted
+        job's is, so the worker never saw it."""
+        stamp = now()
+        with self._connect() as conn:
+            conn.execute("UPDATE jobs SET status = 'done', task = ?, run_id = ?,"
+                         " started_at = ?, finished_at = ?, exit_code = 0 WHERE id = ?",
+                         (BLEND, run_id, stamp, stamp, job_id))
+        return self.job(job_id)
+
     def discard(self, job_id):
         """Drop a job row that never made it into the queue."""
         with self._connect() as conn:
@@ -465,8 +481,9 @@ class Registry:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
-                if row is None or row["status"] not in allowed:
+                row = conn.execute("SELECT status, task FROM jobs WHERE id = ?",
+                                   (job_id,)).fetchone()
+                if row is None or row["status"] not in allowed or row["task"] == BLEND:
                     conn.execute("COMMIT")
                     return None
                 conn.execute(

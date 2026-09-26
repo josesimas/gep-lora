@@ -40,6 +40,8 @@ class SlotTests(JobsTestCase):
                          ["L2", "L3", "L4"])
         # The same slot twice at two weights is still one contestant.
         self.assertEqual(verify.blend_slots("CAT.L3.L3.w1.w2"), ["L3"])
+        # LIN starts with an L too, and is a fold, not a slot.
+        self.assertEqual(verify.blend_slots("CAT.L1.LIN.w1.L2.L1.w2.w3"), ["L1", "L2"])
 
     def test_a_chromosome_that_does_not_decode_is_refused(self):
         with self.assertRaises(verify.VerifyError):

@@ -42,7 +42,7 @@ import re
 
 import evaluators
 from blends import generate_runs
-from search.generate_population import VARIABLES, decode, slot_key
+from search.generate_population import UNARY_OPS, VARIABLES, decode, slot_key
 from storage import store
 from testing import evaluate_chromosome_against_loras as compare
 
@@ -67,7 +67,7 @@ def blend_slots(chromosome):
         node = frontier.pop()
         if node.symbol not in VARIABLES and node.children:
             frontier.extend(node.children)
-        if node.symbol.startswith("L"):
+        if node.symbol in UNARY_OPS:              # L1..L10, never LIN
             found.add(node.symbol)
     return sorted(found, key=slot_key)
 
