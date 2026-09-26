@@ -2853,7 +2853,7 @@ are refused with a 400 before anything is queued.
 | `DELETE /jobs/{id}/run` | delete what the run produced, keep the job listed as `deleted` |
 | `DELETE /jobs/{id}` | delete the job and its folder |
 | `GET /jobs/{id}/verify` | what a verification may ask for (the blends, their slots, the splits, the evaluators) and the job's verifications so far |
-| `POST /jobs/{id}/verify` | queue one: `{"individual": n?, "slots": "blend"\|"all"\|[...], "split"?, "dataset"?, "count"?, "evaluator"?, "judge_model"?, "judge_backend"?, "judge_base_url"?}` -- `dataset` is `{"file": a shared dataset}` or `{"lora": id}`, that LoRA's training data, instead of a split |
+| `POST /jobs/{id}/verify` | queue one: `{"individual": n?, "slots": "blend"\|"all"\|[...], "split"?, "dataset"?, "count"?, "evaluator"?, "judge_model"?, "judge_backend"?, "judge_base_url"?}` -- `dataset` is `{"file": a shared dataset}` or `{"lora": id}`, that LoRA's training data, or `{"text", "name"?}`, an uploaded file, instead of a split |
 | `GET /verifications/{id}` | one verification: its status, and its report once it has one |
 | `GET /verifications/{id}/log` | the tail of that verification's own console output |
 | `POST /jobs/{id}/live` | `{"individual": n?, "target": "local"?}` -> a token (shown once) |
@@ -2939,7 +2939,11 @@ no adapter for, a `BAD` individual.
 **The questions may come from elsewhere.** Instead of a split, `dataset` names
 another file: `{"file": name}`, one of the shared datasets, or
 `{"lora": id}`, the data one of the user's *own* LoRAs was trained on (another
-user's is refused as a missing one is). The server resolves it to a path and
+user's is refused as a missing one is), or `{"text": ..., "name": ...}`, a file
+the page read and sent -- JSON Lines, a JSON array (turned into JSON Lines) or
+one prompt per line -- stored by `verify.upload()` in the job's own
+`verify_datasets/` folder, so deleting the run takes it. The console's
+*Questions from* box offers all four. The server resolves it to a path and
 the script asks it with `--dataset`; the verification's options say which by
 `dataset_label`, never by where the file sits on the server. The evaluator is
 passed only when the request names one: left out, the script grades by the

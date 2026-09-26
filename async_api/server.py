@@ -539,6 +539,13 @@ class App:
         # Another dataset a verification may ask instead of a split: a shared
         # file by name, or {"lora": id} for one of the user's own LoRAs' data.
         out["datasets"] = self.list_datasets(user)[1]["datasets"]
+        out["loras"] = []
+        for row in self.catalog.all(owner=user["name"]):
+            training = training_of(self.registry, row)
+            if training is not None and training["user_id"] != user["id"]:
+                training = None
+            if train.dataset_path(row, training, self.registry) is not None:
+                out["loras"].append({"id": row["id"], "name": row["name"]})
         out["can_verify"] = job["status"] == reg.DONE
         return 200, out
 
@@ -551,7 +558,7 @@ class App:
         offered = self._offered(job)
         try:
             number, options = verify.options_for(
-                body, offered, functools.partial(self.verify_dataset, user))
+                body, offered, functools.partial(self.verify_dataset, user, job))
         except verify.VerifyError as error:
             raise ApiError(400, str(error))
         chromosome = next(one["chromosome"] for one in offered["individuals"]
@@ -560,11 +567,16 @@ class App:
         return 201, {"verification": verification_json(row),
                      "note": "queued; the worker runs it after any queued job"}
 
-    def verify_dataset(self, user, value):
+    def verify_dataset(self, user, job, value):
         """A verification's `dataset`, as (path, label): {"file": name}, a file
-        under SHARED_DATASETS_DIR, or {"lora": id}, the data one of the user's
+        under SHARED_DATASETS_DIR, {"lora": id}, the data one of the user's
         own LoRAs was trained on -- another user's is refused as a missing one
-        is. Raises verify.VerifyError."""
+        is -- or {"text": ..., "name": ...}, a file the page read and sent,
+        written into the job's folder so deleting the run takes it too. Raises
+        verify.VerifyError."""
+        if isinstance(value, dict) and "text" in value and set(value) <= {"text", "name"}:
+            return verify.upload(self.registry.folder(job), value.get("text"),
+                                 value.get("name"))
         if isinstance(value, dict) and set(value) == {"file"}:
             path = submit.shared_path(value["file"])
             if path is None:
@@ -573,7 +585,8 @@ class App:
         lora_id = (value.get("lora") if isinstance(value, dict) and set(value) == {"lora"}
                    else None)
         if not isinstance(lora_id, int) or isinstance(lora_id, bool):
-            raise verify.VerifyError('dataset must be {"file": name} or {"lora": id}')
+            raise verify.VerifyError('dataset must be {"file": name}, {"lora": id} '
+                                     'or {"text": ..., "name": ...}')
         row = self.catalog.get(lora_id)
         if row is None or row["owner"] != user["name"]:
             raise verify.VerifyError("no LoRA %d of yours" % lora_id)

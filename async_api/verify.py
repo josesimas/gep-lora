@@ -23,14 +23,22 @@ every slot anyway, which is the other question worth asking.
 **The questions are the sweep's own by default** -- one of the splits it
 holds, testing first, since the blend was selected on training -- or another
 dataset (`dataset`): a shared file, or the data one of the user's own LoRAs was
-trained on. The server resolves which file that is (it knows whose LoRA is
-whose); this module only takes the path it is handed and passes it to the
-script's --dataset, which asks those questions instead of a split.
+trained on, or a file the page uploaded (`upload`). The server resolves which
+file that is (it knows whose LoRA is whose); this module only takes the path it
+is handed and passes it to the script's --dataset, which asks those questions
+instead of a split.
 """
 
+# Where uploaded question files go, inside the job's folder: a reading of the
+# sweep made on them is worth nothing without the sweep, so they go with it.
+UPLOADS = "verify_datasets"
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
 import glob
+import hashlib
 import json
 import os
+import re
 
 import evaluators
 from blends import generate_runs
@@ -107,6 +115,75 @@ def choices(db_path, run_id):
         }
     finally:
         conn.close()
+
+
+def _upload_lines(text):
+    """An uploaded file's text as dataset lines: JSON Lines, plain prompts one
+    per line, or a whole-file JSON array, which is turned into JSON Lines here
+    because the scripts read a line at a time. -> [str]."""
+    stripped = text.strip()
+    if stripped.startswith("["):
+        try:
+            records = json.loads(stripped)
+        except ValueError:
+            records = None
+        if isinstance(records, list):
+            lines = []
+            for number, record in enumerate(records, 1):
+                if isinstance(record, dict):
+                    lines.append(json.dumps(record, ensure_ascii=False))
+                elif isinstance(record, str) and record.strip() and "\n" not in record:
+                    lines.append(record.strip())
+                else:
+                    raise VerifyError("record %d: a record is an object (with a "
+                                      "'messages' list) or a one-line prompt" % number)
+            return lines
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    for number, line in enumerate(lines, 1):
+        if not line.startswith("{"):
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            raise VerifyError("line %d starts like JSON but is not valid JSON" % number)
+        messages = record.get("messages") if isinstance(record, dict) else None
+        if not isinstance(messages, list) or not any(
+                isinstance(turn, dict) and turn.get("role") == "user" for turn in messages):
+            raise VerifyError("line %d: a JSON record needs a 'messages' list with a "
+                              "user turn -- that turn is the question" % number)
+    return lines
+
+
+def upload(job_folder, text, name=None):
+    """Store a question file the page sent, for a verification. -> (path, label).
+
+    Written into the job's own folder under a name made from its content, so
+    the same file uploaded twice is one file, and deleting the run takes it.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise VerifyError("the uploaded dataset is empty")
+    if len(text.encode("utf-8")) > MAX_UPLOAD_BYTES:
+        raise VerifyError("the uploaded dataset is over %d MB"
+                          % (MAX_UPLOAD_BYTES // (1024 * 1024)))
+    if name is not None and not isinstance(name, str):
+        raise VerifyError("the uploaded dataset's name must be a string")
+    lines = _upload_lines(text)
+    if not lines:
+        raise VerifyError("the uploaded dataset has no questions in it")
+    body = "\n".join(lines) + "\n"
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", os.path.splitext(
+        os.path.basename(name or ""))[0]).strip("._")[:60] or "uploaded"
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+    ext = ".jsonl" if lines[0].startswith("{") else ".txt"
+    folder = os.path.join(job_folder, UPLOADS)
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "%s_%s%s" % (stem, digest, ext))
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(body)
+    label = "%s (uploaded, %d questions)" % (os.path.basename(name) if name else "a file",
+                                             len(lines))
+    return path, label
 
 
 def _positive(body, name):

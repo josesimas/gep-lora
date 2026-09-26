@@ -1081,7 +1081,8 @@ change to it. These rules hold it together:
   default (`testpass.ALL`), since the pass exists so a person can choose one; it
   only runs on a `done` job, and `worker.settle()` ends it where the search is,
   as an evaluation (`worker.SETTLED`). A verification may ask another dataset
-  than a split (`dataset`: `{"file"}` or `{"lora": id}`, resolved by
+  than a split (`dataset`: `{"file"}`, `{"lora": id}` or an uploaded
+  `{"text", "name"}` written into the job folder by `verify.upload()`, resolved by
   `server.App.verify_dataset`, the user's own LoRAs only), and passes
   `--evaluator` only when asked for one, so a mocked sweep is scored with its
   printed numbers instead of a judge.

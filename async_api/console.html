@@ -574,6 +574,10 @@
                 <option value="all">every LoRA slot</option>
               </select></div>
             <div><label for="vSplit">Questions from</label><select id="vSplit"></select></div>
+            <div id="vFileBox" class="span2" hidden><label for="vFile">Question file</label>
+              <input id="vFile" type="file" accept=".json,.jsonl,.txt">
+              <div class="help">JSON Lines (a <code>messages</code> list per line), a JSON array of
+                those, or one plain prompt per line. It is stored in this job's folder.</div></div>
             <div><label for="vCount">How many</label>
               <input id="vCount" type="number" min="1" placeholder="blank = all of them"></div>
             <div><label for="vEvaluator">Evaluator</label><select id="vEvaluator"></select></div>
@@ -1873,8 +1877,21 @@ async function loadVerifyForm() {
     if (best) $("vBlend").value = best.number;
   }
   if (!$("vSplit").options.length) {
-    $("vSplit").replaceChildren(...verifyForm.splits.map((name) => el("option", { value: name }, name)));
-    $("vSplit").value = verifyForm.defaults.split || verifyForm.splits[0] || "";
+    // One box for every source of questions, told apart by a prefix: a split
+    // of this sweep, a shared file, a LoRA's training data, or a file of your own.
+    const groups = [
+      el("optgroup", { label: "This job's dataset" },
+        ...verifyForm.splits.map((name) => el("option", { value: `split:${name}` }, `${name} split`))),
+    ];
+    if ((verifyForm.datasets || []).length) groups.push(el("optgroup", { label: "Shared datasets" },
+      ...verifyForm.datasets.map((name) => el("option", { value: `file:${name}` }, name))));
+    if ((verifyForm.loras || []).length) groups.push(el("optgroup", { label: "A LoRA's training data" },
+      ...verifyForm.loras.map((one) => el("option", { value: `lora:${one.id}` }, one.name))));
+    groups.push(el("optgroup", { label: "Another file" },
+      el("option", { value: "upload" }, "Upload a file…")));
+    $("vSplit").replaceChildren(...groups);
+    const split = verifyForm.defaults.split || verifyForm.splits[0];
+    $("vSplit").value = split ? `split:${split}` : "upload";
     $("vEvaluator").replaceChildren(...verifyForm.evaluators.map((one) =>
       el("option", { value: one.value, title: one.description || "" }, one.value)));
     $("vEvaluator").value = verifyForm.defaults.evaluator || "";
@@ -1897,6 +1914,7 @@ function refreshVerifyForm() {
   const judged = !chosen || chosen.needs_judge;
   for (const id of ["vBackendBox", "vModelBox", "vUrlBox"]) $(id).hidden = !judged;
   $("vUrlBox").hidden = !judged || $("vBackend").value !== "endpoint";
+  $("vFileBox").hidden = $("vSplit").value !== "upload";
   const blend = (verifyForm.individuals || []).find(
     (one) => String(one.number) === $("vBlend").value);
   const slots = $("vSlots").value === "all" ? verifyForm.slots : (blend ? blend.slots : []);
@@ -1906,11 +1924,34 @@ function refreshVerifyForm() {
     : "This chromosome names no adapter.";
 }
 
+// The questions box as the request's `split` or `dataset` -- never both.
+async function verifyQuestions() {
+  const value = $("vSplit").value || "";
+  const [kind, ...rest] = value.split(":");
+  const name = rest.join(":");
+  if (kind === "split") return { split: name || null };
+  if (kind === "file") return { dataset: { file: name } };
+  if (kind === "lora") return { dataset: { lora: Number(name) } };
+  if (value === "upload") {
+    const file = $("vFile").files[0];
+    if (!file) throw new Error("Choose a question file to upload.");
+    return { dataset: { text: await file.text(), name: file.name } };
+  }
+  return { split: null };
+}
+
 async function startVerification() {
+  let questions;
+  try {
+    questions = await verifyQuestions();
+  } catch (error) {
+    say("verifyMsg", error.message, "err");
+    return;
+  }
   const body = {
     individual: Number($("vBlend").value),
     slots: $("vSlots").value,
-    split: $("vSplit").value || null,
+    ...questions,
     count: $("vCount").value ? Number($("vCount").value) : null,
     evaluator: $("vEvaluator").value || null,
     judge_backend: $("vBackend").value || null,
@@ -1945,7 +1986,9 @@ function drawVerifications() {
                       onclick: () => showVerification(row.id) },
       el("td", {}, row.id),
       el("td", {}, el("span", { class: "muted" }, `#${row.number} `), chromo(row.chromosome)),
-      el("td", {}, (options.slots || []).join(", ")),
+      el("td", {}, (options.slots || []).join(", "),
+        el("div", { class: "muted" }, "questions: " + (options.dataset_label
+          || (options.split ? `${options.split} split` : "–")))),
       el("td", {}, options.evaluator || "–", options.judge_model ? el("div", { class: "muted" }, options.judge_model) : null),
       el("td", {}, pill(row.status), row.error ? el("div", { class: "muted" }, row.error) : null),
       el("td", { id: "vbest" + row.id }, ""),
@@ -3003,7 +3046,7 @@ $("aRefresh").addEventListener("click", drawDetail);
 $("aDownload").addEventListener("click", downloadDatabase);
 $("ask").addEventListener("click", ask);
 $("vRun").addEventListener("click", startVerification);
-for (const id of ["vBlend", "vSlots", "vEvaluator", "vBackend"]) {
+for (const id of ["vBlend", "vSlots", "vSplit", "vEvaluator", "vBackend"]) {
   $(id).addEventListener("change", refreshVerifyForm);
 }
 

@@ -1049,6 +1049,15 @@ class ReleaseEndpointTests(ServerTestCase):
         self.assertEqual(queued["verification"]["options"]["dataset_label"],
                          "%s's training data" % mine["name"])
         self.assertNotIn("dataset", queued["verification"]["options"])
+        # Or a file the page read: stored in the job's folder, the path never shown.
+        status, queued = self.call("POST", "/jobs/%d/verify" % job_id, {
+            "dataset": {"text": json.dumps(RECORDS), "name": "mine.json"}, "count": 2})
+        self.assertEqual(status, 201, queued)
+        self.assertIn("mine.json (uploaded", queued["verification"]["options"]["dataset_label"])
+        self.assertNotIn("dataset", queued["verification"]["options"])
+        for dataset in ({"text": "  "}, {"text": '{"no": "messages"}'}):
+            status, refused = self.call("POST", "/jobs/%d/verify" % job_id, {"dataset": dataset})
+            self.assertEqual(status, 400, (dataset, refused))
         self.registry.add_user("bob")
         bobs = lora(self.registry.catalog, "bobs", owner="bob")
         for dataset in ({"lora": bobs["id"]}, {"file": "../secrets.txt"}, {"url": "x"}):
