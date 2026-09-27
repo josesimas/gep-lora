@@ -24,6 +24,8 @@ The session:
      "seed":      n | None         the WEIGHT_MASTER_SEED the weights come from
      "number":    n                the individual they are drawn for: 1, or the
                                    number a blend opened from a search had there
+     "pin":       n | None         a weight seed kept instead: a blend saved by
+                                   hand (drawn.save) opened again
      "questions": {"file": name} | {"lora": id} | {"given": name} | None
                                    what the test asks; "given" is a dataset the
                                    page holds (pasted or uploaded) and sends
@@ -78,6 +80,7 @@ SPECS = {
     "swap_sides": ({"where": _PATH}, ["where"], True),
     "new_weights": ({"seed": dict(_INT, description="a seed of their choosing")}, [], True),
     "start_over": ({}, [], True),
+    "random_blend": ({}, [], True),
     "list_demo_datasets": ({}, [], False),
     "set_test_questions": ({"file": {"type": "string", "description": "a demo dataset"},
                             "lora": _LORA,
@@ -110,6 +113,7 @@ def session_of(raw):
         raise VisualError("the seed is a whole number, 0 or more")
     try:
         number = drawn.number_of(raw.get("number"))
+        pin = drawn.pin_of(raw.get("pin"))
     except drawn.DrawnError as error:
         raise VisualError(str(error))
     questions = raw.get("questions")
@@ -124,7 +128,8 @@ def session_of(raw):
     if isinstance(count, bool) or not isinstance(count, int) \
             or not 1 <= count <= drawn.MAX_QUESTIONS:
         raise VisualError("count is how many questions, from 1 to %d" % drawn.MAX_QUESTIONS)
-    return {"tree": copy.deepcopy(tree), "seed": seed, "number": number, "questions": questions,
+    return {"tree": copy.deepcopy(tree), "seed": seed, "number": number, "pin": pin,
+            "questions": questions,
             "count": count, "mock": bool(raw.get("mock"))}
 
 
@@ -192,7 +197,7 @@ def check_of(catalog, user, session):
     """drawn.check() for the session's drawing, or None when it cannot be read."""
     try:
         return drawn.check(catalog, user, session["tree"], session["seed"],
-                           session.get("number"))
+                           session.get("number"), session.get("pin"))
     except drawn.DrawnError:
         return None
 
@@ -393,12 +398,22 @@ class Toolbox:
 
     def _new_weights(self, seed=None):
         found = drawn.draw(seed, self.session.get("number"))
-        self.session["seed"] = found["seed"]
+        self.session["seed"], self.session["pin"] = found["seed"], None   # a new draw, unpinned
         return found
+
+    def _random_blend(self):
+        found = check_of(self.catalog, self.user, self.session)
+        drawn_one = drawn.random_drawing(self.catalog, self.user,
+                                         (found or {}).get("base_model"))
+        self.session.update(tree=drawn_one["tree"], seed=drawn_one["seed"],
+                            number=drawn.NUMBER, pin=None)
+        return {"formula": drawn_one["check"]["formula"] or drawn_one["check"]["chromosome"]
+                or "an unfinished blend", "state": drawn_one["check"]["state"]}
 
     def _start_over(self):
         self.session["tree"] = empty_tree()
         self.session["number"] = drawn.NUMBER       # no longer a searched blend's
+        self.session["pin"] = None
         return {}
 
     # --- the test ---
@@ -484,6 +499,8 @@ def _commands(message):
     text = " ".join(message.lower().split()).strip(" .!?")
     if text in ("start over", "clear", "clear it", "clear the drawing", "reset"):
         return [("start_over", {})]
+    if text in ("random", "random blend", "a random blend", "random tree", "surprise me"):
+        return [("random_blend", {})]
     if text in ("new weights", "reroll", "reroll the weights", "new seed"):
         return [("new_weights", {})]
     if text in ("test", "test it", "start the test", "test the blend", "run the test"):
@@ -581,6 +598,8 @@ def plan(catalog, user, session):
             "dataset": questions, "mock": mock}
     if found["number"] != drawn.NUMBER:
         body["number"] = found["number"]
+    if found["pin"] is not None:
+        body["pin"] = found["pin"]
     if wanted:
         body["settings"] = wanted
     against = sorted({one["name"] for one in found["slots"].values()})

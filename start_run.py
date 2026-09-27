@@ -235,9 +235,11 @@ def step_population(context):
           % (min(sizes), max(sizes), sum(sizes) / len(sizes)))
 
 
-def step_trees(context):
-    """Draw each chromosome -> individuals.tree."""
-    rows = store.individuals(context.conn, context.run_id)
+def step_trees(context, numbers=None):
+    """Draw each chromosome -> individuals.tree. `numbers` limits it to those
+    individuals (drawn.save, adding one to a stored sweep)."""
+    rows = [row for row in store.individuals(context.conn, context.run_id)
+            if numbers is None or row["number"] in numbers]
     if not rows:
         raise SystemExit("run %d holds no individuals. Run the population step first."
                          % context.run_id)
@@ -259,10 +261,15 @@ def step_trees(context):
         print("%d individual(s) could not be drawn -- see the !! markers" % bad)
 
 
-def step_runs(context):
-    """Fill the template per individual -> script_source, state, rank, weight seed."""
+def step_runs(context, numbers=None):
+    """Fill the template per individual -> script_source, state, rank, weight seed.
+
+    `numbers` limits it to those individuals and writes no files: what
+    drawn.save needs to add one individual to a stored sweep without
+    re-rendering -- or scattering the scripts of -- everybody else."""
     conn, run_id = context.conn, context.run_id
-    rows = store.individuals(conn, run_id)
+    rows = [row for row in store.individuals(conn, run_id)
+            if numbers is None or row["number"] in numbers]
     if not rows:
         raise SystemExit("run %d holds no individuals. Run the population step first."
                          % run_id)
@@ -295,8 +302,11 @@ def step_runs(context):
             generate_population.decode(row["chromosome"])[0], ranks)
         # Derived from the master seed and the individual's own number, so it is
         # the same seed however the population is walked, and re-generating a
-        # sweep from its stored settings reproduces the blends exactly.
-        weight_seed = random.Random("%s:%d" % (master, row["number"])).randrange(_SEED_LIMIT)
+        # sweep from its stored settings reproduces the blends exactly -- unless
+        # the individual carries a pin: a blend saved by hand, stored with the
+        # seed it was drawn under, which is kept (copies of it inherit the pin).
+        weight_seed = row["weight_pin"] if row["weight_pin"] is not None else \
+            random.Random("%s:%d" % (master, row["number"])).randrange(_SEED_LIMIT)
         name = "run_%03d.py" % row["number"]
         source = generate_runs.render(
             row["chromosome"], steps, final,
@@ -318,6 +328,8 @@ def step_runs(context):
                          steps[-1].rank, name, source, weight_seed)
     conn.commit()
 
+    if numbers is not None:
+        return
     written = store.materialise(conn, run_id, context.run_dir)
     context.count(len(rows), "scripts", skipped=len(rows) - runnable)
     print("stored %d scripts in run %d (from %s)"

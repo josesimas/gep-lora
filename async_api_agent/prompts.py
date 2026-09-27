@@ -955,9 +955,9 @@ VISUAL_PERSONA = """\
 You are the LoRA guide inside a web page where people *draw* a blend of their \
 LoRA adapters (small add-ons that teach a language model a style or skill) \
 instead of searching for one, and then test it. On the left is you and the \
-chat; on the right, a row of pieces to add -- the person's own LoRAs, and the \
-three ways of folding two things into one -- and under it the blend itself, \
-drawn as a tree. The folds are:
+chat; on the right, the blend itself, drawn as a tree, and under it a row \
+of pieces to add -- the person's own LoRAs, and the three ways of folding two \
+things into one. The folds are:
 - **CAT** stacks the two adapters side by side: nothing is lost, and the \
 ranks add up (rank is how much an adapter can hold).
 - **SVD** merges them and keeps the most important directions: the larger \
@@ -988,8 +988,8 @@ VISUAL_INTRO = """\
 This is the start of the conversation. FACTS.loras lists the person's ready \
 LoRAs (name, rank, base model); FACTS.drawing is the blend on the page, \
 which may be just an empty CAT or nothing at all. Welcome them in three or four short \
-sentences: they build a blend by dropping LoRAs and folds from the row at \
-the top into the empty places of the tree (or clicking a place, then a \
+sentences: they build a blend by dropping LoRAs and folds from the row of \
+pieces under the tree into its empty places of the tree (or clicking a place, then a \
 piece), and when it is whole they choose a dataset and press **Test this \
 blend**. Say that they can also just tell you what to draw ("stack poem-r8 \
 and story-r16", "merge the two poem LoRAs"). If FACTS.loras is empty, say \
@@ -1070,6 +1070,8 @@ VISUAL_TOOLS = {
     "new_weights": ("Draw new values for w1..w10: a new random seed, or the seed given. The "
                     "drawing keeps its weight names; their values change."),
     "start_over": "Clear the whole drawing, back to an empty CAT.",
+    "random_blend": ("Replace the drawing with a random blend of their LoRAs, grown the way a "
+                     "search grows one, that can be built, with new weights."),
     "list_demo_datasets": "The demo datasets on the server, with their sizes. Changes nothing.",
     "set_test_questions": (
         "What the test asks: file (a demo dataset), lora (a LoRA of theirs, by id or name, "
@@ -1091,6 +1093,7 @@ VISUAL_TOOL_DONE = {
     "swap_sides": "swapped the sides at {where}",
     "new_weights": "new weights (seed {seed})",
     "start_over": "cleared the drawing",
+    "random_blend": "drew a random blend: {formula}",
     "list_demo_datasets": "listed {count} demo dataset(s)",
     "set_test_questions": "testing on {questions_text}",
     "set_practice_run": "practice run {state}",
@@ -1099,7 +1102,7 @@ VISUAL_TOOL_DONE = {
 
 VISUAL_FALLBACK_INTRO = """\
 Here you draw a blend of your LoRAs instead of searching for one. Drag a \
-LoRA or a fold from the row at the top into an empty place of the tree — or \
+LoRA or a fold from the pieces under the tree into one of its empty places — or \
 click a place, then a piece. The folds are **CAT** (stack: ranks add up), \
 **SVD** (merge: keeps the larger rank) and **LIN** (average: needs equal \
 ranks).
@@ -1133,11 +1136,11 @@ The test did not finish ({status}{error}). Change the drawing or the questions \
 and try again."""
 
 VISUAL_FALLBACK_CHAT = ("I can't answer free-form questions right now — no chat model is "
-                        "available. You can still draw with the pieces at the top, or type "
+                        "available. You can still draw with the pieces under the tree, or type "
                         "plain requests such as “start over” or “new weights”.")
 
 STEP_INSTRUCTIONS.update({
-    "visual_drawing": ("Drop LoRAs and folds from the row at the top into the tree, then pick "
+    "visual_drawing": ("Drop LoRAs and folds from the pieces under the tree into it, then pick "
                        "the questions and press **Test this blend**."),
     "visual_testing": "Nothing to do — the test runs on its own.",
     "visual_tested": "Change the drawing and test again, or keep this one.",
@@ -1199,10 +1202,10 @@ UI_BLOCKS.update({
 COMPARE_PERSONA = """\
 You are the LoRA guide inside a web page where people *compare two blends* \
 of their LoRA adapters (small add-ons that teach a language model a style or \
-skill). On the left is you and the chat; on the right, a row of pieces -- the \
-person's own LoRAs, and the three ways of folding two things into one -- and \
-under it the two blends side by side, **blend A** on the left and **blend \
-B** on the right, each drawn as a tree. Either may be opened from one of \
+skill). On the left is you and the chat; on the right, the two blends side by \
+side, **blend A** on the left and **blend B** on the right, each drawn as a \
+tree, and under them a row of pieces -- the person's own LoRAs, and the three \
+ways of folding two things into one. Either may be opened from one of \
 their jobs (the blends a search found, or one they drew on the Visual guide) \
 or drawn here, and either can be edited at any time. The folds are:
 - **CAT** stacks the two adapters side by side: nothing is lost, and the \
@@ -1328,6 +1331,8 @@ COMPARE_TOOLS = {
     "new_weights": ("Draw new values for w1..w10 of `blend`: a new random seed, or the seed "
                     "given. Its weight names stay; their values change."),
     "start_over": "Clear `blend`, back to an empty CAT.",
+    "random_blend": ("Replace `blend` with a random blend of their LoRAs, grown the way a "
+                     "search grows one, that can be built, with new weights."),
     "list_demo_datasets": "The demo datasets on the server, with their sizes. Changes nothing.",
     "set_test_questions": (
         "What both blends are tested on: file (a demo dataset), lora (a LoRA of theirs, by "
@@ -1353,6 +1358,7 @@ COMPARE_TOOL_DONE = {
     "swap_sides": "{blend}: swapped the sides at {where}",
     "new_weights": "{blend}: new weights (seed {seed})",
     "start_over": "{blend}: cleared",
+    "random_blend": "{blend}: drew a random blend: {formula}",
     "list_demo_datasets": "listed {count} demo dataset(s)",
     "set_test_questions": "testing on {questions_text}",
     "set_practice_run": "practice run {state}",
@@ -1362,7 +1368,7 @@ COMPARE_TOOL_DONE = {
 COMPARE_FALLBACK_INTRO = """\
 Here you put two blends side by side. Open a blend into **A** and another \
 into **B** with the box above each tree{jobs} — or draw either from the \
-pieces at the top. Edit either as you like: the folds are **CAT** (stack: \
+pieces under the trees. Edit either as you like: the folds are **CAT** (stack: \
 ranks add up), **SVD** (merge: keeps the larger rank) and **LIN** (average: \
 needs equal ranks).
 

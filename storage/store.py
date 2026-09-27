@@ -139,6 +139,9 @@ CREATE TABLE IF NOT EXISTS individuals (
     script_name   TEXT,
     script_source TEXT,
     weight_seed   INTEGER,                 -- stamped into the script above
+    weight_pin    INTEGER,                 -- a weight seed the runs step keeps rather than
+                                           -- deriving one from the number: a blend saved
+                                           -- by hand (async_api/drawn.py), and its copies
     fitness       REAL DEFAULT 0.0,
     is_best       INTEGER DEFAULT 0,
     has_changed   INTEGER DEFAULT 0,
@@ -440,8 +443,24 @@ def connect(db_path):
     # Cascading deletes are off by default, and the schema leans on them.
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     conn.commit()
     return conn
+
+
+# Columns added to a table after databases holding it were already written:
+# CREATE TABLE IF NOT EXISTS leaves an old table as it was, so each is added
+# here, once, when such a database is opened. (table, column, declaration)
+_ADDED_COLUMNS = [
+    ("individuals", "weight_pin", "INTEGER"),
+]
+
+
+def _migrate(conn):
+    for table, column, declaration in _ADDED_COLUMNS:
+        have = {row["name"] for row in conn.execute("PRAGMA table_info(%s)" % table)}
+        if column not in have:
+            conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, declaration))
 
 
 def _now():
@@ -591,16 +610,17 @@ def dataset_summary(conn, run_id):
 # --- the population --------------------------------------------------------
 
 
-def add_individuals(conn, run_id, chromosomes, first=1):
+def add_individuals(conn, run_id, chromosomes, first=1, weight_pin=None):
     """Store a freshly drawn population. Replaces any already held for this run.
 
     Numbered from `first`, 1 for any population a search draws. A blend drawn
     by hand from a searched one (async_api/drawn.py) keeps the number it had
-    there, since an individual's weights are drawn from its number."""
+    there, since an individual's weights are drawn from its number -- or the
+    `weight_pin` it had, when it had one."""
     conn.execute("DELETE FROM individuals WHERE run_id = ?", (run_id,))
     conn.executemany(
-        "INSERT INTO individuals (run_id, number, chromosome) VALUES (?, ?, ?)",
-        [(run_id, number, chromosome)
+        "INSERT INTO individuals (run_id, number, chromosome, weight_pin) VALUES (?, ?, ?, ?)",
+        [(run_id, number, chromosome, weight_pin)
          for number, chromosome in enumerate(chromosomes, first)])
     conn.commit()
 
@@ -635,7 +655,7 @@ def high_number(conn, run_id):
                         (run_id,)).fetchone()["top"] or 0
 
 
-def append_individual(conn, run_id, chromosome):
+def append_individual(conn, run_id, chromosome, weight_pin=None):
     """Append one brand-new individual to a population. -> the number it got.
 
     A chromosome and nothing else: no tree, no script, no seed, no fitness --
@@ -643,11 +663,16 @@ def append_individual(conn, run_id, chromosome):
     `runs` have been near it, which is exactly what a newcomer is. The contrast
     with append_copies() is the point: that one arrives holding its parent's
     answers, this one arrives holding none.
+
+    Selection's newcomer is one; a blend saved by hand into the run it was
+    opened from (drawn.save) is the other, and brings `weight_pin` -- the weight
+    seed it was drawn and shown under, which the runs step keeps rather than
+    deriving one from its new number, so what was saved is what runs.
     """
     number = next_number(conn, run_id)
     conn.execute(
-        "INSERT INTO individuals (run_id, number, chromosome) VALUES (?, ?, ?)",
-        (run_id, number, chromosome))
+        "INSERT INTO individuals (run_id, number, chromosome, weight_pin) VALUES (?, ?, ?, ?)",
+        (run_id, number, chromosome, weight_pin))
     conn.commit()
     return number
 

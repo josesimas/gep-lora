@@ -59,7 +59,7 @@ from blends import generate_runs
 from config import settings as config
 from search.generate_population import (
     BINARY_OPS, MAX_SLOTS, UNARY_OPS, VARIABLES, Node, check as check_expression,
-    encode as encode_tree, decode)
+    encode as encode_tree, decode, random_tree, slot_key)
 from storage import db_datasets
 from storage import store
 
@@ -157,11 +157,13 @@ def loras_in(tree):
     return seen
 
 
-def encode(tree):
+def encode(tree, slot_of=None):
     """A complete drawing as a sweep holds it. -> (chromosome, {slot: lora id}).
 
     Slots are handed out in reading order; a LoRA used twice keeps its slot.
-    Raises DrawnError for a place left empty or a drawing past MAX_SLOTS LoRAs.
+    `slot_of` ({lora id: slot}) gives them instead -- a run's own LORA_SLOTS,
+    for a drawing saved into that run. Raises DrawnError for a place left
+    empty or a drawing past MAX_SLOTS LoRAs.
     """
     places = walk(tree)
     empty = [path for path, node in places if node is None]
@@ -170,7 +172,10 @@ def encode(tree):
     ids = loras_in(tree)
     if len(ids) > MAX_SLOTS:
         raise DrawnError("a blend uses at most %d different LoRAs" % MAX_SLOTS)
-    slot_of = {lora: UNARY_OPS[index] for index, lora in enumerate(ids)}
+    if slot_of is None:
+        slot_of = {lora: UNARY_OPS[index] for index, lora in enumerate(ids)}
+    else:
+        slot_of = {lora: slot_of[lora] for lora in ids}
 
     def build(node):
         if "lora" in node:
@@ -201,6 +206,15 @@ def decode_tree(chromosome, slots):
 # --- the weights ---------------------------------------------------------------
 
 
+def pin_of(value):
+    """A pinned weight seed, or None: the draw a blend saved by hand keeps."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise DrawnError("pin is a weight seed, a whole number, 0 or more")
+    return value
+
+
 def number_of(value):
     """The individual a drawing's weights are drawn for: NUMBER when not said."""
     if value is None:
@@ -217,20 +231,25 @@ def weight_seed(master, number=NUMBER):
     return random.Random("%s:%d" % (master, number)).randrange(start_run._SEED_LIMIT)
 
 
-def draw(master=None, number=None):
-    """-> {seed, number, weight_seed, weights}: what w1..w10 are worth for
+def draw(master=None, number=None, pin=None):
+    """-> {seed, number, pin, weight_seed, weights}: what w1..w10 are worth for
     individual `number` under `master`, a new master seed when None -- drawn as
-    a sweep draws one it was not given."""
+    a sweep draws one it was not given. A `pin` is a weight seed kept instead
+    of that derivation (a blend saved by hand, as start_run.step_runs keeps it)."""
     import start_run
-    number = number_of(number)
+    number, pin = number_of(number), pin_of(pin)
     if master is None:
         master = random.randrange(start_run._SEED_LIMIT)
     if isinstance(master, bool) or not isinstance(master, int) or master < 0:
         raise DrawnError("the seed is a whole number, 0 or more")
-    seed = weight_seed(master, number)
-    return {"seed": master, "number": number, "weight_seed": seed,
+    seed = pin if pin is not None else weight_seed(master, number)
+    return {"seed": master, "number": number, "pin": pin, "weight_seed": seed,
             "weights": {name: round(value, 4)
                         for name, value in golive.draw_weights(seed).items()}}
+
+
+# A random drawing is redrawn until it can be built, at most this many times.
+RANDOM_ATTEMPTS = 60
 
 
 # --- is it buildable -------------------------------------------------------------
@@ -277,7 +296,7 @@ def _post_order(tree):
     return out
 
 
-def check(catalog, user, tree, seed=None, number=None):
+def check(catalog, user, tree, seed=None, number=None, pin=None):
     """Everything the page draws beside a drawing, and whether it can be built.
 
     -> {complete, empty, state, problems, chromosome, slots, nodes, rank,
@@ -290,7 +309,7 @@ def check(catalog, user, tree, seed=None, number=None):
     a drawing that is not a drawing; anything else is a problem it reports.
     """
     places = walk(tree)
-    drawn = draw(seed, number)
+    drawn = draw(seed, number, pin)
     ids = loras_in(tree)
     rows = _rows(catalog, user, ids)
     empty = [path for path, node in places if node is None]
@@ -345,6 +364,51 @@ def check(catalog, user, tree, seed=None, number=None):
                formula=blending.formula(chromosome, names, drawn["weights"]),
                state="BAD" if problems else "ok")
     return out
+
+
+# --- a random one ------------------------------------------------------------
+
+
+def random_drawing(catalog, user, base_model=None, rng=None):
+    """A drawing the way a search draws an individual. -> {tree, seed, check}.
+
+    Up to MAX_SLOTS of the user's ready LoRAs on `base_model` (else on the base
+    model most of them are on) under one chat template, shuffled into slots,
+    and a tree grown by generate_population.random_tree() under config's
+    MAX_DEPTH, BRANCH_PROB and ROOT_LEAF_PROB -- the search's own draw, so
+    what comes out is something a first population could hold. Drawn again,
+    up to RANDOM_ATTEMPTS times, until check() says it can be built (a LIN
+    over two ranks is BAD here as in a sweep); the last one otherwise. A new
+    weight seed each time. Raises DrawnError when there is nothing to draw."""
+    rng = rng or random.Random()
+    rows = catalog.all(owner=user["name"], status=lora_catalog.READY)
+    groups = {}
+    for row in rows:
+        groups.setdefault((row["base_model"], str(row["chat_template"])), []).append(row)
+    if base_model:
+        groups = {key: value for key, value in groups.items() if key[0] == base_model}
+    if not groups:
+        raise DrawnError("you have no ready LoRAs%s to draw a blend from"
+                         % (" on %s" % base_model if base_model else ""))
+    pool = max(groups.values(), key=len)
+    last = None
+    for _ in range(RANDOM_ATTEMPTS):
+        chosen = rng.sample(pool, min(len(pool), MAX_SLOTS))
+        slots = {UNARY_OPS[index]: row["id"] for index, row in enumerate(chosen)}
+        expression = encode_tree(random_tree(rng, rng.randint(1, config.MAX_DEPTH),
+                                             config.BRANCH_PROB, len(chosen),
+                                             config.ROOT_LEAF_PROB))
+        tree = decode_tree(expression, slots)
+        try:
+            found = check(catalog, user, tree)
+        except DrawnError:              # past MAX_LEAVES: draw again
+            continue
+        last = {"tree": tree, "seed": found["seed"], "check": found}
+        if found["state"] == "ok":
+            break
+    if last is None:
+        raise DrawnError("could not draw a blend small enough to show")
+    return last
 
 
 # --- testing it --------------------------------------------------------------
@@ -413,12 +477,13 @@ def create(registry, catalog, user, payload, lora_path):
     """
     if not isinstance(payload, dict):
         raise DrawnError("the body is a JSON object")
-    unknown = sorted(set(payload) - {"tree", "seed", "number", "dataset", "count", "label",
-                                     "mock", "settings"})
+    unknown = sorted(set(payload) - {"tree", "seed", "number", "pin", "dataset", "count",
+                                     "label", "mock", "settings"})
     if unknown:
         raise DrawnError("unknown field(s): %s" % ", ".join(unknown))
     seed = payload.get("seed")
-    found = check(catalog, user, payload.get("tree"), seed, payload.get("number"))
+    found = check(catalog, user, payload.get("tree"), seed, payload.get("number"),
+                  payload.get("pin"))
     if found["state"] != "ok":
         raise DrawnError("; ".join(found["problems"]) or "the drawing is not finished yet")
     count = _count(payload.get("count"))
@@ -447,7 +512,7 @@ def create(registry, catalog, user, payload, lora_path):
 
     def settle(job, run_id, conf):
         _one_individual(registry.database(job), run_id, found["chromosome"],
-                        found["number"])
+                        found["number"], found["pin"])
         return registry.settle_drawn(job["id"], run_id)
 
     try:
@@ -473,7 +538,7 @@ def create(registry, catalog, user, payload, lora_path):
     return job, verification, found
 
 
-def _one_individual(db_path, run_id, chromosome, number=NUMBER):
+def _one_individual(db_path, run_id, chromosome, number=NUMBER, pin=None):
     """Put the drawing in as the sweep's only individual, numbered `number`, through start_run's
     own `trees` and `runs` steps -- its tree, state, rank, weight seed and
     script are the ones a searched individual gets -- and leave no script
@@ -481,7 +546,7 @@ def _one_individual(db_path, run_id, chromosome, number=NUMBER):
     import start_run
     conn = store.connect(db_path)
     try:
-        store.add_individuals(conn, run_id, [chromosome], first=number)
+        store.add_individuals(conn, run_id, [chromosome], first=number, weight_pin=pin)
         conf = store.get_settings(conn, run_id)
         context = start_run.Context(conn, run_id, conf, db_datasets.run_folder(conn, run_id),
                                     generate_runs.template_path(conf.get("TEMPLATE")), None)
@@ -513,8 +578,11 @@ def _slot_ids(catalog, user, conf):
 
 def opened(registry, catalog, user, job, number=None):
     """One blend of a job as a page draws it again. -> {job, label, task,
-    number, tree, seed, count, chromosome, state, fitness, quality,
-    verification, questions}.
+    number, pin, tree, seed, count, chromosome, drawn, state, fitness,
+    quality, verification, questions}. `pin` is the weight seed a blend saved
+    by hand keeps (None for any other), which the weights come from instead. `chromosome` is the one the job holds and
+    `drawn` the tree's own encoding -- the same blend, its slots numbered in
+    reading order -- which is what a page compares a later drawing with.
 
     A drawn blend's job holds one individual, `number` or not. A search's
     blend is individual `number` of it (its best when None): the drawing is
@@ -530,15 +598,14 @@ def opened(registry, catalog, user, job, number=None):
     try:
         conf = store.get_settings(conn, job["run_id"])
         population = results.population(conn, job["run_id"])
+        pins = {row["number"]: row["weight_pin"] for row in store.individuals(conn, job["run_id"])}
     finally:
         conn.close()
     if not population:
         raise DrawnError("job %d holds no blend yet" % job["id"])
-    if job["task"] == reg.BLEND:
+    if job["task"] == reg.BLEND and number is None:
+        # The blend it was drawn as; any saved beside it are opened by number.
         chosen = population[0]
-        if number is not None and number != chosen["number"]:
-            raise DrawnError("job %d holds blend #%d, not #%d"
-                             % (job["id"], chosen["number"], number))
     elif number is None:
         chosen = results.best(population)
         if chosen is None:
@@ -549,18 +616,87 @@ def opened(registry, catalog, user, job, number=None):
         if chosen is None:
             raise DrawnError("job %d holds no blend #%d" % (job["id"], number))
     slots = _slot_ids(catalog, user, conf)
+    tree = decode_tree(chosen["chromosome"], slots)
     found = [row for row in registry.verifications(job_id=job["id"])
              if row["number"] == chosen["number"]]
     latest = found[0] if found else None
     options = json.loads(latest["options"] or "{}") if latest else {}
     return {"job": job["id"], "label": job["label"], "task": job["task"],
-            "number": chosen["number"],
-            "tree": decode_tree(chosen["chromosome"], slots),
+            "number": chosen["number"], "pin": pins.get(chosen["number"]),
+            "tree": tree,
             "seed": conf.get("WEIGHT_MASTER_SEED"), "count": conf.get("TRAINING_COUNT"),
-            "chromosome": chosen["chromosome"], "state": chosen["state"],
+            "chromosome": chosen["chromosome"], "drawn": encode(tree)[0],
+            "state": chosen["state"],
             "fitness": chosen["fitness"], "quality": chosen["quality"],
             "verification": latest["id"] if latest else None,
             "questions": options.get("dataset_label")}
+
+
+# A job's run takes a saved blend only when nothing else is writing to it.
+SAVABLE = (reg.DONE, reg.STOPPED, reg.FAILED, reg.CANCELLED)
+
+
+def save(registry, catalog, user, job, payload):
+    """A drawing saved into the run of `job` as a brand new individual.
+
+        {"tree": <drawing>, "seed": n, "number": n?, "pin": n?}
+
+    -> {job, number, chromosome, drawn, check}. The drawing is the one a page
+    opened from that job and edited; it is saved with the run's own slots for
+    its LoRAs (so every LoRA in it must be one of the run's), the next number
+    (store.append_individual) and a *pin*: the weight seed it was drawn and
+    shown under, which start_run.step_runs keeps rather than deriving one from
+    the new number -- so what was saved is exactly what runs. Its tree and
+    script are made by start_run's own `trees` and `runs` steps for it alone,
+    and no file is left behind. It joins the search like any individual: a
+    resumed search runs, scores, selects, mutates or culls it. Refused unless
+    the drawing can be built and the job's run is at rest."""
+    if not isinstance(payload, dict):
+        raise DrawnError("the body is a JSON object")
+    unknown = sorted(set(payload) - {"tree", "seed", "number", "pin"})
+    if unknown:
+        raise DrawnError("unknown field(s): %s" % ", ".join(unknown))
+    if job["status"] not in SAVABLE:
+        raise DrawnError("job %d is %s; a blend can be saved into it once it is not running"
+                         % (job["id"], job["status"]))
+    tree = payload.get("tree")
+    found = check(catalog, user, tree, payload.get("seed"), payload.get("number"),
+                  payload.get("pin"))
+    if found["state"] != "ok":
+        raise DrawnError("; ".join(found["problems"]) or "the drawing is not finished yet")
+    try:
+        conn = results.connect(registry.database(job))
+    except results.NoResults:
+        raise DrawnError("job %d's run is gone" % job["id"])
+    import start_run
+    try:
+        conf = store.get_settings(conn, job["run_id"])
+        slot_of = {}
+        for slot, lora in sorted(_slot_ids(catalog, user, conf).items(),
+                                 key=lambda pair: slot_key(pair[0])):
+            slot_of.setdefault(lora, slot)
+        missing = [found["loras"][str(lora)]["name"] for lora in loras_in(tree)
+                   if lora not in slot_of]
+        if missing:
+            raise DrawnError("%s %s not among the LoRAs job %d blends; a blend saved into a "
+                             "run uses that run's LoRAs"
+                             % (", ".join(missing), "is" if len(missing) == 1 else "are",
+                                job["id"]))
+        chromosome, _ = encode(tree, slot_of)
+        number = store.append_individual(conn, job["run_id"], chromosome,
+                                         weight_pin=found["weight_seed"])
+        context = start_run.Context(conn, job["run_id"], conf,
+                                    db_datasets.run_folder(conn, job["run_id"]),
+                                    generate_runs.template_path(conf.get("TEMPLATE")), None)
+        try:
+            start_run.step_trees(context, numbers={number})
+            start_run.step_runs(context, numbers={number})
+        except SystemExit as error:
+            raise DrawnError(str(error))
+    finally:
+        conn.close()
+    return {"job": job["id"], "number": number, "chromosome": chromosome,
+            "drawn": found["chromosome"], "check": found}
 
 
 def sources(registry, catalog, user):

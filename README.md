@@ -2790,6 +2790,7 @@ five pages, and every one of them carries the same top bar, in this order:
 |---|---|---|
 | **Guide** | `/guide.html` | start here: an assistant that trains LoRAs and blends them (below) |
 | **Visual guide** | `/visual_guide.html` | draw a blend of your LoRAs as a tree, and test it (below) |
+| **Compare** | `/blend_comparison.html` | two blends side by side -- opened from any job or drawn -- edited and tested on the same questions (below) |
 | **Runs** | `/runs.html` | every search you have run, and what came of it |
 | **Settings** | `/settings.html` | appearance, and what a new guide conversation starts from |
 | **Console** *(advanced)* | `/console.html` | every endpoint, by hand |
@@ -3465,10 +3466,6 @@ refused by the tool; another user's search is "no search of yours".
 you **draw** it. The page is laid out like the guide -- the same top bar, themes,
 model chip and chat on the left -- and on the right:
 
-- **Pieces**, a row of what a blend is made of: your ready LoRAs (each with its
-  rank) and the three folds, **CAT** (stack: ranks add up), **SVD** (merge: the
-  larger rank) and **LIN** (average: equal ranks only). Drag one onto the tree, or
-  click a place in the tree and then a piece.
 - **Your blend**, the tree, drawn the way the report page draws a chromosome
   (`generate_html_db_stats.tree_svg`): each LoRA at its weight, folded in pairs up
   to one fold at the top -- CAT, SVD or LIN -- or a single LoRA on its own, used at
@@ -3478,7 +3475,21 @@ model chip and chat on the left -- and on the right:
   node to change its fold, weight or sides, **Delete** empties a place, **Ctrl+Z**
   undoes. Under it, the chromosome a search would hold the drawing as, and the
   **weights**: what w1..w10 are worth under the drawing's seed, with *New weights*
-  to draw again.
+  to draw again. A weight tile is a piece too: drag it onto a LoRA in the tree (one
+  a fold weights -- not a LoRA alone at the top) to give it that weight, or click
+  it while a LoRA is selected. On the comparison a weight is a name, so one dragged
+  from the other blend's tiles lands worth what this blend's seed makes it. Above it, an **Open** box: pick one of your jobs (a search or a
+  drawn blend) and then one of its blends, best first, and it is drawn at once --
+  a searched one with the weights it was scored with, marked *edited* once it
+  changes. **🎲 Random** replaces the drawing with a random blend of your LoRAs,
+  a new one each click (`POST /blends/random`, `drawn.random_drawing()`): grown by
+  the search's own `random_tree()` under `MAX_DEPTH`, `BRANCH_PROB` and
+  `ROOT_LEAF_PROB`, over your LoRAs on the blend's base model, drawn again until
+  it can be built, with a new seed. The chat does it too ("surprise me").
+- **Pieces**, under the tree, a row of what a blend is made of: your ready LoRAs
+  (each with its rank) and the three folds, **CAT** (stack: ranks add up), **SVD**
+  (merge: the larger rank) and **LIN** (average: equal ranks only). Drag one onto
+  the tree, or click a place in the tree and then a piece.
 - **Test**: the questions (a demo dataset, the data one of your LoRAs was trained
   on, or your own file or paste), how many, and **Test this blend**.
 - **Result**: the blend and each of its LoRAs alone, the same questions, the
@@ -3495,7 +3506,8 @@ into the chromosome and `LORA_SLOTS` a search would have held it as (slots in
 reading order, one per LoRA however often it is used), and checks it with
 `generate_population.check()` and `generate_runs.plan()` -- the grammar and the
 rank rule every individual meets (`POST /blends/check`). The weights are the draw
-`start_run.step_runs` makes for individual 1 under the drawing's
+`start_run.step_runs` makes for individual 1 (or the searched blend's own number,
+when one was opened from a search) under the drawing's
 `WEIGHT_MASTER_SEED`, so the numbers on screen are the ones the scripts use. And a
 test (`POST /blends/test`) is:
 
@@ -3513,6 +3525,63 @@ So a drawn blend is one of your runs like any other: it is listed on the Runs pa
 (tagged *drawn*, opened in the visual guide with `?job=N`, which reads it back
 through `GET /blends/{job id}`), its database downloads from the console, and it
 can be put live with `POST /jobs/{id}/live`.
+
+**Saving an edited blend.** Once a blend opened from a job is *edited*, a **Save into
+job N** button appears beside where it came from (on both pages). It saves the
+drawing into that job's run as a **brand new blend** (`POST /blends/{job}/save`,
+`drawn.save()`): the next number, the run's own slots for its LoRAs (so every LoRA in
+it must be one the run blends), its tree and script made by start_run's `trees` and
+`runs` steps for it alone, and its weights **pinned**. A run draws each blend's
+weights from its seed and the blend's number, so a new number would mean new values;
+instead the new individual stores the weight seed it was shown under in
+`individuals.weight_pin`, and `step_runs` keeps a pin rather than deriving one --
+what was saved is exactly what runs, and copies selection makes of it inherit the
+pin. It then joins the search like any individual: a resumed search runs and scores
+it, and may select, mutate or cull it. Only a job at rest takes one (done, stopped,
+failed or cancelled). The page then holds that new blend -- its number, its pin --
+and opening it again (`GET /blends/{job}?individual=N` returns `pin`) draws the same
+weights. Older sweep databases gain the column when opened (`store._migrate()`).
+
+### Compare blends — two blends side by side
+
+`/blend_comparison.html` (**Compare** in the top bar) is the visual guide twice
+over: the same chat on the left, and on the right **blend A** and **blend B** side
+by side, each with the visual guide's whole tree editor. Either side can be:
+
+- **opened from a job** with the box above its tree -- first the job (any search
+  of yours, or a blend drawn on the visual guide), then one of its blends, best
+  first. It is drawn the moment it is picked. A searched blend keeps its search's
+  seed *and its own individual number*, so its weights are the ones it was scored
+  with; the side says which job and blend it came from, and *edited* once its
+  drawing or its weights have changed since;
+- **drawn** from the Pieces under the trees (they go to the blend a place is
+  selected in), drawn at **🎲 Random**, **copied** onto the other side, **swapped**
+  with it or cleared.
+
+Then both are tested on **the same questions** (**Test both blends**): two drawn
+tests, one per side, each the blend beside its own LoRAs alone. The results are
+shown side by side, and a card puts **A against B**: the two blends' own answers
+paired by question, how many each won, the mean difference and the same exact
+sign test a verification uses, one line per question from A's score to B's, and
+every question with both answers. The address carries what is open
+(`?a=JOB.N&b=JOB.N`), so a link brings the same two blends back.
+
+The chat can do all of it ("open the best of job 3 in A", "copy A to B and make its
+top an SVD", "test both on 30 questions"), through `async_api_agent/compare.py`: a
+`visual.Toolbox` whose tools take `blend` ("A" or "B") and run the visual guide's
+own tool on that side. It adds no pipeline either:
+
+- `GET /blends` lists every blend of yours a page can open, job by job
+  (`drawn.sources()`), and `GET /blends/{job}?individual=N` opens any one of them
+  (`drawn.opened()`; a search's best without `N`) -- the visual guide opens
+  searched blends the same way now;
+- a drawing carries an individual **number** beside its seed (`POST /blends/check`
+  and `/blends/test` take `number`, 1 by default), and a drawn test stores its
+  individual under that number (`store.add_individuals(first=)`), so the sweep of
+  one draws exactly the searched blend's weights;
+- `POST /agent/compare/plan` reads back the two `POST /blends/test` bodies, the
+  page sends them, and `POST /agent/compare/outcome` / `.../debrief` are each
+  side's verification and `compare.head_to_head()` -- computed, never the model's.
 
 ## Running a generated script
 
@@ -3786,7 +3855,7 @@ reporting/    a sweep, written out as something to look at
 adapters/     making and checking the five LoRAs a sweep blends
 tools/        dev aids that are not part of the pipeline
 async_api/    the search as a web service: jobs, a worker, live inference
-async_api_agent/  the guides behind /guide.html and /visual_guide.html: prompts, providers, tools, a dataset's facts
+async_api_agent/  the guides behind /guide.html, /visual_guide.html and /blend_comparison.html: prompts, providers, tools, a dataset's facts
 ```
 
 ### The drivers
@@ -3848,6 +3917,8 @@ async_api_agent/  the guides behind /guide.html and /visual_guide.html: prompts,
 | `async_api/verify.py` | the API's half of that comparison: what a verification may ask for, the command the worker runs, and the report it leaves behind |
 | `async_api/guide.html` | the LoRA guide page at `/guide.html`: a chat model walks a user from a dataset to trained LoRAs, with the progress drawn beside it |
 | `async_api/visual_guide.html` | the visual guide at `/visual_guide.html`: a blend of the user's LoRAs drawn as a tree and tested, with the guide's chat beside it |
+| `async_api/blend_comparison.html` | the comparison at `/blend_comparison.html`: two blends side by side, opened from any job or drawn, edited and tested on the same questions, with its own guide |
+| `async_api_agent/compare.py` | the comparison's guide: the visual guide's tools on either side, the two tests' plan, and blend A against blend B question by question |
 | `async_api/drawn.py` | a drawn blend in the pipeline's terms: the tree as a chromosome, its rank check and weights, and the sweep of one plus verification that tests it |
 | `async_api/nav.js` | the top bar every page shares: the pages in order, the page's own buttons, the server's health and the API key |
 | `async_api_agent/prompts.py` | every system prompt the guide sends, and the wording it falls back to without a model |

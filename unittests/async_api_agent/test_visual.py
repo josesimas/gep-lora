@@ -125,6 +125,16 @@ class ToolTests(Mixin, JobsTestCase):
         # A session whose top was emptied stays empty rather than becoming a CAT again.
         self.assertIsNone(visual.session_of({"tree": None})["tree"])
 
+    def test_a_random_blend(self):
+        self.run_ok("place_lora", where="left", lora="slot-L1")
+        done = self.run_ok("random_blend")
+        self.assertEqual(done["state"], "ok")
+        self.assertEqual(self.box.outcome()["check"]["state"], "ok")
+        self.assertEqual(self.box.session["number"], 1)
+        out = visual.chat(self.registry.catalog, self.user, "surprise me", "drawing",
+                          self.box.session, choice=SCRIPTED)
+        self.assertEqual([one["tool"] for one in out["steps"]], ["random_blend"])
+
     def test_a_test_is_an_action_once_it_can_run(self):
         self.run_ok("draw_blend", loras=["slot-L1", "slot-L2"])
         self.refused("start_test", "choose the questions")

@@ -111,6 +111,8 @@ def blend_spec(db_path, run_id, number=None):
                    if one["number"] == chosen["number"])
         source = row["script_source"] or ""
         seed = row["weight_seed"]
+        if seed is None:
+            seed = row["weight_pin"]            # a blend saved by hand keeps its own
     finally:
         conn.close()
     if seed is None:

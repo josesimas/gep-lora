@@ -57,11 +57,18 @@ Blends drawn by hand (drawn.py; the pages are /visual_guide.html and
                                           chromosome, its ranks, whether PEFT can build
                                           it, and what the weights are worth under the
                                           seed for individual `number` (1)
+    POST   /blends/random                 {base_model?} -> {tree, seed, check}: a drawing
+                                          grown the way a search grows an individual,
+                                          over the user's LoRAs on one base model
     POST   /blends/test                   {tree, seed, number?, dataset, count?, label?,
                                           mock?, settings?} -> 201 {job, verification}: a
                                           sweep of that one blend, and a verification
                                           of it beside each of its LoRAs alone on the
                                           dataset -- read back with /verifications/{id}
+    POST   /blends/{job id}/save           {tree, seed, number?, pin?} -> 201: a drawing
+                                          opened from that job and edited, saved into
+                                          its run as a brand new individual, with the
+                                          weights it was shown pinned (drawn.save)
     GET    /blends/{job id}[?individual=N] one blend of a job as a page draws it again:
                                           its tree, seed, number and latest verification;
                                           a search's best unless N is given
@@ -674,9 +681,29 @@ class App:
         body = body or {}
         try:
             return 200, drawn.check(self.catalog, user, body.get("tree"), body.get("seed"),
-                                    body.get("number"))
+                                    body.get("number"), body.get("pin"))
         except drawn.DrawnError as error:
             raise ApiError(400, str(error))
+
+    def random_drawn(self, user, body):
+        """A random drawing of the user's LoRAs (drawn.random_drawing)."""
+        base_model = (body or {}).get("base_model")
+        if base_model is not None and not isinstance(base_model, str):
+            raise ApiError(400, "base_model must be a base model's name")
+        try:
+            return 200, drawn.random_drawing(self.catalog, user, base_model or None)
+        except drawn.DrawnError as error:
+            raise ApiError(409, str(error))
+
+    def save_drawn(self, user, job_id, body):
+        """A drawing saved into the run of the job it was opened from (drawn.save)."""
+        job = self.own_job(user, job_id)
+        if job["status"] == reg.DELETED:
+            raise ApiError(404, "job %d's run was deleted" % job_id)
+        try:
+            return 201, drawn.save(self.registry, self.catalog, user, job, body)
+        except drawn.DrawnError as error:
+            raise ApiError(409, str(error))
 
     def list_blends(self, user):
         """Every blend of the user's a page can open (drawn.sources)."""
@@ -952,8 +979,10 @@ ROUTES = [
     ("POST", r"/jobs/(\d+)/verify", "start_verification", ("body",)),
     ("POST", r"/blends/check", "check_drawn", ("body",)),
     ("POST", r"/blends/test", "test_drawn", ("body",)),
+    ("POST", r"/blends/random", "random_drawn", ("body",)),
     ("GET", r"/blends", "list_blends", ()),
     ("GET", r"/blends/(\d+)", "open_drawn", ("query",)),
+    ("POST", r"/blends/(\d+)/save", "save_drawn", ("body",)),
     ("GET", r"/verifications/(\d+)", "verification_detail", ()),
     ("GET", r"/verifications/(\d+)/log", "verification_log", ("query",)),
     ("POST", r"/jobs/(\d+)/live", "set_live", ("body",)),

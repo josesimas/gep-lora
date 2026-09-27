@@ -28,9 +28,10 @@ The session:
     {"blends": {"A": {"tree", "seed", "number", "from"}, "B": {...}},
      "questions": ..., "count": n, "mock": bool}       visual.py's, shared
 
-`from` is {"job", "individual", "label", "chromosome"} for a blend opened
-from a job -- the chromosome it had there, so the page can say it has been
-edited since -- or None for one drawn here.
+`from` is {"job", "individual", "label", "chromosome", "seed"} for a blend
+opened from a job -- the chromosome it was drawn as (drawn.opened()'s `drawn`)
+and the seed it had there, so the page can say it has been edited since -- or
+None for one drawn here.
 """
 
 import copy
@@ -86,6 +87,7 @@ SPECS = {
     "new_weights": ({"blend": _SIDE, "seed": dict(_INT, description="a seed of their choosing")},
                     ["blend"], True),
     "start_over": ({"blend": _SIDE}, ["blend"], True),
+    "random_blend": ({"blend": _SIDE}, ["blend"], True),
     "list_demo_datasets": ({}, [], False),
     "set_test_questions": ({"file": {"type": "string", "description": "a demo dataset"},
                             "lora": _LORA,
@@ -101,7 +103,8 @@ class CompareError(visual.VisualError):
 
 
 def empty_side():
-    return {"tree": visual.empty_tree(), "seed": None, "number": drawn.NUMBER, "from": None}
+    return {"tree": visual.empty_tree(), "seed": None, "number": drawn.NUMBER, "pin": None,
+            "from": None}
 
 
 def _from(value):
@@ -113,9 +116,11 @@ def _from(value):
     if any(isinstance(one, bool) or not isinstance(one, int) for one in (job, individual)):
         raise CompareError("from is where a blend was opened: {job, individual}")
     label, chromosome = value.get("label"), value.get("chromosome")
+    number = lambda one: one if isinstance(one, int) and not isinstance(one, bool) else None
     return {"job": job, "individual": individual,
             "label": label if isinstance(label, str) else None,
-            "chromosome": chromosome if isinstance(chromosome, str) else None}
+            "chromosome": chromosome if isinstance(chromosome, str) else None,
+            "seed": number(value.get("seed")), "pin": number(value.get("pin"))}
 
 
 def session_of(raw):
@@ -132,10 +137,11 @@ def session_of(raw):
     for side in SIDES:
         one = blends.get(side) if isinstance(blends.get(side), dict) else {}
         try:
-            drawing = visual.session_of({name: one[name] for name in ("tree", "seed", "number")
-                                         if name in one})
+            drawing = visual.session_of({name: one[name] for name in ("tree", "seed", "number",
+                                                                      "pin") if name in one})
             out["blends"][side] = {"tree": drawing["tree"], "seed": drawing["seed"],
-                                   "number": drawing["number"], "from": _from(one.get("from"))}
+                                   "number": drawing["number"], "pin": drawing["pin"],
+                                   "from": _from(one.get("from"))}
         except visual.VisualError as error:
             raise CompareError("blend %s: %s" % (side, error))
     return out
@@ -145,7 +151,7 @@ def view(pair, side):
     """One side as visual.py's session: its drawing and the shared test."""
     one = pair["blends"][side]
     return {"tree": copy.deepcopy(one["tree"]), "seed": one["seed"], "number": one["number"],
-            "questions": pair["questions"], "count": pair["count"], "mock": pair["mock"]}
+            "pin": one["pin"], "questions": pair["questions"], "count": pair["count"], "mock": pair["mock"]}
 
 
 def side_of(blend):
@@ -157,12 +163,18 @@ def side_of(blend):
     return text
 
 
+def edited(one, found):
+    """Has a side opened from a job changed since: another drawing, or other weights?"""
+    was = one["from"]
+    return bool(was and (found is None or found["chromosome"] != was["chromosome"]
+                         or one["seed"] != was["seed"] or one["pin"] != was["pin"]))
+
+
 def _brief_side(catalog, user, pair, side, names):
     found = visual.check_of(catalog, user, view(pair, side))
     one = pair["blends"][side]
     return {"from": one["from"],
-            "edited_since_opened": bool(one["from"] and found and found["chromosome"]
-                                        and found["chromosome"] != one["from"]["chromosome"]),
+            "edited_since_opened": edited(one, found),
             "places": visual.places(one["tree"], names, (found or {}).get("weights")),
             "check": visual._brief(found)}
 
@@ -202,7 +214,7 @@ class Toolbox(visual.Toolbox):
         result = getattr(visual.Toolbox, method)(self, **arguments)
         one = self.pair["blends"][side]
         one.update(tree=self.session["tree"], seed=self.session["seed"],
-                   number=self.session["number"])
+                   number=self.session["number"], pin=self.session["pin"])
         return dict(result, blend=side)
 
     def _shared(self, method, **arguments):
@@ -243,8 +255,9 @@ class Toolbox(visual.Toolbox):
         found = drawn.opened(self.registry, self.catalog, self.user, row, individual)
         self.pair["blends"][side] = {
             "tree": found["tree"], "seed": found["seed"], "number": found["number"],
-            "from": {"job": found["job"], "individual": found["number"],
-                     "label": found["label"], "chromosome": found["chromosome"]}}
+            "pin": found["pin"], "from": {"job": found["job"], "individual": found["number"],
+                     "label": found["label"], "chromosome": found["drawn"],
+                     "seed": found["seed"], "pin": found["pin"]}}
         return {"blend": side, "job": found["job"], "individual": found["number"],
                 "label": found["label"]}
 
@@ -282,6 +295,11 @@ class Toolbox(visual.Toolbox):
 
     def _new_weights(self, blend, seed=None):
         return self._on(blend, "_new_weights", seed=seed)
+
+    def _random_blend(self, blend):
+        result = self._on(blend, "_random_blend")
+        self.pair["blends"][result["blend"]]["from"] = None
+        return result
 
     def _start_over(self, blend):
         result = self._on(blend, "_start_over")

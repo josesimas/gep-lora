@@ -215,6 +215,12 @@
   svg.tree .over rect.body { stroke-width: 3; }
   svg.tree rect.ring { fill: none; stroke: var(--ink); stroke-width: 2; stroke-dasharray: 3 3; }
   svg.tree .next rect.body { stroke: var(--accent); }
+  .opener { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 6px; margin-bottom: 8px; }
+  .opener select { min-height: 30px; padding: 2px 8px; font-size: 12.5px; }
+  @media (max-width: 560px) { .opener { grid-template-columns: minmax(0, 1fr); } }
+  .from { font-size: 12px; color: var(--muted); margin: 0 0 8px; overflow-wrap: anywhere; }
+  .from .save { margin-left: 8px; min-height: 24px; padding: 0 9px; font-size: 12px; vertical-align: 1px; }
+  .tag.edited { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); margin-left: 4px; }
   .verdict { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; margin-top: 12px; font-size: 13px; }
   .verdict .formula { color: var(--ink-2); overflow-wrap: anywhere; }
   .problems { margin: 6px 0 0; padding-left: 18px; color: var(--bad); font-size: 13px; }
@@ -226,6 +232,13 @@
   .weight i { display: block; height: 3px; margin-top: 4px; border-radius: 3px; background: var(--faint); }
   .weight.used { border-color: var(--accent); background: var(--accent-soft); }
   .weight.used i { background: var(--accent); }
+  /* A weight is a piece too: dragged onto a LoRA in the tree, or clicked with one selected. */
+  .weight[draggable="true"] { cursor: grab; user-select: none; transition: transform .12s, box-shadow .12s, border-color .12s; }
+  .weight[draggable="true"]:hover { transform: translateY(-1px); box-shadow: var(--shadow); border-color: var(--faint); }
+  .weight[draggable="true"]:active { cursor: grabbing; }
+  .weight.dragging { opacity: .45; }
+  .weight.current { outline: 2px solid var(--ink); outline-offset: 1px; }
+  svg.tree .leaf.over rect.body { stroke: var(--ink) !important; stroke-width: 3; stroke-dasharray: 4 3; }
   .seedrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .seedrow input { width: 150px; min-height: 30px; font-family: var(--mono); font-size: 12px; }
   .sub { display: flex; align-items: center; gap: 6px; margin: 16px 0 4px; }
@@ -350,6 +363,8 @@ let undo = [];              // earlier drawings, for Ctrl+Z; not kept across rel
 let checkTimer = null, checkSeq = 0, pollTimer = null;
 let dragged = null;         // the piece being dragged
 let datasetMode = "demo";
+let sources = null;         // GET /blends: every blend of theirs that can be opened
+let pickingJob = null;      // the job chosen in the Open box
 
 function conversationId() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -360,11 +375,12 @@ function emptyTree() { return { op: "CAT", children: [null, null] }; }
 
 function fresh() {
   return { conversation: conversationId(), stage: "drawing", transcript: [],
-           session: { tree: emptyTree(), seed: null, number: 1, questions: null, count: 20, mock: false },
+           session: { tree: emptyTree(), seed: null, number: 1, pin: null, questions: null, count: 20, mock: false },
            given: null,          // {text, name}: a dataset pasted or uploaded, sent with the test
            baseModel: null,      // the Pieces filter: a base model, "*" for all, null to follow the blend
            loraQuery: "",        // the Pieces search box: words a LoRA's name must hold
            check: null,          // the last POST /blends/check
+           from: null,           // {job, individual, label, chromosome, seed}: where the drawing was opened from
            selected: null,       // the path of the place clicked
            test: null,           // {job, verification, check, source, at}: the test asked for
            result: null,         // GET /verifications/{id}: its row and report
@@ -717,7 +733,7 @@ function swapSides(path) {
 }
 function startDrawingOver() {
   undo.push(JSON.stringify(S.session.tree));
-  S.session.tree = emptyTree(); S.session.number = 1; S.selected = "0";
+  S.session.tree = emptyTree(); S.session.number = 1; S.session.pin = null; S.from = null; S.selected = "0";
   save(); drawBoard(); drawAction(); scheduleCheck();
 }
 
@@ -740,7 +756,7 @@ async function runCheck() {
   const seq = ++checkSeq;
   const sentTree = JSON.stringify(S.session.tree), sentSeed = S.session.seed;
   try {
-    const found = await api("POST", "/blends/check", { tree: S.session.tree, seed: S.session.seed, number: S.session.number || 1 });
+    const found = await api("POST", "/blends/check", { tree: S.session.tree, seed: S.session.seed, number: S.session.number || 1, pin: S.session.pin ?? null });
     // Only the reading of the drawing on screen: an answer about an older one is dropped.
     if (seq !== checkSeq || sentTree !== JSON.stringify(S.session.tree)
         || (sentSeed !== null && sentSeed !== S.session.seed)) return;
@@ -755,7 +771,7 @@ async function runCheck() {
 }
 
 function newWeights(seed = null) {
-  S.session.seed = seed;
+  S.session.seed = seed; S.session.pin = null;      // a new draw is no saved blend's
   save(); scheduleCheck(true);
 }
 
@@ -791,7 +807,7 @@ function drawBoard() {
   const scroll = document.querySelector(".treewrap")?.scrollLeft || 0;
   const log = document.querySelector("pre.log");
   const stuck = log ? log.scrollTop + log.clientHeight >= log.scrollHeight - 20 : true;
-  const cards = [helped("visual_palette", paletteCard()), helped("visual_tree", treeCard()), helped("visual_test", testCard())];
+  const cards = [helped("visual_tree", treeCard()), helped("visual_palette", paletteCard()), helped("visual_test", testCard())];
   if (S.test) cards.push(helped("visual_result", resultCard()));
   $("board").replaceChildren(...cards);
   const wrap = document.querySelector(".treewrap");
@@ -874,8 +890,103 @@ function paletteCard() {
           "No LoRA here matches — try other words, or another base model.")),
       loras.length ? el("div", { class: "divider" }) : null,
       el("div", { class: "group" }, ...foldPieces)),
-    el("p", { class: "palette-note" }, "Drag a piece onto the tree, or click a place in the tree and then a piece. ",
+    el("p", { class: "palette-note" }, "Drag a piece onto the tree, or click a place in the tree and then a piece; drag a weight onto a LoRA to change its weight. ",
        el("b", {}, "Delete"), " empties the selected place, ", el("b", {}, "Ctrl+Z"), " undoes."));
+}
+
+// --- a blend from a job, or a random one ---------------------------------------------------
+
+async function loadSources() {
+  try { sources = (await api("GET", "/blends")).jobs || []; } catch (_) { sources = sources || []; }
+  drawBoard();
+}
+
+// Any blend of any of their jobs, drawn the moment it is picked. A searched
+// blend keeps its search's seed and its own number: the weights it was scored with.
+async function openBlend(jobId, number) {
+  const found = await api("GET", `/blends/${jobId}?individual=${number}`);
+  undo.push(JSON.stringify(S.session.tree));
+  Object.assign(S.session, { tree: found.tree, seed: found.seed, number: found.number || 1, pin: found.pin ?? null });
+  S.from = { job: found.job, individual: found.number, label: found.label, chromosome: found.drawn, seed: found.seed, pin: found.pin ?? null };
+  pickingJob = found.job;
+  S.selected = null;
+  checkSeq += 1;                      // whatever check is in flight was about the drawing before
+  S.check = null;
+  marker(`opened #${found.number} of job ${found.job}`);
+  save(); drawBoard(); drawAction(); scheduleCheck(true);
+}
+
+function openBox() {
+  const jobs = sources || [];
+  if (!jobs.length) return sources ? null : el("p", { class: "from" }, "Reading your jobs…");
+  const chosen = jobs.find((one) => one.job === pickingJob) || null;
+  const pickJob = el("select", { "aria-label": "Open a blend from one of your jobs",
+      onchange: (e) => { pickingJob = Number(e.target.value) || null; drawBoard(); } },
+    el("option", { value: "" }, "— open a blend from a job —"),
+    ...jobs.map((one) => el("option", { value: one.job, selected: chosen && one.job === chosen.job },
+      `#${one.job} · ${one.label || "untitled"} · ${one.task === "blend" ? "drawn" : "search"}`)));
+  const pickBlend = el("select", { "aria-label": "Which blend of that job to open", disabled: !chosen || busy,
+      // Let go of the box at once: the blend arrives after the change event, and a
+      // board redraw waits while one of its controls has the focus.
+      onchange: (e) => { const n = Number(e.target.value); e.target.blur(); if (n && chosen) step(() => openBlend(chosen.job, n)); } },
+    el("option", { value: "" }, chosen ? `— one of its ${chosen.blends.length} blend(s) —` : "— then a blend —"),
+    ...(chosen ? chosen.blends.map((one) => el("option", { value: one.number, disabled: one.state === "BAD",
+        selected: S.from && S.from.job === chosen.job && S.from.individual === one.number },
+      `#${one.number}${one.is_best ? " ★" : ""} · ${fmt(one.quality ?? one.fitness, 3)} · ${one.formula}${one.state === "BAD" ? " (cannot be built)" : ""}`)) : []));
+  return el("div", { class: "opener" }, pickJob, pickBlend);
+}
+
+function fromLine() {
+  const from = S.from;
+  if (!from) return null;
+  // Another drawing, or other weights, since it was opened.
+  const edited = (S.check && S.check.chromosome !== from.chromosome) || S.session.seed !== from.seed
+    || (S.session.pin ?? null) !== (from.pin ?? null);
+  const ready = S.check && S.check.state === "ok";
+  return el("p", { class: "from", title: `As it was there: ${from.chromosome}` },
+    `From job ${from.job}${from.label ? ` (${from.label})` : ""}, blend #${from.individual}`,
+    edited ? el("span", { class: "tag edited" }, "edited") : null,
+    edited ? el("button", { type: "button", class: "sm primary save", onclick: saveBlend, disabled: busy || !ready,
+      title: ready ? `Save this blend into job ${from.job}'s run as a new blend, with the weights shown`
+                   : "Finish the blend first: it has to be one that can be built" }, `Save into job ${from.job}`) : null);
+}
+
+// The edited blend saved into the run it was opened from, as a brand new blend
+// of it with the weights on screen pinned (POST /blends/{job}/save). The drawing
+// then is that new blend: its number, and its pin.
+function saveBlend() {
+  if (busy || !S.from) return;
+  const from = S.from;
+  step(async () => {
+    const saved = await api("POST", `/blends/${from.job}/save`,
+      { tree: S.session.tree, seed: S.session.seed, number: S.session.number || 1, pin: S.session.pin ?? null });
+    S.session.number = saved.number; S.session.pin = saved.check.weight_seed;
+    S.from = { job: saved.job, individual: saved.number, label: from.label, chromosome: saved.drawn,
+               seed: S.session.seed, pin: S.session.pin };
+    S.check = saved.check;
+    marker(`saved as blend #${saved.number} of job ${saved.job}`);
+    agentSays(plain(`Saved into job ${saved.job} as blend **#${saved.number}**, with the weights you see pinned. `
+      + "It is one of that run's blends now: it can be opened, verified or put live, and a resumed search runs and scores it with the rest."));
+    save();
+    loadSources();
+  });
+}
+
+// A random blend, on the base model the blend is on (else the one the Pieces show).
+function randomBlend() {
+  if (busy) return;
+  step(async () => {
+    // A model's name, never the page's words for a LoRA with none.
+    const named = (model) => model && model !== ALL_MODELS && model !== modelOf(null) ? model : null;
+    const model = named(blendModels(S.session.tree)[0]) || named(shownModel());
+    const found = await api("POST", "/blends/random", model ? { base_model: model } : {});
+    undo.push(JSON.stringify(S.session.tree));
+    Object.assign(S.session, { tree: found.tree, seed: found.seed, number: 1, pin: null });
+    S.from = null; S.selected = null;
+    checkSeq += 1;
+    S.check = found.check;
+    save();
+  });
 }
 
 function treeCard() {
@@ -883,13 +994,15 @@ function treeCard() {
   const state = !check ? null : check.state === "ok" ? pill("ok", `can be built · rank ${check.rank}`)
     : check.state === "BAD" ? pill("BAD", "cannot be built") : pill("incomplete", `${check.empty.length} empty place(s)`);
   const side = [state, el("button", { type: "button", class: "sm", onclick: undoLast, disabled: !undo.length, title: "Undo the last change (Ctrl+Z)" }, "Undo"),
+    el("button", { type: "button", class: "sm", onclick: randomBlend, disabled: busy,
+                   title: "A random blend of your LoRAs, grown the way a search grows one — a new one every click" }, "🎲 Random"),
     el("button", { type: "button", class: "sm", onclick: startDrawingOver, title: "Back to an empty CAT" }, "Clear")];
   const verdict = el("div", { class: "verdict" },
     check && check.formula ? el("span", { class: "formula" }, check.formula) : el("span", { class: "muted" }, check && check.state === "incomplete" ? words("incomplete") : ""),
     check && check.chromosome ? el("code", { title: "The chromosome a search would hold this blend as" }, check.chromosome) : null);
   const problems = check && check.state === "BAD" && check.problems.length
     ? el("ul", { class: "problems" }, ...check.problems.map((p) => el("li", {}, p))) : null;
-  return card("Your blend", side, toolbar(), el("div", { class: "treewrap" }, treeSvg()),
+  return card("Your blend", side, openBox(), fromLine(), toolbar(), el("div", { class: "treewrap" }, treeSvg()),
     verdict, problems, S.checkError ? el("p", { class: "help error" }, S.checkError) : null, weightsBlock());
 }
 
@@ -903,7 +1016,7 @@ function toolbar() {
   const tools = [];
   let said;
   if (node === null) {
-    said = [el("b", {}, "Empty place"), ` at ${where(path)} — press a piece above to fill it.`];
+    said = [el("b", {}, "Empty place"), ` at ${where(path)} — press a piece below to fill it.`];
   } else if (node.op) {
     said = [el("b", {}, node.op), ` at ${where(path)} — ${visual.folds[node.op]}`];
     tools.push(el("div", { class: "seg" }, ...FOLDS.map((op) =>
@@ -1007,7 +1120,9 @@ function treeSvg() {
     const pick = () => { S.selected = S.selected === entry.path ? null : entry.path; flashText = ""; save(); drawBoard(); };
     g.addEventListener("click", pick);
     g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
-    g.addEventListener("dragover", (e) => { if (!dragged) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; g.classList.add("over"); });
+    // A weight lands only on a LoRA a fold weights: not a fold, an empty place or a LoRA alone at the top.
+    const takes = (piece) => piece.kind !== "weight" || (entry.kind === "leaf" && entry.path !== "");
+    g.addEventListener("dragover", (e) => { if (!dragged || !takes(dragged)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; g.classList.add("over"); });
     g.addEventListener("dragleave", () => g.classList.remove("over"));
     g.addEventListener("drop", (e) => {
       e.preventDefault(); g.classList.remove("over");
@@ -1015,6 +1130,7 @@ function treeSvg() {
       try { data = data || JSON.parse(e.dataTransfer.getData("text/plain")); } catch (_) { /* not a piece */ }
       dragged = null;
       if (data && (data.kind === "lora" || data.kind === "fold")) usePiece(data, entry.path);
+      else if (data && data.kind === "weight" && takes(data)) setWeight(entry.path, data.weight);
     });
     svg.append(g);
   }
@@ -1033,10 +1149,28 @@ function weightsBlock() {
       typed = el("input", { type: "number", min: "0", value: S.session.seed ?? "", title: "The seed w1..w10 are drawn from",
                             onchange: (e) => { const v = Number(e.target.value); if (Number.isInteger(v) && v >= 0) newWeights(v); } }),
       el("button", { type: "button", class: "sm", onclick: () => newWeights(null), title: "Draw new values for w1..w10" }, "New weights")),
-    el("div", { class: "weights" }, ...WEIGHTS.map((w) => el("div", { class: "weight" + (used.has(w) ? " used" : ""),
-      title: used.has(w) ? `${w} is used in the tree` : `${w} is not used yet` },
-      el("b", {}, w), weights[w] !== undefined ? fmt(weights[w], 4) : "…",
-      el("i", { style: `width:${Math.round((weights[w] || 0) * 100)}%` })))));
+    el("div", { class: "weights" }, ...WEIGHTS.map((w) => weightTile(w, weights[w] !== undefined ? fmt(weights[w], 4) : "…",
+      used.has(w), used.has(w) ? `${w} is used in the tree` : `${w} is not used yet`))));
+}
+
+// A weight tile: dragged onto a LoRA in the tree, or clicked while one is selected.
+function weightTile(w, value, used, title) {
+  const target = selectedLeaf();
+  const tile = el("div", { class: "weight" + (used ? " used" : "") + (target && target.weight === w ? " current" : ""),
+    draggable: "true", tabindex: "0", title: title + " — drag it onto a LoRA in the tree" + (target ? ", or click it to give the selected LoRA this weight" : ""),
+    onclick: () => { if (target) setWeight(target.path, w); },
+    onkeydown: (e) => { if ((e.key === "Enter" || e.key === " ") && target) { e.preventDefault(); setWeight(target.path, w); } },
+    ondragstart: (e) => { dragged = { kind: "weight", weight: w }; e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", JSON.stringify(dragged)); e.currentTarget.classList.add("dragging"); },
+    ondragend: (e) => { dragged = null; e.currentTarget.classList.remove("dragging"); document.querySelectorAll(".over").forEach((n) => n.classList.remove("over")); } },
+    el("b", {}, w), value,
+    el("i", { style: `width:${Math.round((Number(value) || 0) * 100)}%` }));
+  return tile;
+}
+
+// The LoRA selected in the tree, when a fold weights it. -> {path, weight} or null.
+function selectedLeaf() {
+  const found = S.selected ? at(S.session.tree, S.selected) : null;
+  return found && found.node && found.node.lora !== undefined && S.selected !== "" ? { path: S.selected, weight: found.node.weight } : null;
 }
 
 // --- the test ---------------------------------------------------------------------------
@@ -1118,6 +1252,7 @@ function startTest() {
     linkToJob();
     S.result = null; S.log = [];
     marker(`test queued · verification ${reply.verification.id}`);
+    loadSources();
     agentSays(plain(words("started")));
     setStage("testing");
     poll();
@@ -1252,6 +1387,8 @@ async function send(text) {
       agent: agentChoice(), message: text, stage: S.stage, session: session(), context: chatContext(),
       history: pastTurns().slice(0, -1) });
     for (const done of reply.steps || []) toolMarker(done);
+    // A drawing started again by the chat is no longer the blend it was opened as.
+    if ((reply.steps || []).some((done) => done.ok && ["random_blend", "start_over", "draw_blend"].includes(done.tool))) S.from = null;
     if (reply.session) {
       if (JSON.stringify(reply.session.tree) !== before) { undo.push(before); S.selected = null; }
       S.session = reply.session;
@@ -1378,6 +1515,7 @@ async function useKey(value) {
   fillProviders();
   drawTranscript(); drawAction(); drawBoard();
   scheduleCheck(true);
+  loadSources();
   if (S.test && S.stage === "testing") { marker("reconnected — watching the test again"); poll(); }
   else if (S.test) poll();
   const wanted = linkedJob();
@@ -1412,12 +1550,13 @@ async function openJob(id) {
   }
   undo.push(JSON.stringify(S.session.tree));
   // A searched blend keeps its number, which its weights are drawn for.
-  Object.assign(S.session, { tree: found.tree, seed: found.seed, number: found.number || 1, count: found.count || S.session.count });
+  Object.assign(S.session, { tree: found.tree, seed: found.seed, number: found.number || 1, pin: found.pin ?? null, count: found.count || S.session.count });
+  S.from = { job: found.job, individual: found.number, label: found.label, chromosome: found.drawn, seed: found.seed, pin: found.pin ?? null };
   // Asked on a demo dataset: the same questions again, ready to test once more.
   if (((config && config.datasets) || []).some((one) => one.file === found.questions)) S.session.questions = { file: found.questions };
   S.selected = null;
   checkSeq += 1;                      // whatever check is in flight was about the drawing before
-  const check = await api("POST", "/blends/check", { tree: found.tree, seed: found.seed, number: S.session.number });
+  const check = await api("POST", "/blends/check", { tree: found.tree, seed: found.seed, number: S.session.number, pin: S.session.pin });
   S.check = check;
   S.test = found.verification ? { job: { id: found.job }, verification: { id: found.verification, status: "queued" },
                                   check, source: found.questions || "its questions", at: Date.now() } : null;

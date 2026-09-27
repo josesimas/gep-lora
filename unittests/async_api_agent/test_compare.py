@@ -96,6 +96,15 @@ class ToolTests(Mixin, JobsTestCase):
         self.assertEqual(box.pair["blends"]["B"]["seed"], seed_b)
         self.assertEqual(box.pair["blends"]["A"]["seed"], 8)
 
+    def test_a_random_blend_on_one_side(self):
+        box = self.box()
+        self.run_ok(box, "draw_blend", blend="A", loras=["slot-L1"])
+        before = dict(box.pair["blends"]["A"])
+        self.assertEqual(self.run_ok(box, "random_blend", blend="B")["blend"], "B")
+        self.assertEqual(box.pair["blends"]["A"], before)
+        self.assertEqual(box.outcome()["checks"]["B"]["state"], "ok")
+        self.assertIsNone(box.pair["blends"]["B"]["from"])
+
     def test_copying_and_swapping(self):
         box = self.box()
         self.run_ok(box, "draw_blend", blend="A", loras=["slot-L1"])
@@ -234,6 +243,12 @@ class EndpointTests(Mixin, ServerTestCase):
         self.assertEqual((side["tree"], side["seed"], side["number"]),
                          (best["tree"], best["seed"], best["number"]))
         self.assertEqual(side["from"]["job"], search)
+        # Just opened it is not edited, whatever slot numbers the search used;
+        # other weights are an edit.
+        self.assertFalse(box.run("show_blends", {})["B"]["edited_since_opened"])
+        box.run("new_weights", {"blend": "B", "seed": best["seed"] + 1})
+        self.assertTrue(box.run("show_blends", {})["B"]["edited_since_opened"])
+        box.run("open_blend", {"blend": "B", "job": search})
         self.assertEqual(box.pair["blends"]["A"], compare.session_of(self.session)["blends"]["A"])
         self.assertIn("no job", box.run("open_blend", {"blend": "A", "job": 999})["error"])
 

@@ -132,6 +132,24 @@ class DrawingTests(JobsTestCase):
             with self.assertRaises(drawn.DrawnError):
                 drawn.draw(12345, wrong)
 
+    def test_a_random_drawing_is_a_searchs_draw_that_can_be_built(self):
+        import random
+        rng = random.Random(3)
+        seen = set()
+        for _ in range(8):
+            found = drawn.random_drawing(self.registry.catalog, self.user, rng=rng)
+            self.assertEqual(found["check"]["state"], "ok", found["check"]["problems"])
+            self.assertEqual(found["check"], drawn.check(self.registry.catalog, self.user,
+                                                         found["tree"], found["seed"]))
+            self.assertTrue(set(drawn.loras_in(found["tree"])) <= set(self.ids.values()))
+            seen.add(found["check"]["chromosome"])
+        self.assertGreater(len(seen), 1)                       # a new one every time
+        with self.assertRaises(drawn.DrawnError):
+            drawn.random_drawing(self.registry.catalog, self.user, "no/such-model")
+        other = self.registry.user_for_key(self.registry.add_user("bob"))
+        with self.assertRaises(drawn.DrawnError):
+            drawn.random_drawing(self.registry.catalog, other)
+
     def test_only_their_own_ready_loras(self):
         other = self.registry.user_for_key(self.registry.add_user("bob"))
         with self.assertRaises(drawn.DrawnError):
@@ -265,6 +283,114 @@ class TestingTests(ServerTestCase):
         bob = self.registry.add_user("bob")
         self.assertEqual(self.call("GET", "/blends/%d" % search, key=bob)[0], 404)
         self.assertEqual(self.call("GET", "/blends", key=bob)[1], {"jobs": []})
+
+    def test_a_random_drawing_over_http(self):
+        status, found = self.call("POST", "/blends/random", {})
+        self.assertEqual(status, 200, found)
+        self.assertEqual(found["check"]["state"], "ok")
+        self.assertEqual(self.call("POST", "/blends/random", {"base_model": 3})[0], 400)
+        self.assertEqual(self.call("POST", "/blends/random", {"base_model": "nope"})[0], 409)
+
+    def test_an_edited_blend_saved_into_its_run(self):
+        import sqlite3
+        import start_run
+        from blends import generate_runs
+        from storage import db_datasets
+        status, reply = self.call("POST", "/jobs", self.submission())
+        search = reply["job"]["id"]
+        worker.serve(self.registry, once=True)
+        best = self.call("GET", "/blends/%d" % search)[1]
+
+        # Edited: the other LoRAs of the run, CAT over them, and a new seed.
+        tree = fold("CAT", leaf(self.ids["L2"], "w6"), leaf(self.ids["L4"], "w1"))
+        shown = self.call("POST", "/blends/check", {"tree": tree, "seed": 4242,
+                                                    "number": best["number"]})[1]
+        status, saved = self.call("POST", "/blends/%d/save" % search,
+                                  {"tree": tree, "seed": 4242, "number": best["number"]})
+        self.assertEqual(status, 201, saved)
+        self.assertEqual(saved["check"]["weights"], shown["weights"])
+
+        job = self.registry.job(search)
+        conn = store.connect(self.registry.database(job))
+        try:
+            rows = {row["number"]: row for row in store.individuals(conn, job["run_id"])}
+            one = rows[saved["number"]]
+            self.assertEqual(saved["number"], max(rows))          # a brand new number
+            # Written in the run's own slots, weights pinned to the draw shown.
+            self.assertEqual(one["chromosome"], "CAT.L2.L4.w6.w1")
+            self.assertEqual(saved["chromosome"], one["chromosome"])
+            self.assertEqual(one["weight_pin"], shown["weight_seed"])
+            self.assertEqual(one["weight_seed"], shown["weight_seed"])
+            self.assertEqual(one["state"], "ok")
+            self.assertIn("CAT", one["tree"])
+            self.assertIn("WEIGHT_SEED = %d" % shown["weight_seed"], one["script_source"])
+            run_dir = db_datasets.run_folder(conn, job["run_id"])
+            self.assertFalse(os.path.exists(os.path.join(run_dir, one["script_name"])))
+
+            # The whole runs step keeps the pin; a copy selection makes inherits it.
+            conf = store.get_settings(conn, job["run_id"])
+            context = start_run.Context(conn, job["run_id"], conf, run_dir,
+                                        generate_runs.template_path(conf.get("TEMPLATE")), None)
+            start_run.step_runs(context)
+            store.remove_scripts(conn, job["run_id"], run_dir)
+            again = {row["number"]: row for row in store.individuals(conn, job["run_id"])}
+            self.assertEqual(again[saved["number"]]["weight_seed"], shown["weight_seed"])
+            copy_number, = store.append_copies(conn, job["run_id"], [again[saved["number"]]])
+            copied = {row["number"]: row for row in store.individuals(conn, job["run_id"])}
+            self.assertEqual(copied[copy_number]["weight_pin"], shown["weight_seed"])
+        finally:
+            conn.close()
+
+        # Opened again it is that blend, with its pin, so the same weights.
+        status, opened = self.call("GET", "/blends/%d?individual=%d" % (search, saved["number"]))
+        self.assertEqual(status, 200, opened)
+        self.assertEqual((opened["tree"], opened["pin"]), (tree, shown["weight_seed"]))
+        check = self.call("POST", "/blends/check", {"tree": opened["tree"], "seed": opened["seed"],
+                                                    "number": opened["number"],
+                                                    "pin": opened["pin"]})[1]
+        self.assertEqual(check["weights"], shown["weights"])
+
+        # A LoRA the run does not blend, an unfinished drawing, a busy job, not theirs.
+        stranger = os.path.join(self.folder, "adapters", "L9")
+        os.makedirs(stranger)
+        with open(os.path.join(stranger, "adapter_config.json"), "w") as handle:
+            json.dump({"r": 16}, handle)
+        extra = self.registry.catalog.add("slot-L9", stranger, "ready", "scanned",
+                                          owner=self.user["name"], rank=16)
+        extra = extra if isinstance(extra, int) else extra["id"]
+        for body, fragment in (
+                ({"tree": fold("CAT", leaf(self.ids["L1"]), leaf(extra, "w2")), "seed": 1},
+                 "not among the LoRAs"),
+                ({"tree": fold("CAT", leaf(self.ids["L1"]), None), "seed": 1}, "not finished"),
+                ({"tree": tree, "seed": 1, "extra": 1}, "unknown field")):
+            status, reply = self.call("POST", "/blends/%d/save" % search, body)
+            self.assertEqual(status, 409, (body, reply))
+            self.assertIn(fragment, reply["error"])
+        queued = self.call("POST", "/jobs", self.submission())[1]["job"]["id"]
+        status, reply = self.call("POST", "/blends/%d/save" % queued, {"tree": tree, "seed": 1})
+        self.assertEqual(status, 409)
+        self.assertIn("queued", reply["error"])
+        bob = self.registry.add_user("bob")
+        self.assertEqual(self.call("POST", "/blends/%d/save" % search,
+                                   {"tree": tree, "seed": 1}, key=bob)[0], 404)
+
+    def test_an_old_database_gains_the_pin_column(self):
+        import sqlite3
+        path = os.path.join(self.folder, "old.sqlite3")
+        old = sqlite3.connect(path)
+        old.execute("CREATE TABLE individuals (id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL,"
+                    " number INTEGER NOT NULL, chromosome TEXT NOT NULL, tree TEXT, state TEXT,"
+                    " rank INTEGER, script_name TEXT, script_source TEXT, weight_seed INTEGER,"
+                    " fitness REAL DEFAULT 0.0, is_best INTEGER DEFAULT 0,"
+                    " has_changed INTEGER DEFAULT 0, UNIQUE (run_id, number))")
+        old.commit()
+        old.close()
+        conn = store.connect(path)
+        try:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(individuals)")}
+            self.assertIn("weight_pin", columns)
+        finally:
+            conn.close()
 
     def test_a_lin_is_a_fold_not_a_slot(self):
         # CAT(A, LIN(B, A)): two LoRAs of one rank, the second used twice.

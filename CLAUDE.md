@@ -51,19 +51,22 @@ tools/        test.py, combination.py, compare_servers.py -- dev aids, not
               part of the pipeline
 async_api/    server, worker, submit, registry, results, golive, inference,
               users, verify, evaluate, testpass, train, drawn -- the search as a web
-              service. See "The async API" below. Five pages, each served
+              service. See "The async API" below. Six pages, each served
               at its own file name: guide.html (the LoRA guide, where / lands;
               ?job=N opens a search), visual_guide.html (a blend drawn by
-              hand as a tree and tested; ?job=N opens a drawn one), runs.html
+              hand as a tree and tested; ?job=N opens a drawn one),
+              blend_comparison.html (two blends side by side, opened from
+              any job or drawn, tested on the same questions), runs.html
               (the user's runs, from GET /runs), settings.html (appearance and
               the user's defaults for the guide) and console.html (every
               endpoint by hand). nav.js is the top bar all five draw.
 async_api_agent/  settings, prompts, providers, analysis, selection, planner, blending,
-              release, tools, commands, agent, ui_help, create_summary, visual, routes -- the chat model behind
+              release, tools, commands, agent, ui_help, create_summary, visual, compare, routes -- the chat model behind
               /guide.html that walks a user to trained LoRAs, a search that blends
               them, and then testing, verifying and putting a blend live, and
               acts on what they ask in the chat; visual.py is the same for
-              /visual_guide.html, acting on the drawing
+              /visual_guide.html, acting on the drawing, and compare.py
+              the same for /blend_comparison.html, acting on two
 ```
 
 Every CLI below the top level is run as a module, from the repo root:
@@ -1065,7 +1068,7 @@ change to it. These rules hold it together:
   `<header class="topbar" id="nav" data-page="...">` -- with its own buttons inside,
   which the bar moves to its right -- followed by `<script src="/nav.js">`, loaded
   there and not deferred so `#health` and `#changeKey` exist before the page's script
-  runs. The five links, their order (Guide, Visual guide, Runs, Settings, Console) and the key's
+  runs. The six links, their order (Guide, Visual guide, Compare, Runs, Settings, Console) and the key's
   storage name are `nav.js`'s alone; a new page is an entry in its `PAGES` and in
   `server.PAGES`, and a test checks each page asks for the bar. A page's address ends
   in `.html` because `/runs` and `/settings` are already JSON endpoints. The old
@@ -1223,6 +1226,29 @@ change to it. These rules hold it together:
   Its question-mark blocks are `UI_BLOCKS` keys starting `visual_`, explained under
   the visual persona.
 
+- **A comparison is two drawn blends, never a third pipeline**
+  (`async_api_agent/compare.py`, the page `/blend_comparison.html`). Each side is
+  visual.py's session (tree, seed, **number**) plus where it was opened from, and
+  `compare.Toolbox` is a `visual.Toolbox` (its `specs`/`done` swapped) whose tools
+  take `blend` and run the visual guide's own tool on that side's view; both
+  guides' chat loop is `visual.talk()`. Any blend of the user's opens through
+  `drawn.opened()` (`GET /blends/{job}?individual=N`, listed by `GET /blends`;
+  the visual guide's Open box uses the same two) and
+  keeps its sweep's `WEIGHT_MASTER_SEED` *and its individual number*, which a
+  drawn test stores it under (`store.add_individuals(first=)`) -- so a searched
+  blend is tested with the weights it was scored with. Testing both is two
+  `POST /blends/test` bodies from `compare.plan()` on the same questions; A against
+  B is `compare.head_to_head()` over the two reports, paired by question. An edited
+  blend opened from a job is saved back into that job's run as a new individual
+  (`drawn.save()`, both pages' *Save into job N*), weights pinned -- see the weight
+  seed convention below. Its own
+  `COMPARE_*` prompts, `compare_*` steps and `UI_BLOCKS` (a test checks tools,
+  words and the page's blocks agree). Both pages' **Random** is
+  `drawn.random_drawing()` (`POST /blends/random`, the `random_blend` tool): the
+  search's own `random_tree()` under config's `MAX_DEPTH`/`BRANCH_PROB`/
+  `ROOT_LEAF_PROB`, over the user's LoRAs on one base model, redrawn until
+  `check()` says it can be built -- not a second tree grower.
+
 Its knobs live in `async_api/settings.py`, deliberately outside `config/settings.py`,
 whose `snapshot()` would store them in every sweep.
 
@@ -1349,7 +1375,14 @@ appeared to manage VRAM would be claiming to test something it cannot.
 - **Every individual carries its own weight seed.** It is derived from
   `WEIGHT_MASTER_SEED` and the individual's number, stamped into that individual's script
   and stored, so a whole sweep repeats without every individual sharing one draw.
-  `settings.py`'s `SEED` seeds the *chromosomes* only. Keep the two separate.
+  `settings.py`'s `SEED` seeds the *chromosomes* only. Keep the two separate. The one
+  exception is `individuals.weight_pin`: a blend saved by hand into a run
+  (`drawn.save()`, `POST /blends/{job}/save`) stores the seed it was shown under, and
+  `step_runs` keeps a pin instead of deriving one -- anything else that derives a
+  weight seed from a number (`golive.blend_spec`, `drawn.draw()`) must honour it too.
+  Copies inherit it (`append_copies` copies every column). A column added to a sweep
+  table goes in `store._ADDED_COLUMNS` as well, since `CREATE TABLE IF NOT EXISTS`
+  leaves an old table alone.
 - **A step reads the settings its sweep was created with**, not `settings.py` as it stands
   now; that is what makes resuming a sweep still be the same sweep. A seed left `None` is
   drawn once at sweep creation and stored as the number drawn.
