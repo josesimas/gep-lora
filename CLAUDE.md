@@ -1241,7 +1241,11 @@ change to it. These rules hold it together:
   B is `compare.head_to_head()` over the two reports, paired by question. An edited
   blend opened from a job is saved back into that job's run as a new individual
   (`drawn.save()`, both pages' *Save into job N*), weights pinned -- see the weight
-  seed convention below. Its own
+  seed convention below. *Show code* on either page is `drawn.code()` (`POST
+  /blends/code`): the run's stored `script_source` while the blend is still that
+  job's own, else `generate_runs.render()` under the settings saving or testing it
+  would use -- never a second generator -- shown by the shared overlay
+  `async_api/code_view.js`, served like `nav.js` (`server.PAGES`). Its own
   `COMPARE_*` prompts, `compare_*` steps and `UI_BLOCKS` (a test checks tools,
   words and the page's blocks agree). Both pages' **Random** is
   `drawn.random_drawing()` (`POST /blends/random`, the `random_blend` tool): the

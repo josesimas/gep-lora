@@ -46,6 +46,7 @@ order, left to right), which is the order a Karva expression is written in.
 """
 
 import json
+import os
 import random
 import shutil
 
@@ -697,6 +698,134 @@ def save(registry, catalog, user, job, payload):
         conn.close()
     return {"job": job["id"], "number": number, "chromosome": chromosome,
             "drawn": found["chromosome"], "check": found}
+
+
+# What a drawn test's script reads its questions from: the file the test writes
+# beside its sweep, which does not exist until the test does.
+TEST_QUESTIONS = "training.jsonl"
+
+
+def _run_slots(catalog, user, conf, tree):
+    """{lora id: the run's slot} for a drawing's LoRAs, or None when one of them
+    is not a LoRA that run blends."""
+    slot_of = {}
+    for slot, lora in sorted(_slot_ids(catalog, user, conf).items(),
+                             key=lambda pair: slot_key(pair[0])):
+        slot_of.setdefault(lora, slot)
+    return slot_of if all(lora in slot_of for lora in loras_in(tree)) else None
+
+
+def code(registry, catalog, user, payload):
+    """The Python a drawing runs as when it is processed. -> {name, source,
+    exact, template, note}.
+
+        {"tree", "seed", "number"?, "pin"?, "job"?: id, "count"?, "mock"?}
+
+    Never a second generator: the script is generate_runs.render()'s, from the
+    template and settings the blend would be processed under, with the weight
+    seed it is shown with.
+
+      * Opened from a job (`job`) and still its blend -- the same chromosome in
+        that run's slots, under the same weight seed -- it is the script that run
+        stored for it, byte for byte (`exact`).
+      * Opened from a job and edited, with only that run's LoRAs, it is what
+        saving it into that run (save()) would make: the run's TEMPLATE,
+        TRAINING_SET, TRAINING_COUNT, LORA_SLOTS, BASE_MODEL and CHAT_TEMPLATE.
+      * Anything else is what testing it here (create()) would run: this
+        server's TEMPLATE (the mocked one for a practice run), its LoRAs as the
+        slots in reading order, `count` questions from TEST_QUESTIONS -- the
+        file the test writes when it is started.
+
+    Refused while a place is empty; a drawing PEFT cannot build is shown all
+    the same, with the NOTE its script carries."""
+    if not isinstance(payload, dict):
+        raise DrawnError("the body is a JSON object")
+    unknown = sorted(set(payload) - {"tree", "seed", "number", "pin", "job", "count", "mock"})
+    if unknown:
+        raise DrawnError("unknown field(s): %s" % ", ".join(unknown))
+    tree = payload.get("tree")
+    found = check(catalog, user, tree, payload.get("seed"), payload.get("number"),
+                  payload.get("pin"))
+    if found["empty"]:
+        raise DrawnError("the drawing has %d empty place(s): fill them to see its code"
+                         % len(found["empty"]))
+    if found["chromosome"] is None:
+        raise DrawnError("; ".join(found["problems"]) or "the drawing cannot be read as a blend")
+    seed = found["weight_seed"]
+
+    job = payload.get("job")
+    if job is not None:
+        row = registry.job(job, user["id"]) if isinstance(job, int) and not isinstance(job, bool) \
+            else None
+        if row is None or row["status"] == reg.DELETED:
+            raise DrawnError("no job %s of yours" % (job,))
+        try:
+            conn = results.connect(registry.database(row))
+        except results.NoResults:
+            raise DrawnError("job %d's run is gone" % row["id"])
+        try:
+            conf = store.get_settings(conn, row["run_id"])
+            stored = {one["number"]: one for one in store.individuals(conn, row["run_id"])}
+        finally:
+            conn.close()
+        slot_of = _run_slots(catalog, user, conf, tree)
+        if slot_of is not None:
+            chromosome, _ = encode(tree, slot_of)
+            same = stored.get(found["number"])
+            if same is not None and same["chromosome"] == chromosome \
+                    and same["weight_seed"] == seed and same["script_source"]:
+                return {"name": same["script_name"], "source": same["script_source"],
+                        "exact": True, "template": conf.get("TEMPLATE"),
+                        "note": "The script job %d's run stored for blend #%d: exactly what "
+                                "it runs when it is processed." % (row["id"], found["number"])}
+            number = max(stored or [0]) + 1
+            return _rendered(chromosome, conf, seed, "run_%03d.py" % number,
+                             "job %d's run, as blend #%d if it is saved there" % (row["id"], number),
+                             "What this edited blend runs as once it is saved into job %d's run "
+                             "(as blend #%d): that run's template and settings, and the weights "
+                             "shown." % (row["id"], number))
+
+    # Tested here: create()'s sweep of one.
+    rows = _rows(catalog, user, loras_in(tree))
+    first = next(iter(rows.values()))
+    template = MOCKED_TEMPLATE if payload.get("mock") or found["mock"] else config.TEMPLATE
+    conf = {"TEMPLATE": template, "TRAINING_SET": TEST_QUESTIONS,
+            "TRAINING_COUNT": _count(payload.get("count")),
+            "LORA_SLOTS": {slot: rows[one["id"]]["folder"] for slot, one in found["slots"].items()},
+            "BASE_MODEL": first["base_model"] or config.BASE_MODEL,
+            "CHAT_TEMPLATE": first["chat_template"]}
+    out = _rendered(found["chromosome"], conf, seed, "run_%03d.py" % found["number"],
+                    "a test of this drawn blend",
+                    "What this blend runs as when it is tested here: %s, and the questions "
+                    "you choose, which the test writes to %s beside its sweep when it starts."
+                    % (template, TEST_QUESTIONS))
+    # The questions file does not exist yet: named as the test will name it,
+    # not resolved to somewhere on this server it will never be.
+    out["source"] = "\n".join(
+        "TRAINING_SET = %r  # written beside the test's sweep when it starts" % TEST_QUESTIONS
+        if line.startswith("TRAINING_SET = ") else line
+        for line in out["source"].split("\n"))
+    return out
+
+
+def _rendered(chromosome, conf, seed, name, where, note):
+    """generate_runs.render() for `chromosome` under a sweep's settings `conf`."""
+    try:
+        slots = generate_runs.lora_slots(conf.get("LORA_SLOTS"))
+        steps, final = generate_runs.plan(decode(chromosome)[0], generate_runs.slot_ranks(slots))
+        source = generate_runs.render(
+            chromosome, steps, final, script_name=name,
+            provenance="Shown by the async API for %s." % where,
+            label="Blend %s" % chromosome,
+            template_path=generate_runs.template_path(conf.get("TEMPLATE")),
+            weight_seed=seed, training_set=conf.get("TRAINING_SET"), slots=slots,
+            count=conf.get("TRAINING_COUNT"),
+            base_model=conf.get("BASE_MODEL"),
+            chat_template=generate_runs.chat_template_name(conf))
+    except (SystemExit, ValueError) as error:
+        raise DrawnError("its code cannot be made: %s" % error)
+    return {"name": name, "source": source, "exact": False,
+            "template": os.path.basename(str(conf.get("TEMPLATE"))), "note": note}
 
 
 def sources(registry, catalog, user):

@@ -288,8 +288,7 @@
   .duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
   @media (max-width: 1180px) { .duo { grid-template-columns: minmax(0, 1fr); } }
   .side-col { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px 12px 14px;
-              background: var(--panel); border-top: 4px solid var(--side); }
-  .side-col.picked { box-shadow: 0 0 0 2px color-mix(in srgb, var(--side) 35%, transparent); }
+              background: var(--panel); }
   .side-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
   .side-head .grow { flex: 1; min-width: 0; }
   .badge { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; flex: none;
@@ -319,7 +318,6 @@
   .tile .k { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
   .tile .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.25; }
   .tile .s { font-size: 12px; color: var(--muted); }
-  .tile.a { border-top: 3px solid var(--side-a); } .tile.b { border-top: 3px solid var(--side-b); }
   .tally { display: flex; height: 26px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); margin: 4px 0 6px; }
   .tally > div { display: grid; place-items: center; font-size: 12px; font-weight: 600; color: #fff; min-width: 0; white-space: nowrap; overflow: hidden; }
   .tally .aw { background: var(--side-a); } .tally .tie { background: var(--faint); } .tally .bw { background: var(--side-b); }
@@ -333,7 +331,7 @@
   .pair .q { font-weight: 600; margin-bottom: 6px; }
   .pair .ab { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
   @media (max-width: 760px) { .pair .ab { grid-template-columns: minmax(0, 1fr); } }
-  .pair .one { border: 1px solid var(--line); border-left: 3px solid var(--side); border-radius: 8px; padding: 6px 9px; font-size: 13px; min-width: 0; }
+  .pair .one { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 13px; min-width: 0; }
   .pair .one.won { background: color-mix(in srgb, var(--side) 8%, var(--panel)); }
   .pair .one .who { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 3px; }
   .pair .one .text { white-space: pre-wrap; color: var(--ink-2); max-height: 9em; overflow: auto; }
@@ -344,6 +342,7 @@
 <body>
 <header class="topbar" id="nav" data-page="compare" data-about="two blends side by side: open, edit and test them"></header>
 <script src="/nav.js"></script>
+<script src="/code_view.js"></script>
 
 <div class="halves">
   <!-- left: the guide -->
@@ -828,6 +827,20 @@ function randomBlend(side) {
   });
 }
 
+// The Python a side runs as when it is processed (POST /blends/code): the script
+// its run stored, when it is still a job's blend; else what saving or testing it would run.
+function showCode(side) {
+  if (busy) return;
+  const blend = blendOf(side);
+  step(async () => {
+    const body = { tree: blend.tree, seed: blend.seed, number: blend.number || 1, pin: blend.pin ?? null,
+                   count: S.session.count, mock: $("mock").checked };
+    if (blend.from) body.job = blend.from.job;
+    const found = await api("POST", "/blends/code", body);
+    gepCode.show({ title: `The code blend ${side} runs`, name: found.name, source: found.source, note: found.note, exact: found.exact });
+  });
+}
+
 function copyBlend(from) {
   const to = other(from);
   pushUndo(to);
@@ -1090,12 +1103,14 @@ function sideColumn(side) {
     check && check.chromosome ? el("code", { title: "The chromosome a search would hold this blend as" }, check.chromosome) : null);
   const problems = check && check.state === "BAD" && check.problems.length
     ? el("ul", { class: "problems" }, ...check.problems.map((p) => el("li", {}, p))) : null;
-  const picked = S.selected && S.selected.side === side;
-  return el("div", { class: "side-col" + (picked ? " picked" : ""), style: `--side:${sideVar(side)}`, "data-side": side },
+  return el("div", { class: "side-col", style: `--side:${sideVar(side)}`, "data-side": side },
     el("div", { class: "side-head" },
       el("span", { class: "badge" }, side),
       el("span", { class: "grow" }, el("span", { class: "side-name" }, `Blend ${side}`), " ", state),
       el("button", { type: "button", class: "sm", onclick: () => undoLast(side), disabled: !canUndo(side), title: `Undo the last change to ${side}` }, "Undo"),
+      el("button", { type: "button", class: "sm", onclick: () => showCode(side), disabled: busy || !check || !check.chromosome,
+                     title: check && check.chromosome ? `The Python blend ${side} runs as when it is processed`
+                                                      : "Fill every place to see the code" }, "Show code"),
       el("button", { type: "button", class: "sm", onclick: () => randomBlend(side), disabled: busy,
                      title: `A random blend of your LoRAs in ${side}, grown the way a search grows one — a new one every click` }, "🎲 Random"),
       el("button", { type: "button", class: "sm", onclick: () => copyBlend(side), title: `Copy blend ${side} onto blend ${other(side)}` }, `Copy to ${other(side)}`),

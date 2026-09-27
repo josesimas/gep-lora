@@ -65,6 +65,9 @@ Blends drawn by hand (drawn.py; the pages are /visual_guide.html and
                                           sweep of that one blend, and a verification
                                           of it beside each of its LoRAs alone on the
                                           dataset -- read back with /verifications/{id}
+    POST   /blends/code                   {tree, seed, number?, pin?, job?, count?, mock?}
+                                          -> {name, source, exact, note}: the Python the
+                                          drawing runs as when processed (drawn.code)
     POST   /blends/{job id}/save           {tree, seed, number?, pin?} -> 201: a drawing
                                           opened from that job and edited, saved into
                                           its run as a brand new individual, with the
@@ -187,10 +190,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 #                  read and saved through /agent/defaults
 #   console.html   a page that exercises every endpoint; ?job=N opens that job
 #   nav.js         the top bar every page draws
+#   code_view.js   the overlay the two drawing pages show a blend's script in
 PAGES = {name: (os.path.join(HERE, name), "text/html; charset=utf-8")
          for name in ("guide.html", "visual_guide.html", "blend_comparison.html",
                       "runs.html", "settings.html", "console.html")}
 PAGES["nav.js"] = (os.path.join(HERE, "nav.js"), "text/javascript; charset=utf-8")
+PAGES["code_view.js"] = (os.path.join(HERE, "code_view.js"), "text/javascript; charset=utf-8")
 
 # Where a page used to be, so a bookmark or an old link still lands. The query
 # goes along, so /agent?job=3 is /guide.html?job=3.
@@ -705,6 +710,13 @@ class App:
         except drawn.DrawnError as error:
             raise ApiError(409, str(error))
 
+    def drawn_code(self, user, body):
+        """The script a drawing runs as when it is processed (drawn.code)."""
+        try:
+            return 200, drawn.code(self.registry, self.catalog, user, body)
+        except drawn.DrawnError as error:
+            raise ApiError(409, str(error))
+
     def list_blends(self, user):
         """Every blend of the user's a page can open (drawn.sources)."""
         return 200, {"jobs": drawn.sources(self.registry, self.catalog, user)}
@@ -980,6 +992,7 @@ ROUTES = [
     ("POST", r"/blends/check", "check_drawn", ("body",)),
     ("POST", r"/blends/test", "test_drawn", ("body",)),
     ("POST", r"/blends/random", "random_drawn", ("body",)),
+    ("POST", r"/blends/code", "drawn_code", ("body",)),
     ("GET", r"/blends", "list_blends", ()),
     ("GET", r"/blends/(\d+)", "open_drawn", ("query",)),
     ("POST", r"/blends/(\d+)/save", "save_drawn", ("body",)),
@@ -1150,6 +1163,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        # Asked again every time: a page and its scripts change together, and a
+        # browser holding an older nav.js or code_view.js beside a newer page
+        # draws a mixture of the two.
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
 

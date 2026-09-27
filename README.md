@@ -3542,6 +3542,24 @@ failed or cancelled). The page then holds that new blend -- its number, its pin 
 and opening it again (`GET /blends/{job}?individual=N` returns `pin`) draws the same
 weights. Older sweep databases gain the column when opened (`store._migrate()`).
 
+**Show code.** Every tree has a **Show code** button (both pages). It opens an
+overlay with the Python the blend runs as when it is processed -- coloured, with
+line numbers, **Copy** and **Save as…** (the browser's own save dialog where it has
+one, a download otherwise). It is never a second generator: `POST /blends/code`
+(`drawn.code()`) hands back
+
+- the script the run **stored** for that blend, byte for byte, while the blend is
+  still a job's own (same chromosome in that run's slots, same weight seed) -- the
+  overlay says *Stored script*;
+- once it is edited, what **saving** it into that run would make: that run's
+  template and settings through `generate_runs.render()`, as its next number, with
+  the weights shown;
+- for a blend drawn here, what **testing** it would run: this server's `TEMPLATE`
+  (the mocked one for a practice run), its LoRAs as slots, and the questions the
+  test writes to `training.jsonl` beside its sweep when it starts.
+
+The overlay is `async_api/code_view.js` (`gepCode.show()`), served beside `nav.js`.
+
 ### Compare blends — two blends side by side
 
 `/blend_comparison.html` (**Compare** in the top bar) is the visual guide twice

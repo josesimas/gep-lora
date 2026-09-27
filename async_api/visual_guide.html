@@ -292,6 +292,7 @@
 <body>
 <header class="topbar" id="nav" data-page="visual" data-about="draw a blend of your LoRAs, and test it"></header>
 <script src="/nav.js"></script>
+<script src="/code_view.js"></script>
 
 <div class="halves">
   <!-- left: the guide -->
@@ -972,6 +973,20 @@ function saveBlend() {
   });
 }
 
+// The Python the blend runs as when it is processed (POST /blends/code): the
+// script its run stored, when it is still a job's blend; else what saving or
+// testing it would run.
+function showCode() {
+  if (busy) return;
+  step(async () => {
+    const body = { tree: S.session.tree, seed: S.session.seed, number: S.session.number || 1, pin: S.session.pin ?? null,
+                   count: S.session.count, mock: $("mock").checked };
+    if (S.from) body.job = S.from.job;
+    const found = await api("POST", "/blends/code", body);
+    gepCode.show({ title: "The code this blend runs", name: found.name, source: found.source, note: found.note, exact: found.exact });
+  });
+}
+
 // A random blend, on the base model the blend is on (else the one the Pieces show).
 function randomBlend() {
   if (busy) return;
@@ -994,6 +1009,9 @@ function treeCard() {
   const state = !check ? null : check.state === "ok" ? pill("ok", `can be built · rank ${check.rank}`)
     : check.state === "BAD" ? pill("BAD", "cannot be built") : pill("incomplete", `${check.empty.length} empty place(s)`);
   const side = [state, el("button", { type: "button", class: "sm", onclick: undoLast, disabled: !undo.length, title: "Undo the last change (Ctrl+Z)" }, "Undo"),
+    el("button", { type: "button", class: "sm", onclick: showCode, disabled: busy || !check || !check.chromosome,
+                   title: check && check.chromosome ? "The Python this blend runs as when it is processed"
+                                                    : "Fill every place to see the code" }, "Show code"),
     el("button", { type: "button", class: "sm", onclick: randomBlend, disabled: busy,
                    title: "A random blend of your LoRAs, grown the way a search grows one — a new one every click" }, "🎲 Random"),
     el("button", { type: "button", class: "sm", onclick: startDrawingOver, title: "Back to an empty CAT" }, "Clear")];

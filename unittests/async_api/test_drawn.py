@@ -374,6 +374,47 @@ class TestingTests(ServerTestCase):
         self.assertEqual(self.call("POST", "/blends/%d/save" % search,
                                    {"tree": tree, "seed": 1}, key=bob)[0], 404)
 
+    def test_the_code_a_blend_runs(self):
+        # Drawn here: what testing it would run, under the weights shown.
+        shown = self.call("POST", "/blends/check", {"tree": self.tree, "seed": 5})[1]
+        status, code = self.call("POST", "/blends/code", {"tree": self.tree, "seed": 5,
+                                                          "mock": True, "count": 4})
+        self.assertEqual(status, 200, code)
+        self.assertFalse(code["exact"])
+        self.assertEqual(code["template"], drawn.MOCKED_TEMPLATE)
+        self.assertIn("WEIGHT_SEED = %d" % shown["weight_seed"], code["source"])
+        self.assertIn("TRAINING_SET = 'training.jsonl'", code["source"])
+        self.assertIn("TRAINING_COUNT = 4", code["source"])
+        self.assertIn(shown["chromosome"], code["source"])
+        compile(code["source"], code["name"], "exec")           # it is Python
+        status, reply = self.call("POST", "/blends/code",
+                                  {"tree": fold("CAT", leaf(self.ids["L1"]), None), "seed": 5})
+        self.assertEqual(status, 409)
+        self.assertIn("empty", reply["error"])
+
+        # A job's blend as it is: the script its run stored, exactly.
+        status, reply = self.call("POST", "/jobs", self.submission())
+        search = reply["job"]["id"]
+        worker.serve(self.registry, once=True)
+        best = self.call("GET", "/blends/%d" % search)[1]
+        body = {"tree": best["tree"], "seed": best["seed"], "number": best["number"], "job": search}
+        code = self.call("POST", "/blends/code", body)[1]
+        self.assertTrue(code["exact"], code)
+        conn = store.connect(self.registry.database(self.registry.job(search)))
+        try:
+            rows = {one["number"]: one for one in store.individuals(conn, reply["job"]["run_id"])}
+        finally:
+            conn.close()
+        self.assertEqual(code["source"], rows[best["number"]]["script_source"])
+        self.assertEqual(code["name"], rows[best["number"]]["script_name"])
+
+        # Edited, it is what saving it into that run would make.
+        edited = dict(body, seed=best["seed"] + 1)
+        code = self.call("POST", "/blends/code", edited)[1]
+        self.assertFalse(code["exact"])
+        self.assertEqual(code["name"], "run_%03d.py" % (max(rows) + 1))
+        self.assertIn("job %d" % search, code["note"])
+
     def test_an_old_database_gains_the_pin_column(self):
         import sqlite3
         path = os.path.join(self.folder, "old.sqlite3")

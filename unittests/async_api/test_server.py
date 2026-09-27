@@ -215,6 +215,12 @@ class RefusalTests(ServerTestCase):
                 body = reply.read().decode("utf-8")
             self.assertIn('id="nav" data-page="%s"' % name, body, page)
             self.assertIn('<script src="/nav.js"></script>', body, page)
+        for page in ("/visual_guide.html", "/blend_comparison.html"):
+            with urllib.request.urlopen(self.base + page, timeout=10) as reply:
+                self.assertIn('<script src="/code_view.js"></script>', reply.read().decode("utf-8"))
+        with urllib.request.urlopen(self.base + "/code_view.js", timeout=10) as reply:
+            self.assertIn("javascript", reply.headers["Content-Type"])
+            self.assertIn("gepCode", reply.read().decode("utf-8"))
         with urllib.request.urlopen(self.base + "/nav.js", timeout=10) as reply:
             self.assertIn("javascript", reply.headers["Content-Type"])
             script = reply.read().decode("utf-8")
