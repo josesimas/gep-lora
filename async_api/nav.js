@@ -27,6 +27,8 @@
       about: "Train LoRAs and blend them, with an assistant" },
     { id: "visual", label: "Visual guide", href: "/visual_guide.html",
       about: "Draw a blend of your LoRAs as a tree, and test it" },
+    { id: "compare", label: "Compare", href: "/blend_comparison.html",
+      about: "Two blends side by side: open, edit and test them on the same questions" },
     { id: "runs", label: "Runs", href: "/runs.html",
       about: "Every search you have run, and what came of it" },
     { id: "settings", label: "Settings", href: "/settings.html",

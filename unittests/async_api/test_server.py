@@ -208,6 +208,7 @@ class RefusalTests(ServerTestCase):
 
     def test_every_page_draws_the_shared_bar(self):
         for name, page in (("guide", "/guide.html"), ("visual", "/visual_guide.html"),
+                           ("compare", "/blend_comparison.html"),
                            ("runs", "/runs.html"), ("settings", "/settings.html"),
                            ("console", "/console.html")):
             with urllib.request.urlopen(self.base + page, timeout=10) as reply:
@@ -217,8 +218,8 @@ class RefusalTests(ServerTestCase):
         with urllib.request.urlopen(self.base + "/nav.js", timeout=10) as reply:
             self.assertIn("javascript", reply.headers["Content-Type"])
             script = reply.read().decode("utf-8")
-        for page in ("/guide.html", "/visual_guide.html", "/runs.html", "/settings.html",
-                     "/console.html"):
+        for page in ("/guide.html", "/visual_guide.html", "/blend_comparison.html", "/runs.html",
+                     "/settings.html", "/console.html"):
             self.assertIn('"%s"' % page, script)
 
     def test_the_old_addresses_are_redirected_with_their_query(self):

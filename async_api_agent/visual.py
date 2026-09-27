@@ -22,6 +22,8 @@ The session:
 
     {"tree":      <drawing>        drawn.py's; an empty CAT to start
      "seed":      n | None         the WEIGHT_MASTER_SEED the weights come from
+     "number":    n                the individual they are drawn for: 1, or the
+                                   number a blend opened from a search had there
      "questions": {"file": name} | {"lora": id} | {"given": name} | None
                                    what the test asks; "given" is a dataset the
                                    page holds (pasted or uploaded) and sends
@@ -106,6 +108,10 @@ def session_of(raw):
     seed = raw.get("seed")
     if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int) or seed < 0):
         raise VisualError("the seed is a whole number, 0 or more")
+    try:
+        number = drawn.number_of(raw.get("number"))
+    except drawn.DrawnError as error:
+        raise VisualError(str(error))
     questions = raw.get("questions")
     if questions is not None and not (
             isinstance(questions, dict) and len(questions) == 1 and (
@@ -118,7 +124,7 @@ def session_of(raw):
     if isinstance(count, bool) or not isinstance(count, int) \
             or not 1 <= count <= drawn.MAX_QUESTIONS:
         raise VisualError("count is how many questions, from 1 to %d" % drawn.MAX_QUESTIONS)
-    return {"tree": copy.deepcopy(tree), "seed": seed, "questions": questions,
+    return {"tree": copy.deepcopy(tree), "seed": seed, "number": number, "questions": questions,
             "count": count, "mock": bool(raw.get("mock"))}
 
 
@@ -185,7 +191,8 @@ def places(tree, names, weights=None):
 def check_of(catalog, user, session):
     """drawn.check() for the session's drawing, or None when it cannot be read."""
     try:
-        return drawn.check(catalog, user, session["tree"], session["seed"])
+        return drawn.check(catalog, user, session["tree"], session["seed"],
+                           session.get("number"))
     except drawn.DrawnError:
         return None
 
@@ -212,7 +219,12 @@ def schemas():
 
 class Toolbox:
     """One chat message's tools: the session as they change it, and what the
-    page must do once the reply is back."""
+    page must do once the reply is back. `specs` and `done` are the tools it
+    knows and how each is said once run -- compare.py's box is this one with
+    its own."""
+
+    specs = SPECS
+    done = prompts.VISUAL_TOOL_DONE
 
     def __init__(self, catalog, user, stage, session, shared_datasets=None):
         self.catalog = catalog
@@ -228,7 +240,7 @@ class Toolbox:
         """Run one tool call. -> its result; a refusal is {"error": ...}."""
         arguments = arguments if isinstance(arguments, dict) else {}
         try:
-            if name not in SPECS:
+            if name not in self.specs:
                 raise VisualError("there is no tool called %s" % name)
             result = getattr(self, "_" + name)(**arguments)
         except (VisualError, drawn.DrawnError, blending.BlendError) as error:
@@ -238,8 +250,8 @@ class Toolbox:
         if "error" in result:
             summary = prompts.TOOL_FAILED.format(tool=name, error=result["error"])
         else:
-            self.changed = self.changed or SPECS[name][2]
-            summary = prompts.VISUAL_TOOL_DONE[name].format(**result)
+            self.changed = self.changed or self.specs[name][2]
+            summary = self.done[name].format(**result)
         self.steps.append({"tool": name, "arguments": arguments,
                            "ok": "error" not in result, "summary": summary})
         return result
@@ -380,12 +392,13 @@ class Toolbox:
         return {"where": _where(path)}
 
     def _new_weights(self, seed=None):
-        found = drawn.draw(seed)
+        found = drawn.draw(seed, self.session.get("number"))
         self.session["seed"] = found["seed"]
         return found
 
     def _start_over(self):
         self.session["tree"] = empty_tree()
+        self.session["number"] = drawn.NUMBER       # no longer a searched blend's
         return {}
 
     # --- the test ---
@@ -498,6 +511,16 @@ def chat(catalog, user, message, stage, session, context=None, choice=None, hist
              "test": {"questions": source_of(catalog, user, box.session["questions"]),
                       "count": box.session["count"], "practice_run": box.session["mock"]},
              "result": (context or {}).get("result")}
+    return talk(box, "visual_chat", facts, message, schemas(), _commands,
+                prompts.VISUAL_FALLBACK_CHAT, choice, history)
+
+
+def talk(box, step, facts, message, tools, commands, fallback, choice=None, history=None):
+    """One typed message, answered by the model with `tools` run by `box`
+    (up to agent.MAX_ROUNDS of calls), or without a model: `commands(message)`
+    read as the few plain requests it knows, and the tools' own summary said.
+    The comparison guide (compare.py) talks through this too, with its own
+    box, step and tools. -> dict(box.outcome(), message=...)."""
     history = list(history or [])[-settings.HISTORY_TURNS:]
     reason = None
     try:
@@ -508,8 +531,8 @@ def chat(catalog, user, message, stage, session, context=None, choice=None, hist
             json.dumps(facts, indent=1, ensure_ascii=False, default=str), message)}]
         text, model = "", None
         for _ in range(agent.MAX_ROUNDS):
-            reply = providers.converse(resolved, prompts.system("visual_chat"), history,
-                                       exchange, schemas())
+            reply = providers.converse(resolved, prompts.system(step), history,
+                                       exchange, tools)
             text, model = reply["text"], reply["model"]
             if not reply["calls"]:
                 break
@@ -522,7 +545,7 @@ def chat(catalog, user, message, stage, session, context=None, choice=None, hist
                                                        default=str)[:8000]})
         else:
             text = ""
-        spoken = {"text": text or agent._summary(box) or prompts.VISUAL_FALLBACK_CHAT,
+        spoken = {"text": text or agent._summary(box) or fallback,
                   "by": "%s · %s" % (resolved["label"], model), "fallback": False,
                   "note": None}
         return dict(box.outcome(), message=spoken)
@@ -530,9 +553,9 @@ def chat(catalog, user, message, stage, session, context=None, choice=None, hist
         reason = error.args[0] if error.args else None
     note = prompts.FALLBACK_NOTE.format(reason=reason) if reason else None
     if not box.steps:
-        for name, arguments in _commands(message):
+        for name, arguments in commands(message):
             box.run(name, arguments)
-    text = agent._summary(box) or prompts.VISUAL_FALLBACK_CHAT
+    text = agent._summary(box) or fallback
     return dict(box.outcome(), message={"text": text, "by": "built-in wording",
                                         "fallback": True, "note": note})
 
@@ -556,6 +579,8 @@ def plan(catalog, user, session):
     mock = session["mock"] or found["mock"]
     body = {"tree": session["tree"], "seed": found["seed"], "count": session["count"],
             "dataset": questions, "mock": mock}
+    if found["number"] != drawn.NUMBER:
+        body["number"] = found["number"]
     if wanted:
         body["settings"] = wanted
     against = sorted({one["name"] for one in found["slots"].values()})

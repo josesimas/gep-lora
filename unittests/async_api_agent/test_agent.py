@@ -663,7 +663,8 @@ class EndpointTests(ServerTestCase):
 
 # Both guides draw question marks; between them they name every block.
 PAGES = [os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                      "async_api", name) for name in ("guide.html", "visual_guide.html")]
+                      "async_api", name) for name in ("guide.html", "visual_guide.html",
+                                                       "blend_comparison.html")]
 
 
 class UiHelpTests(JobsTestCase):
@@ -673,9 +674,12 @@ class UiHelpTests(JobsTestCase):
         for path in PAGES:
             with open(path, encoding="utf-8") as handle:
                 found = set(re.findall(r'\b(?:qm|sub|helped|addCard)\("([a-z_.]+)"', handle.read()))
-            # The visual guide's blocks are its own, and the guide's are the guide's.
-            visual = path.endswith("visual_guide.html")
-            self.assertTrue(all(key.startswith("visual_") == visual for key in found), path)
+            # The visual guide's and the comparison's blocks are their own, and
+            # the guide's are the guide's.
+            own = ("visual_" if path.endswith("visual_guide.html") else
+                   "compare_" if path.endswith("blend_comparison.html") else None)
+            self.assertTrue(all((key.split("_")[0] + "_" if key.startswith(("visual_", "compare_"))
+                                 else None) == own for key in found), path)
             named |= found
         self.assertEqual(named, set(prompts.UI_BLOCKS))
         for key, (where, title, about) in prompts.UI_BLOCKS.items():

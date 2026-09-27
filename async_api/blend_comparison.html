@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Visual guide · GEP LoRA</title>
+<title>Compare blends · GEP LoRA</title>
 <style>
   :root {
     color-scheme: light;
@@ -273,11 +273,68 @@
                          100% { box-shadow: 0 0 0 0 transparent; } }
   .fresh { animation: arrive .4s ease-out; }
   @keyframes arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* --- the comparison: two of everything ------------------------------------------------- */
+  :root { --side-a: #4c5fd5; --side-b: #c2410c; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --side-a: #8b9cff; --side-b: #fb923c; } }
+  .board-inner { max-width: 1440px; }
+  .duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 1180px) { .duo { grid-template-columns: minmax(0, 1fr); } }
+  .side-col { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px 12px 14px;
+              background: var(--panel); border-top: 4px solid var(--side); }
+  .side-col.picked { box-shadow: 0 0 0 2px color-mix(in srgb, var(--side) 35%, transparent); }
+  .side-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .side-head .grow { flex: 1; min-width: 0; }
+  .badge { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; flex: none;
+           background: var(--side); color: #fff; font: 700 13px var(--mono); }
+  .side-name { font-weight: 600; font-size: 14px; }
+  .opener { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; margin-bottom: 8px; }
+  .opener select { min-height: 30px; padding: 2px 8px; font-size: 12.5px; }
+  @media (max-width: 560px) { .opener { grid-template-columns: minmax(0, 1fr); } }
+  .from { font-size: 12px; color: var(--muted); margin: 0 0 8px; min-height: 18px; overflow-wrap: anywhere; }
+  .from .tag { margin-left: 4px; }
+  .tag.edited { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+  .side-col .toolbar { min-height: 42px; padding: 6px 8px; }
+  .side-col .toolbar .what { font-size: 12.5px; }
+  .side-col .treewrap { min-height: 120px; }
+  .side-col svg.tree { max-width: 100%; }
+  .side-col .verdict { font-size: 12.5px; }
+  .side-col .weights { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
+  .side-col .weight { font-size: 11.5px; padding: 4px 6px; }
+  .vs { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .results-duo .side-col { padding-top: 10px; }
+  .results-duo .side-col h4 { margin: 0; font-size: 13px; }
+
+  /* A against B. */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); min-width: 0; }
+  .tile .k { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .tile .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.25; }
+  .tile .s { font-size: 12px; color: var(--muted); }
+  .tile.a { border-top: 3px solid var(--side-a); } .tile.b { border-top: 3px solid var(--side-b); }
+  .tally { display: flex; height: 26px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); margin: 4px 0 6px; }
+  .tally > div { display: grid; place-items: center; font-size: 12px; font-weight: 600; color: #fff; min-width: 0; white-space: nowrap; overflow: hidden; }
+  .tally .aw { background: var(--side-a); } .tally .tie { background: var(--faint); } .tally .bw { background: var(--side-b); }
+  .tally-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .verdict-line { font-size: 14px; margin: 10px 0 0; }
+  .warnline { color: var(--warn); font-size: 13px; margin: 6px 0 0; }
+  .pairs { margin-top: 12px; }
+  .pairs summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+  .pair { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .pair:last-child { border-bottom: 0; }
+  .pair .q { font-weight: 600; margin-bottom: 6px; }
+  .pair .ab { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  @media (max-width: 760px) { .pair .ab { grid-template-columns: minmax(0, 1fr); } }
+  .pair .one { border: 1px solid var(--line); border-left: 3px solid var(--side); border-radius: 8px; padding: 6px 9px; font-size: 13px; min-width: 0; }
+  .pair .one.won { background: color-mix(in srgb, var(--side) 8%, var(--panel)); }
+  .pair .one .who { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 3px; }
+  .pair .one .text { white-space: pre-wrap; color: var(--ink-2); max-height: 9em; overflow: auto; }
+  svg.dots { display: block; width: 100%; height: auto; font-family: system-ui, sans-serif; font-size: 11px; fill: var(--muted); }
 </style>
 <script src="/themes/themes.js"></script>
 </head>
 <body>
-<header class="topbar" id="nav" data-page="visual" data-about="draw a blend of your LoRAs, and test it"></header>
+<header class="topbar" id="nav" data-page="compare" data-about="two blends side by side: open, edit and test them"></header>
 <script src="/nav.js"></script>
 
 <div class="halves">
@@ -288,7 +345,7 @@
       <span id="mockTag" class="tag mock" hidden>practice run</span>
       <span class="spacer"></span>
       <button type="button" class="sm ghost model-chip" id="modelChip" title="Which model the guide talks through"><span>…</span></button>
-      <button type="button" class="sm ghost" id="restart" title="Forget this conversation and this drawing, and start again">Start over</button>
+      <button type="button" class="sm ghost" id="restart" title="Forget this conversation and both blends, and start again">Start over</button>
     </div>
     <div class="settings" id="settings" hidden>
       <div class="row">
@@ -315,13 +372,13 @@
     <div class="transcript" id="transcript" aria-live="polite"></div>
     <div class="action" id="action"></div>
     <form class="composer" id="composer">
-      <textarea id="say" rows="1" placeholder="Tell me what to draw, or ask anything…" aria-label="Message"></textarea>
+      <textarea id="say" rows="1" placeholder="Tell me what to open, draw or compare…" aria-label="Message"></textarea>
       <button type="submit" class="primary" id="send">Send</button>
     </form>
   </section>
 
-  <!-- right: the pieces, the tree, the test -->
-  <main class="board" aria-label="The blend">
+  <!-- right: the stage -- the pieces, the two blends, the test, the results -->
+  <main class="board" aria-label="The two blends">
     <div class="board-inner" id="board"></div>
   </main>
 </div>
@@ -331,25 +388,30 @@
 
 // --- state -------------------------------------------------------------------------
 //
-// The page holds the drawing and the conversation; the server keeps neither.
-// S.session is what the chat's tools act on (async_api_agent/visual.py) and what
-// POST /blends/check reads: the tree, the weight seed, the test's questions and
-// size, and the practice-run switch. Saved to this browser after every change.
+// The page holds both drawings and the conversation; the server keeps neither.
+// S.session is what the chat's tools act on (async_api_agent/compare.py): each
+// side's drawing -- the visual guide's tree, seed and number, and where it was
+// opened from -- and the test both share. Saved to this browser after every
+// change; the results are read again from the server rather than kept.
 
 const WEIGHTS = ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9", "w10"];
 const FOLDS = ["CAT", "SVD", "LIN"];
+const SIDES = ["A", "B"];
 const LORA_COLOURS = 6;
+const other = (side) => side === "A" ? "B" : "A";
 
 let key = "";
 let config = null;          // GET /agent/config: providers, demo datasets
-let visual = null;          // GET /agent/visual/config: the LoRAs, the folds, the page's words
+let visual = null;          // GET /agent/compare/config: the LoRAs, the folds, the page's words
+let sources = null;         // GET /blends: every blend of theirs that can be opened
 let helpBlocks = {};
 let S = fresh();
 let busy = false;
-let undo = [];              // earlier drawings, for Ctrl+Z; not kept across reloads
-let checkTimer = null, checkSeq = 0, pollTimer = null;
+let undo = [];              // [{side, tree}], newest last; not kept across reloads
+let checkTimers = {}, checkSeq = { A: 0, B: 0 }, pollTimer = null;
 let dragged = null;         // the piece being dragged
 let datasetMode = "demo";
+let picking = { A: null, B: null };   // the job chosen in each side's Open box
 
 function conversationId() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -357,18 +419,21 @@ function conversationId() {
 }
 
 function emptyTree() { return { op: "CAT", children: [null, null] }; }
+function emptySide() { return { tree: emptyTree(), seed: null, number: 1, from: null }; }
 
 function fresh() {
   return { conversation: conversationId(), stage: "drawing", transcript: [],
-           session: { tree: emptyTree(), seed: null, number: 1, questions: null, count: 20, mock: false },
-           given: null,          // {text, name}: a dataset pasted or uploaded, sent with the test
+           session: { blends: { A: emptySide(), B: emptySide() }, questions: null, count: 20, mock: false },
+           given: null,          // {text, name}: a dataset pasted or uploaded, sent with the tests
            baseModel: null,      // the Pieces filter: a base model, "*" for all, null to follow the blend
-           loraQuery: "",        // the Pieces search box: words a LoRA's name must hold
-           check: null,          // the last POST /blends/check
-           selected: null,       // the path of the place clicked
-           test: null,           // {job, verification, check, source, at}: the test asked for
-           result: null,         // GET /verifications/{id}: its row and report
-           log: [] };
+           loraQuery: "",
+           checks: { A: null, B: null },       // the last POST /blends/check of each
+           checkErrors: { A: null, B: null },
+           selected: null,       // {side, path}: the place clicked
+           tests: null,          // {A: {job, verification, check}, B: ..., source, at}
+           results: { A: null, B: null },      // GET /verifications/{id} of each
+           logs: { A: [], B: [] },
+           duel: null };         // POST /agent/compare/outcome: A against B
 }
 
 const $ = (id) => document.getElementById(id);
@@ -379,6 +444,7 @@ function el(tag, attrs = {}, ...children) {
     if (value === null || value === undefined || value === false) continue;
     if (name === "class") node.className = value;
     else if (name === "html") node.innerHTML = value;
+    else if (name === "style" && typeof value === "object") Object.assign(node.style, value);
     else if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
     else node.setAttribute(name, value === true ? "" : value);
   }
@@ -390,17 +456,17 @@ function el(tag, attrs = {}, ...children) {
 }
 
 function remember(name, value) {
-  try { localStorage.setItem("gep-visual-" + name, typeof value === "string" ? value : JSON.stringify(value)); } catch (_) { /* private mode */ }
+  try { localStorage.setItem("gep-compare-" + name, typeof value === "string" ? value : JSON.stringify(value)); } catch (_) { /* private mode, or full */ }
 }
 function recall(name, parse = false) {
   try {
-    const raw = localStorage.getItem("gep-visual-" + name);
+    const raw = localStorage.getItem("gep-compare-" + name);
     return parse ? (raw ? JSON.parse(raw) : null) : (raw || "");
   } catch (_) { return parse ? null : ""; }
 }
 const recallKey = gepNav.recallKey, rememberKey = gepNav.rememberKey;
 
-// Kept per API key, as the guide keeps its conversation: a hash of the key, never the key.
+// Kept per API key, as the guides keep theirs: a hash of the key, never the key.
 function sessionName() {
   let hash = 0x811c9dc5;
   for (let i = 0; i < key.length; i++) hash = Math.imul(hash ^ key.charCodeAt(i), 0x01000193) >>> 0;
@@ -408,7 +474,8 @@ function sessionName() {
 }
 
 function save() {
-  const copy = Object.assign({}, S, { log: [] });
+  // The results and the duel are the server's: read again, not kept.
+  const copy = Object.assign({}, S, { results: { A: null, B: null }, logs: { A: [], B: [] }, duel: null });
   if (copy.given && copy.given.text && copy.given.text.length > 1e6) copy.given = null;
   if (key) remember(sessionName(), copy);
 }
@@ -416,6 +483,7 @@ function save() {
 const fmt = (value, digits = 3) => (value === null || value === undefined || Number.isNaN(value)) ? "–" : Number(value).toFixed(digits);
 const clock = (date) => new Date(date || Date.now()).toTimeString().slice(0, 5);
 const pill = (status, text) => el("span", { class: "pill s-" + status }, text || status);
+const sideVar = (side) => `var(--side-${side.toLowerCase()})`;
 
 async function api(method, path, body) {
   let response, data = null;
@@ -439,7 +507,7 @@ async function api(method, path, body) {
   return data;
 }
 
-// --- light Markdown, as the guide renders it ---------------------------------------------
+// --- light Markdown, as the guides render it ---------------------------------------------
 
 const mdEscape = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const mdInline = (s) => mdEscape(s)
@@ -546,7 +614,6 @@ function qm(block, title) {
                         onclick: (e) => { e.stopPropagation(); explain(block, title, e.currentTarget); } });
 }
 
-// A card with its question mark in the heading.
 function helped(block, node) {
   const head = node.querySelector(".card-head h3");
   const button = head && qm(block, head.textContent);
@@ -562,16 +629,19 @@ function explain(block, title, button) {
   const past = pastTurns();
   userSays(`What is “${title}”?`);
   step(async () => {
-    const reply = await api("POST", "/agent/help", { agent: agentChoice(), block, title, shown, stage: "visual_" + S.stage, history: past });
+    const reply = await api("POST", "/agent/help", { agent: agentChoice(), block, title, shown, stage: "compare_" + S.stage, history: past });
     agentSays(reply.message);
   });
 }
 
-// --- the drawing ------------------------------------------------------------------------
+// --- the two drawings -------------------------------------------------------------------
 //
-// The same edits the chat's tools make (visual.py's Toolbox), done here for the
-// buttons, the clicks and the drops. A place is a path: "" the top, "0" its
-// left side, "1.0" the right side's left side.
+// The visual guide's edits (and the chat's tools, compare.py's box over
+// visual.py's), on either side. A place is a side and a path: "" the top, "0"
+// its left side, "1.0" the right side's left side.
+
+const blendOf = (side) => S.session.blends[side];
+const treeOf = (side) => S.session.blends[side].tree;
 
 function at(tree, path) {
   let parent = null, index = null, node = tree;
@@ -593,25 +663,24 @@ function places(tree) {
 }
 
 const firstEmpty = (tree) => (places(tree).find(([, node]) => node === null) || [null])[0];
-// A place in words, as drawn.place() says it: "the top", "right › left".
 const where = (path) => path === "" ? "the top" : path.split(".").map((p) => p === "0" ? "left" : "right").join(" › ");
 const loraById = (id) => (visual ? visual.loras : []).find((one) => one.id === id);
 const loraName = (id) => (loraById(id) || {}).name || `LoRA #${id}`;
-// A LoRA only attaches to the model it was trained on, so one blend is one base model.
 const ALL_MODELS = "*";
 const modelOf = (one) => (one && one.base_model) || "unknown base model";
-// The base models the drawing already uses, leaving out the place at `except`.
 function blendModels(tree, except = null) {
   return [...new Set(places(tree).filter(([path, n]) => n && n.lora !== undefined && path !== except)
     .map(([, n]) => modelOf(loraById(n.lora))))];
 }
-// Which base model the Pieces show: the one chosen, else the blend's, else the one
-// most of the user's LoRAs are on.
+// The side the pieces go to: the one with a place selected, else A.
+const activeSide = () => (S.selected && S.selected.side) || "A";
+// Which base model the Pieces show: the one chosen, else the active blend's,
+// else the other's, else the one most of the user's LoRAs are on.
 function shownModel() {
   const loras = (visual && visual.loras) || [];
   const known = new Set(loras.map(modelOf));
   if (S.baseModel === ALL_MODELS || (S.baseModel && known.has(S.baseModel))) return S.baseModel;
-  const used = blendModels(S.session.tree);
+  const used = blendModels(treeOf(activeSide())).concat(blendModels(treeOf(other(activeSide()))));
   if (used.length) return used[0];
   const counts = {};
   for (const one of loras) counts[modelOf(one)] = (counts[modelOf(one)] || 0) + 1;
@@ -628,64 +697,75 @@ function nextWeight(tree) {
   return WEIGHTS.find((w) => !used.has(w)) || "w1";
 }
 
-// Change the drawing: remembered for undo, saved, and read again by the server.
-function edit(change, note) {
-  const before = JSON.stringify(S.session.tree);
+function pushUndo(side) {
+  undo.push({ side, blend: JSON.stringify(blendOf(side)) });
+  if (undo.length > 200) undo.shift();
+}
+
+// Change one side's drawing: remembered for undo, saved, and read again by the server.
+function edit(side, change, note) {
+  const before = JSON.stringify(treeOf(side));
   const tree = JSON.parse(before);
   const outcome = change(tree);
   if (outcome === false) return false;
-  undo.push(before);
-  if (undo.length > 100) undo.shift();
-  // A change at the top hands back the new top, since it cannot be changed in place.
-  S.session.tree = outcome && outcome.tree !== undefined ? outcome.tree : tree;
-  if (outcome && outcome.select !== undefined) S.selected = outcome.select;
-  save(); drawBoard(); drawAction();
-  scheduleCheck();
+  pushUndo(side);
+  blendOf(side).tree = outcome && outcome.tree !== undefined ? outcome.tree : tree;
+  if (outcome && outcome.select !== undefined) S.selected = outcome.select === null ? null : { side, path: outcome.select };
+  afterChange(side);
   if (note) flash(note);
   return true;
 }
 
-function undoLast() {
-  if (!undo.length) return;
-  S.session.tree = JSON.parse(undo.pop());
-  if (S.selected !== null && !at(S.session.tree, S.selected)) S.selected = null;
-  save(); drawBoard(); scheduleCheck();
+function afterChange(...sides) {
+  linkToBlends();
+  save(); drawBoard(); drawAction();
+  for (const side of sides) scheduleCheck(side);
 }
 
-let flashText = "";
-function flash(text) { flashText = text; drawBoard(); setTimeout(() => { if (flashText === text) { flashText = ""; drawBoard(); } }, 2600); }
+// The last change to `side` (or to either, when not said) taken back.
+function undoLast(side = null) {
+  let i = undo.length - 1;
+  while (i >= 0 && side && undo[i].side !== side) i -= 1;
+  if (i < 0) return;
+  const [entry] = undo.splice(i, 1);
+  S.session.blends[entry.side] = JSON.parse(entry.blend);
+  if (S.selected && S.selected.side === entry.side && !at(treeOf(entry.side), S.selected.path)) S.selected = null;
+  afterChange(entry.side);
+}
+const canUndo = (side) => undo.some((one) => one.side === side);
 
-// A LoRA put at a place: an empty one, or over a LoRA (keeping its weight); on
-// a fold, into its first empty side. At the top, that makes a blend of one LoRA.
-function putLora(path, id) {
-  return edit((tree) => {
+let flashText = { A: "", B: "" };
+function flash(text, side = activeSide()) {
+  flashText[side] = text; drawBoard();
+  setTimeout(() => { if (flashText[side] === text) { flashText[side] = ""; drawBoard(); } }, 2600);
+}
+
+function putLora(side, path, id) {
+  return edit(side, (tree) => {
     let found = at(tree, path);
     if (!found) return false;
     if (found.node && found.node.op) {
       const i = found.node.children.findIndex((child) => child === null);
-      if (i < 0) { flash(`The ${found.node.op} at ${where(path)} is full — click one of its sides first.`); return false; }
+      if (i < 0) { flash(`The ${found.node.op} at ${where(path)} is full — click one of its sides first.`, side); return false; }
       path = path === "" ? String(i) : path + "." + i;
       found = { parent: found.node, index: i, node: null };
     }
     const others = blendModels(tree, path), mine = modelOf(loraById(id));
     if (others.length && !others.includes(mine)) {
-      flash(`${loraName(id)} was trained on ${mine}, and your blend is on ${others.join(", ")} — `
-            + "a blend needs all its LoRAs on one base model.");
+      flash(`${loraName(id)} was trained on ${mine}, and blend ${side} is on ${others.join(", ")} — `
+            + "a blend needs all its LoRAs on one base model.", side);
       return false;
     }
     const weight = found.node && found.node.lora !== undefined ? found.node.weight : nextWeight(tree);
     const made = { lora: id, weight };
     if (!found.parent) return { tree: made, select: "" };
     found.parent.children[found.index] = made;
-    const next = firstEmpty(tree);
-    return { select: next };
+    return { select: firstEmpty(tree) };
   });
 }
 
-// A fold put at a place: an empty one gets two empty sides, a fold changes
-// kind, and a LoRA is folded with a new empty place beside it. The top too.
-function putFold(path, op) {
-  return edit((tree) => {
+function putFold(side, path, op) {
+  return edit(side, (tree) => {
     const found = at(tree, path);
     if (!found) return false;
     if (found.node && found.node.op) {
@@ -700,63 +780,135 @@ function putFold(path, op) {
   });
 }
 
-function setWeight(path, weight) {
-  edit((tree) => { const found = at(tree, path); if (!found || !found.node || found.node.lora === undefined) return false; found.node.weight = weight; });
+function setWeight(side, path, weight) {
+  edit(side, (tree) => { const found = at(tree, path); if (!found || !found.node || found.node.lora === undefined) return false; found.node.weight = weight; });
 }
-function clearPlace(path) {
-  edit((tree) => {
+function clearPlace(side, path) {
+  edit(side, (tree) => {
     const found = at(tree, path);
     if (!found || found.node === null) return false;
-    if (!found.parent) return { tree: null, select: "" };     // the top: nothing drawn
+    if (!found.parent) return { tree: null, select: "" };
     found.parent.children[found.index] = null;
     return { select: path };
   });
 }
-function swapSides(path) {
-  edit((tree) => { const found = at(tree, path); if (!found || !found.node || !found.node.op) return false; found.node.children.reverse(); });
+function swapSides(side, path) {
+  edit(side, (tree) => { const found = at(tree, path); if (!found || !found.node || !found.node.op) return false; found.node.children.reverse(); });
 }
-function startDrawingOver() {
-  undo.push(JSON.stringify(S.session.tree));
-  S.session.tree = emptyTree(); S.session.number = 1; S.selected = "0";
-  save(); drawBoard(); drawAction(); scheduleCheck();
+function clearBlend(side) {
+  pushUndo(side);
+  S.session.blends[side] = emptySide();
+  S.checks[side] = null;
+  S.selected = { side, path: "0" };
+  afterChange(side);
+}
+function copyBlend(from) {
+  const to = other(from);
+  pushUndo(to);
+  S.session.blends[to] = JSON.parse(JSON.stringify(blendOf(from)));
+  S.checks[to] = S.checks[from];
+  afterChange(to);
+  flash(`Blend ${from} copied onto ${to} — change either as you like.`, to);
+}
+function swapBlends() {
+  pushUndo("A"); pushUndo("B");
+  const blends = S.session.blends;
+  [blends.A, blends.B] = [blends.B, blends.A];
+  [S.checks.A, S.checks.B] = [S.checks.B, S.checks.A];
+  if (S.selected) S.selected = { side: other(S.selected.side), path: S.selected.path };
+  afterChange("A", "B");
 }
 
-// A piece pressed in the palette: at the place selected, else the first empty one.
-function usePiece(piece, path = null) {
-  const target = path ?? S.selected ?? firstEmpty(S.session.tree);
-  if (target === null || target === undefined) { flash("Every place is filled — click a node to replace it, or a fold to change it."); return; }
-  if (piece.kind === "lora") putLora(target, piece.id);
-  else putFold(target, piece.op);
+function usePiece(piece, side = null, path = null) {
+  side = side || activeSide();
+  const target = path ?? (S.selected && S.selected.side === side ? S.selected.path : null) ?? firstEmpty(treeOf(side));
+  if (target === null || target === undefined) { flash(`Every place of blend ${side} is filled — click a node to replace it, or a fold to change it.`, side); return; }
+  if (piece.kind === "lora") putLora(side, target, piece.id);
+  else putFold(side, target, piece.op);
 }
 
-// --- asking the server what the drawing is --------------------------------------------------
+// --- opening a blend from a job ------------------------------------------------------------
 
-function scheduleCheck(now = false) {
-  clearTimeout(checkTimer);
-  checkTimer = setTimeout(runCheck, now ? 0 : 250);
+async function loadSources() {
+  try { sources = (await api("GET", "/blends")).jobs || []; } catch (_) { sources = sources || []; }
+  drawBoard();
 }
 
-async function runCheck() {
-  const seq = ++checkSeq;
-  const sentTree = JSON.stringify(S.session.tree), sentSeed = S.session.seed;
+const jobKind = (job) => job.task === "blend" ? "drawn" : "search";
+const jobText = (job) => `#${job.job} · ${job.label || "untitled"} · ${jobKind(job)}`;
+
+async function openBlend(side, jobId, number = null) {
+  const query = number ? `?individual=${number}` : "";
+  const found = await api("GET", `/blends/${jobId}${query}`);
+  pushUndo(side);
+  S.session.blends[side] = { tree: found.tree, seed: found.seed, number: found.number || 1,
+                              from: { job: found.job, individual: found.number, label: found.label, chromosome: found.chromosome } };
+  picking[side] = found.job;
+  checkSeq[side] += 1;                  // whatever check is in flight was about the drawing before
+  S.checks[side] = null;
+  if (S.selected && S.selected.side === side) S.selected = null;
+  marker(`${side}: opened #${found.number} of job ${found.job}`);
+  afterChange(side);
+  return found;
+}
+
+function openBox(side) {
+  const jobs = sources || [];
+  if (!jobs.length) return el("p", { class: "from" }, sources ? words("no_blends") : "Reading your jobs…");
+  const chosen = jobs.find((one) => one.job === picking[side]) || null;
+  const pickJob = el("select", { "aria-label": `Open a job's blend into ${side}`,
+      onchange: (e) => { picking[side] = Number(e.target.value) || null; drawBoard(); } },
+    el("option", { value: "" }, "— open from a job —"),
+    ...jobs.map((one) => el("option", { value: one.job, selected: chosen && one.job === chosen.job }, jobText(one))));
+  const pickBlend = el("select", { "aria-label": `Which blend of that job to open into ${side}`, disabled: !chosen || busy,
+      // Let go of the box at once: the blend arrives after the change event, and a
+      // board redraw waits while one of its controls has the focus.
+      onchange: (e) => { const n = Number(e.target.value); e.target.blur(); if (n && chosen) step(() => openBlend(side, chosen.job, n)); } },
+    el("option", { value: "" }, chosen ? `— one of its ${chosen.blends.length} blend(s) —` : "— then a blend —"),
+    ...(chosen ? chosen.blends.map((one) => el("option", { value: one.number, disabled: one.state === "BAD",
+        selected: blendOf(side).from && blendOf(side).from.job === chosen.job && blendOf(side).from.individual === one.number },
+      `#${one.number}${one.is_best ? " ★" : ""} · ${fmt(one.quality ?? one.fitness, 3)} · ${one.formula}${one.state === "BAD" ? " (cannot be built)" : ""}`)) : []));
+  return el("div", { class: "opener" }, pickJob, pickBlend);
+}
+
+function fromLine(side) {
+  const from = blendOf(side).from, check = S.checks[side];
+  if (!from) return el("p", { class: "from" }, "Drawn here.");
+  const edited = check && check.chromosome && from.chromosome && check.chromosome !== from.chromosome;
+  return el("p", { class: "from", title: from.chromosome ? `As it was there: ${from.chromosome}` : null },
+    `From job ${from.job}${from.label ? ` (${from.label})` : ""}, blend #${from.individual}`,
+    edited ? el("span", { class: "tag edited" }, "edited") : null);
+}
+
+// --- asking the server what each drawing is -------------------------------------------------
+
+function scheduleCheck(side, now = false) {
+  clearTimeout(checkTimers[side]);
+  checkTimers[side] = setTimeout(() => runCheck(side), now ? 0 : 250);
+}
+
+async function runCheck(side) {
+  const seq = ++checkSeq[side];
+  const blend = blendOf(side);
+  const sentTree = JSON.stringify(blend.tree), sentSeed = blend.seed;
   try {
-    const found = await api("POST", "/blends/check", { tree: S.session.tree, seed: S.session.seed, number: S.session.number || 1 });
-    // Only the reading of the drawing on screen: an answer about an older one is dropped.
-    if (seq !== checkSeq || sentTree !== JSON.stringify(S.session.tree)
-        || (sentSeed !== null && sentSeed !== S.session.seed)) return;
-    S.check = found;
-    if (S.session.seed === null) S.session.seed = found.seed;     // a seed drawn once, then kept
-    S.checkError = null;
+    const found = await api("POST", "/blends/check", { tree: blend.tree, seed: blend.seed, number: blend.number || 1 });
+    const now = blendOf(side);
+    if (seq !== checkSeq[side] || sentTree !== JSON.stringify(now.tree) || (sentSeed !== null && sentSeed !== now.seed)) return;
+    S.checks[side] = found;
+    if (now.seed === null) now.seed = found.seed;       // a seed drawn once, then kept
+    S.checkErrors[side] = null;
   } catch (error) {
-    if (seq !== checkSeq) return;
-    S.checkError = error.message;
+    if (seq !== checkSeq[side]) return;
+    S.checkErrors[side] = error.message;
   }
   save(); drawBoard(); drawAction();
 }
 
-function newWeights(seed = null) {
-  S.session.seed = seed;
-  save(); scheduleCheck(true);
+function newWeights(side, seed = null) {
+  pushUndo(side);
+  blendOf(side).seed = seed;
+  save(); scheduleCheck(side, true);
 }
 
 // --- the board ------------------------------------------------------------------------------
@@ -766,21 +918,16 @@ function card(title, side, ...body) {
     el("div", { class: "card-head" }, el("h3", {}, title), side ? el("div", { class: "side" }, side) : null), ...body);
 }
 
-// The board is redrawn whole, and a redraw replaces every control on it -- which
-// closes a drop-down someone has open and drops a field they are typing in. So
-// while a control on the board has the focus, a redraw from the background (a
-// check coming back, a poll, a message timing out) waits until it is left; one
-// caused by a choice made in that control goes ahead at once.
+// A redraw replaces every control on the board, so one from the background
+// waits while a control on it has the focus (as on the visual guide).
 let boardWaiting = false, boardChanged = false;
 const holdingBoard = () => {
   const active = document.activeElement;
   return Boolean(active && /^(SELECT|INPUT|TEXTAREA)$/.test(active.tagName) && $("board").contains(active));
 };
-// Set before the control's own handler runs (capture), cleared once it has.
 $("board").addEventListener("change", () => { boardChanged = true; setTimeout(() => { boardChanged = false; }, 0); }, true);
 const catchUp = () => { if (boardWaiting && !holdingBoard()) drawBoard(); };
 $("board").addEventListener("focusout", () => setTimeout(catchUp, 0));
-// And a look every half second, since a window without the focus gets no focus events.
 setInterval(catchUp, 500);
 
 function drawBoard() {
@@ -788,26 +935,22 @@ function drawBoard() {
   boardWaiting = false; boardChanged = false;
   if (!key || !visual) return $("board").replaceChildren(card("Nothing yet", null, el("div", { class: "empty-state" },
     el("b", {}, "Waiting for your API key"), el("p", {}, "Paste it on the left to begin."))));
-  const scroll = document.querySelector(".treewrap")?.scrollLeft || 0;
-  const log = document.querySelector("pre.log");
-  const stuck = log ? log.scrollTop + log.clientHeight >= log.scrollHeight - 20 : true;
-  const cards = [helped("visual_palette", paletteCard()), helped("visual_tree", treeCard()), helped("visual_test", testCard())];
-  if (S.test) cards.push(helped("visual_result", resultCard()));
+  const scroll = [...document.querySelectorAll(".treewrap")].map((one) => one.scrollLeft);
+  const logs = [...document.querySelectorAll("pre.log")].map((log) => log.scrollTop + log.clientHeight >= log.scrollHeight - 20);
+  const cards = [helped("compare_palette", paletteCard()), helped("compare_blends", blendsCard()), helped("compare_test", testCard())];
+  if (S.tests) cards.push(helped("compare_result", resultCard()));
+  if (S.duel && S.duel.head_to_head) cards.push(helped("compare_duel", duelCard(S.duel.head_to_head)));
   $("board").replaceChildren(...cards);
-  const wrap = document.querySelector(".treewrap");
-  if (wrap) wrap.scrollLeft = scroll;
-  const again = document.querySelector("pre.log");
-  if (again && stuck) again.scrollTop = again.scrollHeight;
+  document.querySelectorAll(".treewrap").forEach((one, i) => { one.scrollLeft = scroll[i] || 0; });
+  document.querySelectorAll("pre.log").forEach((log, i) => { if (logs[i] !== false) log.scrollTop = log.scrollHeight; });
 }
 
-// The row of pieces: every ready LoRA of theirs, then the three folds.
-// Every word typed must appear in the LoRA's name, rank ("r16") or base model.
+// The pieces: every ready LoRA of theirs, then the three folds; they go to the
+// blend a place is selected in (A until one is).
 const loraText = (one) => `${one.name} r${one.rank ?? ""} ${modelOf(one)}`.toLowerCase();
 const matchesQuery = (one) => (S.loraQuery || "").toLowerCase().split(/\s+/).filter(Boolean)
   .every((word) => loraText(one).includes(word));
 
-// The search box filters the pieces already drawn -- hiding, not redrawing -- so
-// the box keeps the cursor while you type.
 function applyLoraQuery() {
   const pieces = [...document.querySelectorAll(".palette .piece[data-lora]")];
   let visible = 0;
@@ -824,9 +967,9 @@ function applyLoraQuery() {
 const countText = (visible, total) => visible === total ? `${total} LoRA(s) of yours` : `${visible} of your ${total} LoRAs`;
 
 function paletteCard() {
-  const all = visual.loras, shown = shownModel();
+  const all = visual.loras, shown = shownModel(), side = activeSide();
   const loras = shown === ALL_MODELS ? all : all.filter((one) => modelOf(one) === shown);
-  const used = blendModels(S.session.tree);
+  const used = blendModels(treeOf(side));
   const counts = {};
   for (const one of all) counts[modelOf(one)] = (counts[modelOf(one)] || 0) + 1;
   const models = Object.keys(counts).sort();
@@ -834,17 +977,15 @@ function paletteCard() {
     el("select", { "aria-label": "Show the LoRAs trained on this base model",
                    onchange: (e) => { S.baseModel = e.target.value; save(); drawBoard(); } },
       ...models.map((model) => el("option", { value: model, selected: model === shown },
-        `${model} · ${counts[model]}${used.includes(model) ? " (your blend)" : ""}`)),
+        `${model} · ${counts[model]}${used.includes(model) ? ` (blend ${side})` : ""}`)),
       el("option", { value: ALL_MODELS, selected: shown === ALL_MODELS }, `All base models · ${all.length}`))) : null;
   const search = all.length ? el("input", { type: "search", class: "lora-search", value: S.loraQuery || "",
     placeholder: "Find a LoRA…", "aria-label": "Show only the LoRAs whose name has these words",
     oninput: (e) => { S.loraQuery = e.target.value; save(); applyLoraQuery(); },
     onkeydown: (e) => { if (e.key === "Escape" && e.target.value) { e.stopPropagation(); e.target.value = ""; S.loraQuery = ""; save(); applyLoraQuery(); } } }) : null;
   const matching = loras.filter(matchesQuery).length;
-  // Looking at LoRAs the blend cannot take: say so, rather than let a drop fail.
   const elsewhere = used.length && shown !== ALL_MODELS && !used.includes(shown)
-    ? el("p", { class: "help error" }, `Your blend is on ${used.join(", ")}; these LoRAs are on ${shown} and cannot join it. `
-        + "Clear the blend to start one on this model.") : null;
+    ? el("p", { class: "help error" }, `Blend ${side} is on ${used.join(", ")}; these LoRAs are on ${shown} and cannot join it.`) : null;
   const piece = (data, dot, colour, name, sub, title) => el("button", {
     type: "button", class: "piece" + (data.kind === "fold" ? " fold" : ""), draggable: "true", title,
     onclick: () => usePiece(data),
@@ -854,7 +995,7 @@ function paletteCard() {
   const loraPieces = loras.map((one) => {
     const node = piece({ kind: "lora", id: one.id }, "L", loraColour(one.id), one.name,
       `rank ${one.rank ?? "?"}${one.practice_run ? " · practice" : ""}`,
-      `${one.name}: rank ${one.rank ?? "?"} on ${one.base_model || "?"} — drag it into the tree, or click it to put it at the selected place`);
+      `${one.name}: rank ${one.rank ?? "?"} on ${one.base_model || "?"} — drag it onto either tree, or click it to put it at the selected place`);
     node.dataset.lora = one.id;
     node.hidden = !matchesQuery(one);
     return node;
@@ -874,30 +1015,49 @@ function paletteCard() {
           "No LoRA here matches — try other words, or another base model.")),
       loras.length ? el("div", { class: "divider" }) : null,
       el("div", { class: "group" }, ...foldPieces)),
-    el("p", { class: "palette-note" }, "Drag a piece onto the tree, or click a place in the tree and then a piece. ",
+    el("p", { class: "palette-note" }, "Drag a piece onto either tree, or click a place in one and then a piece — a click goes to ",
+       el("b", { style: `color:${sideVar(side)}` }, `blend ${side}`), " now. ",
        el("b", {}, "Delete"), " empties the selected place, ", el("b", {}, "Ctrl+Z"), " undoes."));
 }
 
-function treeCard() {
-  const check = S.check;
+// The hero: the two blends side by side.
+function blendsCard() {
+  return card("The two blends", [
+      el("button", { type: "button", class: "sm", onclick: swapBlends, title: "Put A where B is, and B where A is" }, "Swap A ⇄ B"),
+      el("button", { type: "button", class: "sm", onclick: loadSources, title: "Read your jobs again" }, "Refresh jobs")],
+    el("div", { class: "duo" }, ...SIDES.map(sideColumn)));
+}
+
+function sideColumn(side) {
+  const check = S.checks[side];
   const state = !check ? null : check.state === "ok" ? pill("ok", `can be built · rank ${check.rank}`)
-    : check.state === "BAD" ? pill("BAD", "cannot be built") : pill("incomplete", `${check.empty.length} empty place(s)`);
-  const side = [state, el("button", { type: "button", class: "sm", onclick: undoLast, disabled: !undo.length, title: "Undo the last change (Ctrl+Z)" }, "Undo"),
-    el("button", { type: "button", class: "sm", onclick: startDrawingOver, title: "Back to an empty CAT" }, "Clear")];
+    : check.state === "BAD" ? pill("BAD", "cannot be built") : pill("incomplete", `${check.empty.length} empty`);
   const verdict = el("div", { class: "verdict" },
-    check && check.formula ? el("span", { class: "formula" }, check.formula) : el("span", { class: "muted" }, check && check.state === "incomplete" ? words("incomplete") : ""),
+    check && check.formula ? el("span", { class: "formula" }, check.formula) : el("span", { class: "muted" }, check && check.state === "incomplete" ? "Fill every empty place." : ""),
     check && check.chromosome ? el("code", { title: "The chromosome a search would hold this blend as" }, check.chromosome) : null);
   const problems = check && check.state === "BAD" && check.problems.length
     ? el("ul", { class: "problems" }, ...check.problems.map((p) => el("li", {}, p))) : null;
-  return card("Your blend", side, toolbar(), el("div", { class: "treewrap" }, treeSvg()),
-    verdict, problems, S.checkError ? el("p", { class: "help error" }, S.checkError) : null, weightsBlock());
+  const picked = S.selected && S.selected.side === side;
+  return el("div", { class: "side-col" + (picked ? " picked" : ""), style: `--side:${sideVar(side)}`, "data-side": side },
+    el("div", { class: "side-head" },
+      el("span", { class: "badge" }, side),
+      el("span", { class: "grow" }, el("span", { class: "side-name" }, `Blend ${side}`), " ", state),
+      el("button", { type: "button", class: "sm", onclick: () => undoLast(side), disabled: !canUndo(side), title: `Undo the last change to ${side}` }, "Undo"),
+      el("button", { type: "button", class: "sm", onclick: () => copyBlend(side), title: `Copy blend ${side} onto blend ${other(side)}` }, `Copy to ${other(side)}`),
+      el("button", { type: "button", class: "sm", onclick: () => clearBlend(side), title: "Back to an empty CAT" }, "Clear")),
+    openBox(side),
+    fromLine(side),
+    toolbar(side),
+    el("div", { class: "treewrap" }, treeSvg(side)),
+    verdict, problems, S.checkErrors[side] ? el("p", { class: "help error" }, S.checkErrors[side]) : null,
+    weightsBlock(side));
 }
 
-// What can be done to the place selected.
-function toolbar() {
-  const path = S.selected;
-  const found = path === null ? null : at(S.session.tree, path);
-  if (flashText) return el("div", { class: "toolbar" }, el("span", { class: "what" }, flashText));
+// What can be done to the place selected, in its own blend.
+function toolbar(side) {
+  if (flashText[side]) return el("div", { class: "toolbar" }, el("span", { class: "what" }, flashText[side]));
+  const path = S.selected && S.selected.side === side ? S.selected.path : null;
+  const found = path === null ? null : at(treeOf(side), path);
   if (!found) return el("div", { class: "toolbar" }, el("span", { class: "what muted" }, "Click a place in the tree to change it."));
   const node = found.node;
   const tools = [];
@@ -905,27 +1065,25 @@ function toolbar() {
   if (node === null) {
     said = [el("b", {}, "Empty place"), ` at ${where(path)} — press a piece above to fill it.`];
   } else if (node.op) {
-    said = [el("b", {}, node.op), ` at ${where(path)} — ${visual.folds[node.op]}`];
+    said = [el("b", {}, node.op), ` at ${where(path)}`];
     tools.push(el("div", { class: "seg" }, ...FOLDS.map((op) =>
-      el("button", { type: "button", class: op === node.op ? "active" : "", onclick: () => putFold(path, op) }, op))));
-    tools.push(el("button", { type: "button", class: "sm", onclick: () => swapSides(path) }, "Swap sides"));
+      el("button", { type: "button", class: op === node.op ? "active" : "", onclick: () => putFold(side, path, op) }, op))));
+    tools.push(el("button", { type: "button", class: "sm", onclick: () => swapSides(side, path) }, "Swap sides"));
   } else {
-    const weights = (S.check || {}).weights || {};
+    const weights = (S.checks[side] || {}).weights || {};
     said = [el("b", {}, loraName(node.lora)), ` at ${where(path)}`];
-    if (path === "") said.push(" — alone, at full strength. Put a fold here to blend it with another.");
+    if (path === "") said.push(" — alone, at full strength.");
     else tools.push(el("label", { class: "check" }, "weight",
-      el("select", { onchange: (e) => setWeight(path, e.target.value) },
+      el("select", { onchange: (e) => setWeight(side, path, e.target.value) },
         ...WEIGHTS.map((w) => el("option", { value: w, selected: w === node.weight }, weights[w] !== undefined ? `${w} = ${fmt(weights[w], 3)}` : w)))));
   }
-  if (node !== null) tools.push(el("button", { type: "button", class: "sm danger", onclick: () => clearPlace(path),
+  if (node !== null) tools.push(el("button", { type: "button", class: "sm danger", onclick: () => clearPlace(side, path),
     title: path === "" ? "Empty the top, and everything under it" : null }, "Remove"));
   return el("div", { class: "toolbar" }, el("span", { class: "what" }, ...said), ...tools);
 }
 
-// The drawing, laid out the way the report draws a chromosome
-// (generate_html_db_stats.tree_svg): a LoRA and its weight are one leaf, each
-// leaf or empty place takes the next spot along, a fold sits over its sides.
-function treeSvg() {
+// One blend's tree, laid out as the visual guide lays it out.
+function treeSvg(side) {
   const ns = "http://www.w3.org/2000/svg";
   const make = (tag, attrs = {}, text) => {
     const node = document.createElementNS(ns, tag);
@@ -934,8 +1092,9 @@ function treeSvg() {
     return node;
   };
   const step = 150, level = 96, opW = 100, opH = 44, leafW = 134, leafH = 50, mx = 20, my = 16;
-  const nodes = (S.check || {}).nodes || {};
-  const weights = (S.check || {}).weights || {};
+  const nodes = (S.checks[side] || {}).nodes || {};
+  const weights = (S.checks[side] || {}).weights || {};
+  const tree = treeOf(side);
   const placed = [];
   let counter = 0, deepest = 0;
   const visit = (node, path, depth) => {
@@ -951,12 +1110,13 @@ function treeSvg() {
     placed.push(entry);
     return entry;
   };
-  visit(S.session.tree, "", 0);
+  visit(tree, "", 0);
   const width = mx * 2 + Math.max(1, counter) * step, height = my * 2 + deepest * level + leafH + 6;
+  // Shrunk to fit its half of the stage, but never so far that it cannot be read.
   const svg = make("svg", { class: "tree", viewBox: `0 0 ${width} ${height}`, width, role: "img",
-                            "aria-label": "the blend, as a tree" });
+                            "aria-label": `blend ${side}, as a tree`, style: `min-width:${Math.min(width, 420)}px` });
   const y = (entry) => my + entry.depth * level;
-  const next = firstEmpty(S.session.tree);
+  const next = firstEmpty(tree);
   for (const entry of placed) {
     if (entry.kind !== "op") continue;
     for (const kid of entry.kids) {
@@ -980,11 +1140,10 @@ function treeSvg() {
       g.append(make("text", { class: "sym", x: entry.x, y: top + 19, "text-anchor": "middle" }, entry.node.op));
       g.append(make("text", { class: "rank", x: entry.x, y: top + 35, "text-anchor": "middle" },
         info.rank !== undefined ? (info.broken ? "ranks differ" : `rank ${info.rank}`) : "rank ?"));
-      title = `${entry.node.op} at ${where(entry.path)} — ${visual.folds[entry.node.op]}` + (info.rank !== undefined ? `, rank ${info.rank}` : "")
+      title = `${side}: ${entry.node.op} at ${where(entry.path)} — ${visual.folds[entry.node.op]}` + (info.rank !== undefined ? `, rank ${info.rank}` : "")
         + (info.broken ? ". PEFT cannot build this: its two sides have different ranks." : "");
     } else if (entry.kind === "leaf") {
       const name = loraName(entry.node.lora);
-      // A LoRA alone at the top has no fold to apply its weight: it runs at full strength.
       const alone = entry.path === "";
       const value = weights[entry.node.weight];
       const body = make("rect", { class: "body", x: x0, y: top, width: w, height: h, rx: 10 });
@@ -993,18 +1152,23 @@ function treeSvg() {
       g.append(make("text", { class: "name", x: entry.x, y: top + 21, "text-anchor": "middle" }, name.length > 17 ? name.slice(0, 16) + "…" : name));
       g.append(make("text", { class: "wt", x: entry.x, y: top + 38, "text-anchor": "middle" },
         `${alone ? "full strength" : entry.node.weight + (value !== undefined ? " = " + fmt(value, 3) : "")}${info.rank !== undefined ? " · r" + info.rank : ""}`));
-      title = alone ? `${name} alone, at full strength${info.rank !== undefined ? ", rank " + info.rank : ""} — fold it with something to weight it`
-        : `${name} at ${entry.node.weight}${value !== undefined ? " = " + fmt(value, 4) : ""}${info.rank !== undefined ? ", rank " + info.rank : ""}`;
+      title = alone ? `${side}: ${name} alone, at full strength${info.rank !== undefined ? ", rank " + info.rank : ""}`
+        : `${side}: ${name} at ${entry.node.weight}${value !== undefined ? " = " + fmt(value, 4) : ""}${info.rank !== undefined ? ", rank " + info.rank : ""}`;
     } else {
       g.append(make("rect", { class: "body", x: x0, y: top, width: w, height: h, rx: 10 }));
       g.append(make("text", { x: entry.x, y: top + 22, "text-anchor": "middle" }, "+"));
       g.append(make("text", { x: entry.x, y: top + 38, "text-anchor": "middle" }, words("empty_place")));
-      title = `An empty place at ${where(entry.path)}`;
+      title = `${side}: an empty place at ${where(entry.path)}`;
     }
     g.append(make("title", {}, title));
     const pad = entry.kind === "op" ? 8 : 5;
-    if (entry.path === S.selected) g.append(make("rect", { class: "ring", x: x0 - pad, y: top - pad, width: w + 2 * pad, height: h + 2 * pad, rx: 10 + pad }));
-    const pick = () => { S.selected = S.selected === entry.path ? null : entry.path; flashText = ""; save(); drawBoard(); };
+    if (S.selected && S.selected.side === side && entry.path === S.selected.path)
+      g.append(make("rect", { class: "ring", x: x0 - pad, y: top - pad, width: w + 2 * pad, height: h + 2 * pad, rx: 10 + pad }));
+    const pick = () => {
+      const same = S.selected && S.selected.side === side && S.selected.path === entry.path;
+      S.selected = same ? null : { side, path: entry.path };
+      flashText[side] = ""; save(); drawBoard();
+    };
     g.addEventListener("click", pick);
     g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
     g.addEventListener("dragover", (e) => { if (!dragged) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; g.classList.add("over"); });
@@ -1014,32 +1178,32 @@ function treeSvg() {
       let data = dragged;
       try { data = data || JSON.parse(e.dataTransfer.getData("text/plain")); } catch (_) { /* not a piece */ }
       dragged = null;
-      if (data && (data.kind === "lora" || data.kind === "fold")) usePiece(data, entry.path);
+      if (data && (data.kind === "lora" || data.kind === "fold")) usePiece(data, side, entry.path);
     });
     svg.append(g);
   }
   return svg;
 }
 
-function weightsBlock() {
-  const check = S.check;
-  const used = new Set(places(S.session.tree).filter(([, n]) => n && n.lora !== undefined).map(([, n]) => n.weight));
+function weightsBlock(side) {
+  const blend = blendOf(side), check = S.checks[side];
+  const used = new Set(places(blend.tree).filter(([, n]) => n && n.lora !== undefined).map(([, n]) => n.weight));
   const weights = (check || {}).weights || {};
-  let typed = null;
   return el("div", {},
-    el("h3", { class: "sub" }, "Weights", qm("visual_tree.weights", "Weights")),
+    el("h3", { class: "sub" }, "Weights", qm("compare_blends.weights", "Weights"),
+       blend.number > 1 ? el("span", { class: "muted small", style: "font-weight:400" }, `drawn for #${blend.number}, as in its search`) : null),
     el("div", { class: "seedrow" },
       el("span", { class: "muted small" }, "seed"),
-      typed = el("input", { type: "number", min: "0", value: S.session.seed ?? "", title: "The seed w1..w10 are drawn from",
-                            onchange: (e) => { const v = Number(e.target.value); if (Number.isInteger(v) && v >= 0) newWeights(v); } }),
-      el("button", { type: "button", class: "sm", onclick: () => newWeights(null), title: "Draw new values for w1..w10" }, "New weights")),
+      el("input", { type: "number", min: "0", value: blend.seed ?? "", title: `The seed blend ${side}'s w1..w10 are drawn from`,
+                    onchange: (e) => { const v = Number(e.target.value); if (Number.isInteger(v) && v >= 0) newWeights(side, v); } }),
+      el("button", { type: "button", class: "sm", onclick: () => newWeights(side, null), title: `Draw new values for blend ${side}'s w1..w10` }, "New weights")),
     el("div", { class: "weights" }, ...WEIGHTS.map((w) => el("div", { class: "weight" + (used.has(w) ? " used" : ""),
-      title: used.has(w) ? `${w} is used in the tree` : `${w} is not used yet` },
-      el("b", {}, w), weights[w] !== undefined ? fmt(weights[w], 4) : "…",
+      title: used.has(w) ? `${w} is used in blend ${side}` : `${w} is not used in blend ${side}` },
+      el("b", {}, w), weights[w] !== undefined ? fmt(weights[w], 3) : "…",
       el("i", { style: `width:${Math.round((weights[w] || 0) * 100)}%` })))));
 }
 
-// --- the test ---------------------------------------------------------------------------
+// --- the test: the same questions for both -------------------------------------------------
 
 function sourceText() {
   const q = S.session.questions;
@@ -1047,6 +1211,19 @@ function sourceText() {
   if (q.file) return q.file;
   if (q.given) return q.given;
   return `${loraName(q.lora)}'s training data`;
+}
+
+const bothReady = () => SIDES.every((side) => S.checks[side] && S.checks[side].state === "ok");
+
+function whyNot() {
+  for (const side of SIDES) {
+    const check = S.checks[side];
+    if (!check || check.state !== "ok")
+      return check && check.state === "BAD" ? `Blend ${side} cannot be built yet — see its problems above.` : words("incomplete");
+  }
+  if (!S.session.questions) return "Choose the questions to test on.";
+  if (S.stage === "testing") return "The tests are running.";
+  return null;
 }
 
 function testCard() {
@@ -1059,11 +1236,11 @@ function testCard() {
       el("option", { value: "" }, "— pick a demo dataset —"),
       ...demos.map((one) => el("option", { value: one.file, selected: q && q.file === one.file }, `${one.file} · ${one.records} conversation(s)`)));
   } else if (datasetMode === "lora") {
-    const inTree = new Set(places(S.session.tree).filter(([, n]) => n && n.lora !== undefined).map(([, n]) => n.lora));
-    const loras = [...visual.loras].sort((a, b) => inTree.has(b.id) - inTree.has(a.id));
+    const inTrees = new Set(SIDES.flatMap((side) => places(treeOf(side)).filter(([, n]) => n && n.lora !== undefined).map(([, n]) => n.lora)));
+    const loras = [...visual.loras].sort((a, b) => inTrees.has(b.id) - inTrees.has(a.id));
     pane = el("select", { onchange: (e) => setQuestions(e.target.value ? { lora: Number(e.target.value) } : null) },
       el("option", { value: "" }, "— the data one of your LoRAs was trained on —"),
-      ...loras.map((one) => el("option", { value: one.id, selected: q && q.lora === one.id }, `${one.name}${inTree.has(one.id) ? " (in the blend)" : ""}`)));
+      ...loras.map((one) => el("option", { value: one.id, selected: q && q.lora === one.id }, `${one.name}${inTrees.has(one.id) ? " (in a blend)" : ""}`)));
   } else {
     const input = el("input", { type: "file", accept: ".json,.jsonl,.txt,.csv", hidden: true, onchange: (e) => e.target.files[0] && readFile(e.target.files[0]) });
     const drop = el("div", { class: "drop", onclick: () => input.click(),
@@ -1075,10 +1252,9 @@ function testCard() {
     pane = el("div", {}, input, drop, el("div", { style: "display:flex;gap:8px;margin-top:8px;align-items:flex-start" }, paste,
       el("button", { type: "button", class: "sm", onclick: () => { if (paste.value.trim()) useGiven(paste.value, "your pasted questions"); } }, "Use it")));
   }
-  const ready = S.check && S.check.state === "ok";
-  const why = !ready ? (S.check && S.check.state === "BAD" ? "The blend cannot be built yet — see the problems above." : words("incomplete"))
-    : !q ? "Choose the questions to test on." : S.stage === "testing" ? "A test is running." : null;
-  return card("Test", el("span", { class: "muted small" }, "the blend, and each of its LoRAs alone, on the same questions"),
+  const why = whyNot();
+  const mock = S.session.mock || SIDES.some((side) => S.checks[side] && S.checks[side].mock);
+  return card("Test both", el("span", { class: "muted small" }, "both blends, and each one's LoRAs alone, on the same questions"),
     el("div", { class: "seg", style: "margin-bottom:10px" }, ...modes.map(([id, label]) =>
       el("button", { type: "button", class: datasetMode === id ? "active" : "", onclick: () => { datasetMode = id; drawBoard(); } }, label))),
     el("div", { class: "test-grid" },
@@ -1087,95 +1263,119 @@ function testCard() {
         el("input", { id: "count", type: "number", min: "1", max: String(visual.max_questions), value: S.session.count,
                       onchange: (e) => { const v = Number(e.target.value); if (Number.isInteger(v) && v >= 1 && v <= visual.max_questions) { S.session.count = v; save(); drawAction(); } } }))),
     el("div", { class: "go" },
-      el("button", { type: "button", class: "primary lg", onclick: startTest, disabled: busy || Boolean(why) }, "Test this blend"),
-      el("span", { class: "muted small" }, why || `${S.session.count} question(s) from ${sourceText()}${S.session.mock || (S.check && S.check.mock) ? " · practice run" : ""}`)));
+      el("button", { type: "button", class: "primary lg", onclick: startTest, disabled: busy || Boolean(why) }, "Test both blends"),
+      el("span", { class: "muted small" }, why || `${S.session.count} question(s) from ${sourceText()}${mock ? " · practice run" : ""}`)));
 }
 
 function setQuestions(questions) { S.session.questions = questions; save(); drawBoard(); drawAction(); }
-
-function useGiven(text, name) {
-  S.given = { text, name };
-  setQuestions({ given: name });
-}
-
+function useGiven(text, name) { S.given = { text, name }; setQuestions({ given: name }); }
 async function readFile(file) {
   if (file.size > 20 * 1024 * 1024) return flash("That file is over 20 MB — pick a smaller one.");
   useGiven(await file.text(), file.name);
 }
 
+const session = () => Object.assign({}, S.session, { mock: $("mock").checked });
+
+// Both tests, through the plan read back: one POST /blends/test per blend.
 function startTest() {
   if (busy) return;
   step(async () => {
-    const planned = await api("POST", "/agent/visual/plan", { session: session() });
-    const body = Object.assign({}, planned.test);
-    if (body.dataset && body.dataset.given) {
-      if (!S.given) throw new Error("the dataset you gave is no longer in this browser — give it again");
-      body.dataset = { text: S.given.text, name: S.given.name };
-    }
+    const planned = await api("POST", "/agent/compare/plan", { session: session() });
     agentSays(planned.message);
-    const reply = await api("POST", "/blends/test", body);
-    S.test = { job: reply.job, verification: reply.verification, check: reply.blend, source: planned.source, at: Date.now() };
-    linkToJob();
-    S.result = null; S.log = [];
-    marker(`test queued · verification ${reply.verification.id}`);
+    const tests = { source: planned.source, at: Date.now() };
+    for (const side of SIDES) {
+      const body = Object.assign({}, planned.tests[side]);
+      if (body.dataset && body.dataset.given) {
+        if (!S.given) throw new Error("the dataset you gave is no longer in this browser — give it again");
+        body.dataset = { text: S.given.text, name: S.given.name };
+      }
+      let reply;
+      try {
+        reply = await api("POST", "/blends/test", body);
+      } catch (error) {
+        if (side === "B" && tests.A) marker(`blend A's test is queued (verification ${tests.A.verification.id}), but B's could not be`);
+        throw new Error(`blend ${side}: ${error.message}`);
+      }
+      tests[side] = { job: reply.job, verification: reply.verification, check: reply.blend };
+      marker(`${side}: test queued · verification ${reply.verification.id}`);
+    }
+    S.tests = tests;
+    S.results = { A: null, B: null }; S.logs = { A: [], B: [] }; S.duel = null;
+    linkToBlends();
     agentSays(plain(words("started")));
     setStage("testing");
     poll();
   });
 }
 
-const session = () => Object.assign({}, S.session, { mock: $("mock").checked });
+const finished = (row) => row && (row.status === "done" || row.status === "failed");
 
 async function poll() {
   clearTimeout(pollTimer);
-  if (!S.test || !key) return;
-  const id = S.test.verification.id;
-  try {
-    const reply = await api("GET", `/verifications/${id}`);
-    S.result = reply.verification;
-    try { S.log = (await api("GET", `/verifications/${id}/log?lines=60`)).lines || []; } catch (_) { /* no log yet */ }
-  } catch (error) {
-    if (error.status === 404) { S.test = null; S.result = null; setStage("drawing"); return; }
+  if (!S.tests || !key) return;
+  for (const side of SIDES) {
+    if (finished(S.results[side])) continue;
+    const id = S.tests[side].verification.id;
+    try {
+      S.results[side] = (await api("GET", `/verifications/${id}`)).verification;
+      try { S.logs[side] = (await api("GET", `/verifications/${id}/log?lines=40`)).lines || []; } catch (_) { /* no log yet */ }
+    } catch (error) {
+      if (error.status === 404) { S.tests = null; S.results = { A: null, B: null }; S.duel = null; setStage("drawing"); return; }
+    }
   }
   save(); drawBoard();
-  const status = S.result && S.result.status;
-  if (status === "done" || status === "failed") {
+  if (SIDES.every((side) => finished(S.results[side]))) {
+    const ids = { a: S.tests.A.verification.id, b: S.tests.B.verification.id };
     if (S.stage === "testing") {
       setStage("tested");
       step(async () => {
-        const reply = await api("POST", "/agent/visual/debrief", { agent: agentChoice(), verification: id, history: pastTurns() });
+        const reply = await api("POST", "/agent/compare/debrief", Object.assign({ agent: agentChoice(), history: pastTurns() }, ids));
+        S.duel = reply.result;
         agentSays(reply.message);
       });
+    } else if (!S.duel) {
+      try { S.duel = await api("POST", "/agent/compare/outcome", ids); } catch (_) { /* shown without it */ }
+      drawBoard();
     }
     return;
   }
   pollTimer = setTimeout(poll, 3000);
 }
 
-// The tested blend's LoRAs by slot, so a result row is named, not "L2".
-function contestantName(slot) {
-  const slots = (S.test && S.test.check && S.test.check.slots) || {};
-  if (slot === "blend") return "Your blend";
+// A tested blend's LoRAs by slot, so a result row is named, not "L2".
+function contestantName(side, slot) {
+  const slots = (S.tests && S.tests[side] && S.tests[side].check && S.tests[side].check.slots) || {};
+  if (slot === "blend") return `Blend ${side}`;
   return slots[slot] ? slots[slot].name + " alone" : slot + " alone";
 }
 
 function resultCard() {
-  const row = S.result || S.test.verification;
+  return card("Results", el("span", { class: "muted small" }, `on ${S.tests.source}`),
+    el("div", { class: "duo results-duo" }, ...SIDES.map(resultColumn)));
+}
+
+function resultColumn(side) {
+  const row = S.results[side] || S.tests[side].verification;
+  const status = row.status;
   const report = row.report;
-  const side = [pill(row.status), el("span", { class: "muted small" }, `verification ${row.id} · job ${S.test.job.id}`)];
-  const tested = el("p", { class: "small" }, "Tested: ", el("b", {}, S.test.check.formula || S.test.check.chromosome), ` on ${S.test.source}`);
+  const test = S.tests[side];
+  const head = el("div", { class: "side-head" }, el("span", { class: "badge" }, side),
+    el("span", { class: "grow" }, el("span", { class: "side-name" }, `Blend ${side}`), " ", pill(status)),
+    el("span", { class: "muted small" }, `verification ${row.id} · job ${test.job.id}`));
+  const tested = el("p", { class: "small" }, "Tested: ", el("b", {}, test.check.formula || test.check.chromosome));
+  const column = (...body) => el("div", { class: "side-col", style: `--side:${sideVar(side)}` }, head, tested, ...body);
   if (!report) {
     const waiting = row.status === "failed" ? el("p", { class: "help error" }, row.error || "The test failed — see its log.")
       : el("p", { class: "muted" }, row.status === "queued" ? "Queued: the worker takes it after anything ahead of it." : "Running: the blend and each LoRA answer the questions, then they are scored.");
-    return card("Result", side, tested, waiting, S.log.length ? el("pre", { class: "log" }, S.log.join("\n")) : null);
+    return column(waiting, S.logs[side].length ? el("pre", { class: "log" }, S.logs[side].join("\n")) : null);
   }
   const rows = [...report.summary].sort((a, b) => (a.key !== "blend") - (b.key !== "blend") || (b.mean ?? -1) - (a.mean ?? -1));
-  return card("Result", side, tested, meansChart(rows),
+  return column(meansChart(side, rows),
     el("div", { class: "scroll" }, el("table", {},
-      el("thead", {}, el("tr", {}, el("th", {}, "Contestant"), el("th", { class: "num" }, "Mean"), el("th", { class: "num" }, "Blend wins"),
-        el("th", { class: "num" }, "Ties"), el("th", { class: "num" }, "Blend loses"), el("th", { class: "num" }, "p"))),
+      el("thead", {}, el("tr", {}, el("th", {}, "Contestant"), el("th", { class: "num" }, "Mean"), el("th", { class: "num" }, "Wins"),
+        el("th", { class: "num" }, "Ties"), el("th", { class: "num" }, "Loses"), el("th", { class: "num" }, "p"))),
       el("tbody", {}, ...rows.map((one) => el("tr", {},
-        el("td", {}, one.key === "blend" ? el("b", {}, contestantName(one.key)) : contestantName(one.key)),
+        el("td", {}, one.key === "blend" ? el("b", {}, contestantName(side, one.key)) : contestantName(side, one.key)),
         el("td", { class: "num" }, fmt(one.mean)),
         el("td", { class: "num" }, one.key === "blend" ? "" : one.wins),
         el("td", { class: "num" }, one.key === "blend" ? "" : one.ties),
@@ -1183,26 +1383,28 @@ function resultCard() {
         el("td", { class: "num" }, one.key === "blend" ? "" : fmt(one.p))))))),
     el("p", { class: "muted small", style: "margin-top:8px" },
       `${report.meta.questions} question(s), graded by ${report.meta.evaluator} (${report.meta.judge})`),
-    answersBlock(report));
+    answersBlock(side, report));
 }
 
-function meansChart(rows) {
+function meansChart(side, rows) {
   const ns = "http://www.w3.org/2000/svg";
   const make = (tag, attrs = {}, text) => { const n = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text !== undefined) n.textContent = text; return n; };
-  const bar = 20, gap = 7, left = 130, width = 440, height = rows.length * (bar + gap) + 10;
-  const svg = make("svg", { class: "chart", viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "average score of each contestant" });
+  const bar = 18, gap = 6, left = 130, width = 420, height = rows.length * (bar + gap) + 8;
+  const svg = make("svg", { class: "chart", viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `average score of blend ${side} and each of its LoRAs` });
   rows.forEach((one, i) => {
-    const top = 4 + i * (bar + gap), w = Math.max(2, (width - left - 60) * (one.mean || 0));
-    svg.append(make("text", { x: left - 8, y: top + 15, "text-anchor": "end", fill: "var(--ink-2)", "font-weight": one.key === "blend" ? 700 : 400 }, contestantName(one.key)));
-    const r = make("rect", { x: left, y: top, width: w, height: bar, rx: 5, fill: one.key === "blend" ? "var(--accent)" : "var(--faint)" });
-    r.append(make("title", {}, `${contestantName(one.key)}: ${fmt(one.mean)}`));
+    const top = 4 + i * (bar + gap), w = Math.max(2, (width - left - 50) * (one.mean || 0));
+    const label = contestantName(side, one.key);
+    svg.append(make("text", { x: left - 8, y: top + 13, "text-anchor": "end", fill: "var(--ink-2)", "font-weight": one.key === "blend" ? 700 : 400 },
+      label.length > 20 ? label.slice(0, 19) + "…" : label));
+    const r = make("rect", { x: left, y: top, width: w, height: bar, rx: 5, fill: one.key === "blend" ? sideVar(side) : "var(--faint)" });
+    r.append(make("title", {}, `${label}: ${fmt(one.mean)}`));
     svg.append(r);
-    svg.append(make("text", { x: left + w + 6, y: top + 15, fill: "var(--ink)" }, fmt(one.mean)));
+    svg.append(make("text", { x: left + w + 6, y: top + 13, fill: "var(--ink)" }, fmt(one.mean)));
   });
   return svg;
 }
 
-function answersBlock(report) {
+function answersBlock(side, report) {
   const keys = ["blend", ...Object.keys(report.answers).filter((k) => k !== "blend").sort()];
   const count = (report.answers.blend || []).length;
   return el("details", { class: "answers" }, el("summary", {}, `Every answer, question by question (${count})`),
@@ -1210,8 +1412,71 @@ function answersBlock(report) {
       el("div", { class: "q" }, `${i + 1}. ${(report.answers.blend[i] || {}).question || ""}`),
       ...keys.map((k) => { const one = (report.answers[k] || [])[i] || {};
         return el("div", { class: "a" + (k === "blend" ? " blend" : ""), title: one.reason || "" },
-          el("span", { class: "who" }, contestantName(k)), el("span", { class: "text" }, one.answer || "—"),
+          el("span", { class: "who" }, contestantName(side, k)), el("span", { class: "text" }, one.answer || "—"),
           el("span", { class: "score" }, fmt(one.quality, 2))); }))));
+}
+
+// A against B: computed by the server (compare.head_to_head), drawn here.
+function duelCard(duel) {
+  const verdict = duel.a_is === "better" ? ["A", "Blend A is clearly the better of the two."]
+    : duel.a_is === "worse" ? ["B", "Blend B is clearly the better of the two."]
+    : [null, "Neither is clearly better — with this many questions the difference could be luck."];
+  const scored = duel.a_wins + duel.ties + duel.b_wins;
+  const part = (n) => scored ? `${(100 * n / scored).toFixed(2)}%` : "0";
+  const tile = (cls, k, v, s) => el("div", { class: "tile " + cls }, el("div", { class: "k" }, k), el("div", { class: "v" }, v), s ? el("div", { class: "s" }, s) : null);
+  return card("A against B", el("span", { class: "muted small" }, `${duel.questions} question(s) both answered`),
+    el("div", { class: "tiles" },
+      tile("a", "Blend A", fmt(duel.a_mean), "average score"),
+      tile("b", "Blend B", fmt(duel.b_mean), "average score"),
+      tile("", "A − B", duel.delta === null ? "–" : (duel.delta >= 0 ? "+" : "") + fmt(duel.delta), "per question, on average"),
+      tile("", "p", fmt(duel.p), duel.p < 0.05 ? "unlikely to be luck" : "could be luck")),
+    el("div", { class: "tally", role: "img", "aria-label": `A won ${duel.a_wins}, tied ${duel.ties}, B won ${duel.b_wins}` },
+      duel.a_wins ? el("div", { class: "aw", style: { width: part(duel.a_wins) }, title: `A won ${duel.a_wins}` }, `A ${duel.a_wins}`) : null,
+      duel.ties ? el("div", { class: "tie", style: { width: part(duel.ties) }, title: `${duel.ties} tie(s)` }, `= ${duel.ties}`) : null,
+      duel.b_wins ? el("div", { class: "bw", style: { width: part(duel.b_wins) }, title: `B won ${duel.b_wins}` }, `B ${duel.b_wins}`) : null),
+    el("div", { class: "tally-legend" }, el("span", {}, "questions A scored higher"), el("span", {}, "ties"), el("span", {}, "questions B scored higher")),
+    duelDots(duel),
+    el("p", { class: "verdict-line" }, verdict[0] ? el("b", { style: `color:${sideVar(verdict[0])}` }, verdict[1]) : verdict[1]),
+    duel.same_grader ? null : el("p", { class: "warnline" }, `They were graded differently (A: ${duel.graders[0].evaluator} / ${duel.graders[0].judge}, B: ${duel.graders[1].evaluator} / ${duel.graders[1].judge}), so read this with care.`),
+    duel.only_a || duel.only_b ? el("p", { class: "warnline" }, `${duel.only_a} question(s) only A answered and ${duel.only_b} only B answered are left out.`) : null,
+    el("details", { class: "pairs" }, el("summary", {}, `Every question, A beside B (${duel.rows.length})`),
+      ...duel.rows.map((one, i) => {
+        const a = one.A.quality, b = one.B.quality;
+        const won = (side) => a !== null && b !== null && (side === "A" ? a > b : b > a);
+        const half = (side) => el("div", { class: "one" + (won(side) ? " won" : ""), style: `--side:${sideVar(side)}`, title: one[side].reason || "" },
+          el("div", { class: "who" }, el("span", {}, `Blend ${side}${won(side) ? " ✓" : ""}`), el("span", {}, fmt(one[side].quality, 2))),
+          el("div", { class: "text" }, one[side].answer || "—"));
+        return el("div", { class: "pair" }, el("div", { class: "q" }, `${i + 1}. ${one.question || ""}`),
+          el("div", { class: "ab" }, half("A"), half("B")));
+      })));
+}
+
+// Each question as a line from A's score to B's: which way, and how far.
+function duelDots(duel) {
+  const ns = "http://www.w3.org/2000/svg";
+  const make = (tag, attrs = {}, text) => { const n = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text !== undefined) n.textContent = text; return n; };
+  const rows = duel.rows.filter((one) => one.A.quality !== null && one.B.quality !== null);
+  if (!rows.length) return null;
+  const step = rows.length > 60 ? 6 : rows.length > 30 ? 10 : 16, left = 34, right = 14, width = 640;
+  const height = 22 + rows.length * step + 8;
+  const x = (v) => left + (width - left - right) * v;
+  const svg = make("svg", { class: "dots", viewBox: `0 0 ${width} ${height}`, role: "img",
+                            "aria-label": "each question's score for A and for B" });
+  for (const tick of [0, 0.25, 0.5, 0.75, 1]) {
+    svg.append(make("line", { x1: x(tick), x2: x(tick), y1: 14, y2: height - 4, stroke: "var(--line)" }));
+    svg.append(make("text", { x: x(tick), y: 10, "text-anchor": "middle" }, String(tick)));
+  }
+  rows.forEach((one, i) => {
+    const cy = 22 + i * step + step / 2, a = one.A.quality, b = one.B.quality;
+    const g = make("g", {});
+    g.append(make("line", { x1: x(a), x2: x(b), y1: cy, y2: cy, stroke: a > b ? "var(--side-a)" : a < b ? "var(--side-b)" : "var(--faint)", "stroke-width": 2, opacity: .7 }));
+    g.append(make("circle", { cx: x(a), cy, r: Math.min(5, step / 2.4), fill: "var(--side-a)" }));
+    g.append(make("circle", { cx: x(b), cy, r: Math.min(5, step / 2.4), fill: "var(--side-b)" }));
+    if (step >= 14) g.append(make("text", { x: left - 6, y: cy + 4, "text-anchor": "end" }, String(i + 1)));
+    g.append(make("title", {}, `${i + 1}. ${(one.question || "").slice(0, 120)} — A ${fmt(a, 2)}, B ${fmt(b, 2)}`));
+    svg.append(g);
+  });
+  return el("div", { class: "scroll", style: "margin:10px 0 4px" }, svg);
 }
 
 // --- the left: what to do now ---------------------------------------------------------------
@@ -1219,12 +1484,12 @@ function answersBlock(report) {
 function drawAction() {
   if (!key || !visual) return $("action").replaceChildren();
   const instruction = (visual.words.instructions || {})[S.stage] || "";
-  const ready = S.check && S.check.state === "ok" && S.session.questions && S.stage !== "testing";
-  $("action").replaceChildren(el("div", { class: "ask" }, S.stage === "testing" ? "Testing" : S.stage === "tested" ? "Tested" : "Drawing"),
+  const ready = !whyNot();
+  $("action").replaceChildren(el("div", { class: "ask" }, S.stage === "testing" ? "Testing" : S.stage === "tested" ? "Compared" : "Choosing"),
     el("div", { class: "small", html: md(instruction) }),
     el("div", { class: "buttons" },
-      el("button", { type: "button", class: "primary", onclick: startTest, disabled: busy || !ready }, "Test this blend"),
-      el("button", { type: "button", class: "sm ghost", onclick: undoLast, disabled: busy || !undo.length }, "Undo")),
+      el("button", { type: "button", class: "primary", onclick: startTest, disabled: busy || !ready }, "Test both blends"),
+      el("button", { type: "button", class: "sm ghost", onclick: () => undoLast(), disabled: busy || !undo.length }, "Undo")),
     el("p", { class: "help" }, words("hint")));
 }
 
@@ -1237,40 +1502,47 @@ function agentChoice() {
 }
 
 function chatContext() {
-  const report = S.result && S.result.report;
-  if (!report) return {};
-  return { result: { formula: S.test.check.formula, questions: report.meta.questions,
-                     means: Object.fromEntries(report.summary.map((one) => [contestantName(one.key), one.mean])) } };
+  if (!S.duel) return {};
+  const side = (one) => one && one.report ? { formula: one.report.formula, mean: one.report.blend_mean } : { status: one && one.status };
+  const duel = S.duel.head_to_head;
+  return { result: { A: side(S.duel.A), B: side(S.duel.B),
+                     head_to_head: duel ? { a_wins: duel.a_wins, ties: duel.ties, b_wins: duel.b_wins, p: duel.p, a_is: duel.a_is } : null } };
 }
 
 async function send(text) {
   userSays(text);
   let wantsTest = false;
   await step(async () => {
-    const before = JSON.stringify(S.session.tree);
-    const reply = await api("POST", "/agent/visual/chat", {
+    const before = { A: JSON.stringify(blendOf("A")), B: JSON.stringify(blendOf("B")) };
+    const reply = await api("POST", "/agent/compare/chat", {
       agent: agentChoice(), message: text, stage: S.stage, session: session(), context: chatContext(),
       history: pastTurns().slice(0, -1) });
     for (const done of reply.steps || []) toolMarker(done);
     if (reply.session) {
-      if (JSON.stringify(reply.session.tree) !== before) { undo.push(before); S.selected = null; }
+      for (const side of SIDES) {
+        if (JSON.stringify(reply.session.blends[side]) !== before[side]) {
+          undo.push({ side, blend: before[side] });
+          if (S.selected && S.selected.side === side) S.selected = null;
+        }
+      }
       S.session = reply.session;
       $("mock").checked = S.session.mock; drawChip();
       if (S.session.questions && S.session.questions.given && !S.given) S.session.questions = null;
     }
-    if (reply.check) S.check = reply.check;
+    if (reply.checks) S.checks = { A: reply.checks.A, B: reply.checks.B };
     agentSays(reply.message);
+    linkToBlends();
     save(); drawBoard();
     wantsTest = (reply.actions || []).some((action) => action.type === "test");
   });
-  // Started once the reply is in, through the button's own path.
   if (wantsTest) startTest();
 }
 
 // --- the model the guide talks through: the guide's own picker -------------------------------
 
 function fillProviders() {
-  const saved = JSON.parse(localStorage.getItem("gep-agent-agent") || "null") || {};
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem("gep-agent-agent") || "null") || {}; } catch (_) { /* private mode */ }
   $("provider").replaceChildren(...config.providers.map((p) =>
     el("option", { value: p.name }, p.label + (p.ready ? "" : ` — needs ${p.key_env}`))));
   $("provider").value = config.providers.some((p) => p.name === saved.provider) ? saved.provider : config.default.provider;
@@ -1294,7 +1566,7 @@ function providerChanged(clear = true) {
   loadModels();
 }
 
-// The same choice the guide remembers, so both guides talk through one model.
+// The same choice the other guides remember, so every guide talks through one model.
 function rememberAgent() {
   try { localStorage.setItem("gep-agent-agent", JSON.stringify({ provider: $("provider").value, model: $("model").value.trim(), base_url: $("baseUrl").value.trim() })); } catch (_) { /* private mode */ }
   drawChip();
@@ -1338,7 +1610,7 @@ function keyGate(message) {
   $("action").replaceChildren();
   $("transcript").replaceChildren(el("div", { class: "gate" },
     el("h3", {}, "Hi! Let's get you connected"),
-    el("p", { class: "muted" }, "I build blends of your own LoRAs through this server's API, so I need your API key. Create one on the server with ",
+    el("p", { class: "muted" }, "I compare blends of your own LoRAs through this server's API, so I need your API key. Create one on the server with ",
       el("code", {}, "python -m async_api.users add <name>"), "."),
     el("form", { onsubmit: (e) => { e.preventDefault(); useKey($("keyInput").value.trim()); } },
       el("label", { for: "keyInput" }, "API key"),
@@ -1357,13 +1629,13 @@ async function useKey(value) {
   key = value;
   if (!key) return keyGate("Paste a key first.");
   try {
-    [config, visual] = await Promise.all([api("GET", "/agent/config"), api("GET", "/agent/visual/config")]);
+    [config, visual] = await Promise.all([api("GET", "/agent/config"), api("GET", "/agent/compare/config")]);
   } catch (error) {
     key = "";
     return keyGate(error.status === 401 ? "That key is not known to this server." : error.message);
   }
   try { helpBlocks = (await api("GET", "/agent/help")).blocks || {}; } catch (_) { helpBlocks = {}; }
-  $("guideHelp").replaceChildren(...[qm("visual_guide", "Your guide")].filter(Boolean));
+  $("guideHelp").replaceChildren(...[qm("compare_guide", "Your guide")].filter(Boolean));
   rememberKey(key);
   $("changeKey").hidden = false;
   $("composer").hidden = false;
@@ -1371,79 +1643,61 @@ async function useKey(value) {
   if (saved && saved.transcript && saved.transcript.length) {
     S = Object.assign(fresh(), saved);
     S.session = Object.assign(fresh().session, S.session || {});
+    S.session.blends = Object.assign({ A: emptySide(), B: emptySide() }, S.session.blends || {});
   } else {
     S = fresh();
   }
   undo = [];
   fillProviders();
   drawTranscript(); drawAction(); drawBoard();
-  scheduleCheck(true);
-  if (S.test && S.stage === "testing") { marker("reconnected — watching the test again"); poll(); }
-  else if (S.test) poll();
-  const wanted = linkedJob();
-  if (wanted && !(S.test && S.test.job.id === wanted)) await openJob(wanted);
-  else linkToJob();
+  SIDES.forEach((side) => scheduleCheck(side, true));
+  loadSources();
+  if (S.tests) { if (S.stage === "testing") marker("reconnected — watching the tests again"); poll(); }
+  await openLinked();
   if (!S.transcript.length) intro();
 }
 
-// The address says which drawn blend's test is on screen (/visual_guide.html?job=N),
-// so a reload, a bookmark or the runs page brings it back.
-function linkToJob() {
-  const url = new URL(location.href), id = S.test && S.test.job && S.test.job.id;
-  if (String(id || "") === (url.searchParams.get("job") || "")) return;
-  if (id) url.searchParams.set("job", id); else url.searchParams.delete("job");
-  history.replaceState(null, "", url);
+// The address says which blends are on screen (?a=JOB.N&b=JOB.N, as opened
+// from a job), so a reload, a bookmark or a shared link brings them back.
+function linkToBlends() {
+  const url = new URL(location.href);
+  for (const side of SIDES) {
+    const from = blendOf(side).from, name = side.toLowerCase();
+    if (from) url.searchParams.set(name, `${from.job}.${from.individual}`); else url.searchParams.delete(name);
+  }
+  if (url.href !== location.href) history.replaceState(null, "", url);
 }
 
-const linkedJob = () => {
-  const id = Number(new URLSearchParams(location.search).get("job"));
-  return Number.isInteger(id) && id > 0 ? id : null;
-};
-
-// /visual_guide.html?job=N: that drawn blend of the user's, drawn again with its test.
-async function openJob(id) {
-  let found;
-  try {
-    found = await api("GET", `/blends/${id}`);
-  } catch (error) {
-    agentSays(plain(error.status === 404 ? `There is no blend ${id} of yours to open.` : error.message));
-    linkToJob();
-    return false;
+async function openLinked() {
+  const query = new URLSearchParams(location.search);
+  for (const side of SIDES) {
+    const wanted = (query.get(side.toLowerCase()) || "").match(/^(\d+)(?:\.(\d+))?$/);
+    if (!wanted) continue;
+    const [job, number] = [Number(wanted[1]), wanted[2] ? Number(wanted[2]) : null];
+    const from = blendOf(side).from;
+    if (from && from.job === job && (number === null || from.individual === number)) continue;
+    try { await openBlend(side, job, number); }
+    catch (error) { agentSays(plain(error.status === 404 ? `There is no job ${job} of yours to open into ${side}.` : `${side}: ${error.message}`)); }
   }
-  undo.push(JSON.stringify(S.session.tree));
-  // A searched blend keeps its number, which its weights are drawn for.
-  Object.assign(S.session, { tree: found.tree, seed: found.seed, number: found.number || 1, count: found.count || S.session.count });
-  // Asked on a demo dataset: the same questions again, ready to test once more.
-  if (((config && config.datasets) || []).some((one) => one.file === found.questions)) S.session.questions = { file: found.questions };
-  S.selected = null;
-  checkSeq += 1;                      // whatever check is in flight was about the drawing before
-  const check = await api("POST", "/blends/check", { tree: found.tree, seed: found.seed, number: S.session.number });
-  S.check = check;
-  S.test = found.verification ? { job: { id: found.job }, verification: { id: found.verification, status: "queued" },
-                                  check, source: found.questions || "its questions", at: Date.now() } : null;
-  S.result = null; S.log = [];
-  marker(`opened drawn blend · job ${found.job}`);
-  setStage(S.test ? "testing" : "drawing");
-  linkToJob();
-  if (S.test) poll();
-  return true;
+  linkToBlends();
 }
 
 function intro() {
   step(async () => {
-    const reply = await api("POST", "/agent/visual/intro", { agent: agentChoice(), session: session() });
+    const reply = await api("POST", "/agent/compare/intro", { agent: agentChoice(), session: session() });
     agentSays(reply.message);
-    S.selected = firstEmpty(S.session.tree);
   });
 }
 
 function startOver() {
   clearTimeout(pollTimer);
   S = fresh();
-  linkToJob();
+  picking = { A: null, B: null };
   S.session.mock = $("mock").checked;
   undo = [];
-  save(); drawTranscript(); drawAction(); drawBoard(); scheduleCheck(true);
+  linkToBlends();
+  save(); drawTranscript(); drawAction(); drawBoard();
+  SIDES.forEach((side) => scheduleCheck(side, true));
   intro();
 }
 
@@ -1469,9 +1723,9 @@ $("changeKey").addEventListener("click", () => keyGate());
 document.addEventListener("keydown", (e) => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "");
   if (typing || !visual) return;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undoLast(); }
-  else if ((e.key === "Delete" || e.key === "Backspace") && S.selected !== null) { e.preventDefault(); clearPlace(S.selected); }
-  else if (e.key === "Escape") { S.selected = null; flashText = ""; drawBoard(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undoLast(S.selected ? S.selected.side : null); }
+  else if ((e.key === "Delete" || e.key === "Backspace") && S.selected) { e.preventDefault(); clearPlace(S.selected.side, S.selected.path); }
+  else if (e.key === "Escape") { S.selected = null; flashText = { A: "", B: "" }; drawBoard(); }
 });
 
 const stored = recallKey();

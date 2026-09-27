@@ -591,13 +591,17 @@ def dataset_summary(conn, run_id):
 # --- the population --------------------------------------------------------
 
 
-def add_individuals(conn, run_id, chromosomes):
-    """Store a freshly drawn population. Replaces any already held for this run."""
+def add_individuals(conn, run_id, chromosomes, first=1):
+    """Store a freshly drawn population. Replaces any already held for this run.
+
+    Numbered from `first`, 1 for any population a search draws. A blend drawn
+    by hand from a searched one (async_api/drawn.py) keeps the number it had
+    there, since an individual's weights are drawn from its number."""
     conn.execute("DELETE FROM individuals WHERE run_id = ?", (run_id,))
     conn.executemany(
         "INSERT INTO individuals (run_id, number, chromosome) VALUES (?, ?, ?)",
         [(run_id, number, chromosome)
-         for number, chromosome in enumerate(chromosomes, 1)])
+         for number, chromosome in enumerate(chromosomes, first)])
     conn.commit()
 
 

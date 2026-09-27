@@ -2,8 +2,8 @@
 ui_help.py - "What is this?" for the blocks of the guide pages.
 
 Every block of async_api/guide.html (and of visual_guide.html, whose keys
-start with "visual_") that can be explained carries a
-question mark: the cards on the right and the charts and tables inside them,
+start with "visual_", and of blend_comparison.html, "compare_") that can be
+explained carries a question mark: the cards on the right and the charts and tables inside them,
 the conversation and the step's controls on the left. Pressing one sends
 POST /agent/help the block's key and what the block shows at that moment,
 and the answer is written into the conversation on the left like any other
@@ -74,7 +74,9 @@ def explain(block, title=None, shown=None, stage=None, choice=None, history=None
     fallback = prompts.FALLBACK_HELP.format(title=title, about=about)
     # The page's words for the question too (helpQuestion in guide.html).
     asked = "What do I do at “%s”?" if block == "controls" else "What is “%s”?"
-    # The visual guide's blocks are explained by the guide of that page.
-    step = "visual_help" if block.startswith("visual_") else "help"
+    # The visual guide's and the comparison's blocks are explained by the
+    # guide of that page.
+    step = ("visual_help" if block.startswith("visual_") else
+            "compare_help" if block.startswith("compare_") else "help")
     message = agent.say(step, facts, fallback, choice, history, message=asked % title)
     return {"block": block, "title": title, "message": message}

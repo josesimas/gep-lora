@@ -120,6 +120,18 @@ class DrawingTests(JobsTestCase):
         with self.assertRaises(drawn.DrawnError):
             drawn.draw(-1)
 
+    def test_the_weights_are_an_individuals(self):
+        # Individual 1 unless said; another number is another draw, the one a
+        # search makes for that individual under the same master seed.
+        self.assertEqual(drawn.draw(12345)["number"], drawn.NUMBER)
+        seventh = drawn.draw(12345, 7)
+        self.assertEqual((seventh["seed"], seventh["number"]), (12345, 7))
+        self.assertEqual(seventh["weight_seed"], drawn.weight_seed(12345, 7))
+        self.assertNotEqual(seventh["weights"], drawn.draw(12345)["weights"])
+        for wrong in (0, -3, True, "7"):
+            with self.assertRaises(drawn.DrawnError):
+                drawn.draw(12345, wrong)
+
     def test_only_their_own_ready_loras(self):
         other = self.registry.user_for_key(self.registry.add_user("bob"))
         with self.assertRaises(drawn.DrawnError):
@@ -201,6 +213,58 @@ class TestingTests(ServerTestCase):
         status, runs = self.call("GET", "/runs")
         self.assertEqual(status, 200, runs)
         self.assertIn(job["id"], [one["id"] for one in runs["runs"]])
+
+    def test_a_searched_blend_opened_keeps_its_weights(self):
+        status, reply = self.call("POST", "/jobs", self.submission())
+        self.assertEqual(status, 201, reply)
+        search = reply["job"]["id"]
+        worker.serve(self.registry, once=True)
+
+        # Every blend that can be opened, the search's best first.
+        status, listed = self.call("GET", "/blends")
+        self.assertEqual(status, 200, listed)
+        found = next(one for one in listed["jobs"] if one["job"] == search)
+        self.assertEqual(found["task"], reg.SEARCH)
+        self.assertTrue(found["blends"][0]["is_best"])
+        self.assertIn("formula", found["blends"][0])
+
+        # Opened with no number: its best, as a drawing of the user's LoRAs,
+        # under the search's seed and its own number.
+        status, best = self.call("GET", "/blends/%d" % search)
+        self.assertEqual(status, 200, best)
+        number = best["number"]
+        self.assertEqual(number, found["blends"][0]["number"])
+        status, stored = self.call("GET", "/jobs/%d/individuals/%d" % (search, number))
+        stored = stored["individual"]
+        self.assertEqual(status, 200, stored)
+        check = self.call("POST", "/blends/check", {"tree": best["tree"], "seed": best["seed"],
+                                                    "number": number})[1]
+        self.assertEqual(check["weight_seed"], stored["weight_seed"])
+
+        # Tested, it is the same individual: its number, so its weights.
+        status, reply = self.call("POST", "/blends/test", self.body(
+            tree=best["tree"], seed=best["seed"], number=number))
+        self.assertEqual(status, 201, reply)
+        self.assertEqual(reply["verification"]["number"], number)
+        conn = store.connect(self.registry.database(self.registry.job(reply["job"]["id"])))
+        try:
+            one, = store.individuals(conn, reply["job"]["run_id"])
+            self.assertEqual((one["number"], one["weight_seed"]), (number, stored["weight_seed"]))
+        finally:
+            conn.close()
+        status, again = self.call("GET", "/blends/%d" % reply["job"]["id"])
+        self.assertEqual((again["number"], again["verification"]),
+                         (number, reply["verification"]["id"]))
+
+        # Any blend of it by number; one it does not hold, and another's job, are not.
+        other = next(one for one in found["blends"] if one["number"] != number)
+        status, opened = self.call("GET", "/blends/%d?individual=%d" % (search, other["number"]))
+        self.assertEqual((status, opened["number"]), (200, other["number"]))
+        self.assertEqual(self.call("GET", "/blends/%d?individual=999" % search)[0], 409)
+        self.assertEqual(self.call("GET", "/blends/%d?individual=x" % search)[0], 400)
+        bob = self.registry.add_user("bob")
+        self.assertEqual(self.call("GET", "/blends/%d" % search, key=bob)[0], 404)
+        self.assertEqual(self.call("GET", "/blends", key=bob)[1], {"jobs": []})
 
     def test_a_lin_is_a_fold_not_a_slot(self):
         # CAT(A, LIN(B, A)): two LoRAs of one rank, the second used twice.

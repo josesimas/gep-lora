@@ -65,6 +65,21 @@ App and the user, like an App method, and returns (status, payload).
     POST /agent/visual/debrief      {agent, verification: id, history}
                                                               -> how the test went
 
+  the blend comparison: two blends side by side (compare.py; the page is
+  /blend_comparison.html)
+    GET  /agent/compare/config      the visual guide's config, the comparison's words
+    POST /agent/compare/intro       {agent, session}          -> the welcome
+    POST /agent/compare/chat        {agent, message, stage, session, context, history}
+                                                              -> the reply, both drawings
+                                                                 as the tools left them,
+                                                                 their checks
+    POST /agent/compare/plan        {session}                 -> the two POST /blends/test
+                                                                 bodies, read back
+    POST /agent/compare/outcome     {a: id, b: id}            -> each test, and A against B
+                                                                 question by question
+    POST /agent/compare/debrief     {agent, a: id, b: id, history}
+                                                              -> how the comparison went
+
   the journey so far (create_summary.py)
     POST /agent/summary             {agent, stage, mock, dataset?: the page's analysis,
                                      loras?: [id], job?, verification?, deployment?,
@@ -107,6 +122,7 @@ from async_api import settings as api_settings
 from async_api_agent import agent
 from async_api_agent import analysis
 from async_api_agent import blending
+from async_api_agent import compare
 from async_api_agent import create_summary
 from async_api_agent import guide_defaults
 from async_api_agent import planner
@@ -602,6 +618,73 @@ def visual_debrief(app, user, body):
                                _history(body))
 
 
+# --- the blend comparison (compare.py; the page is /blend_comparison.html) -------------
+
+
+def _compare_session(body):
+    try:
+        return compare.session_of((body or {}).get("session"))
+    except compare.CompareError as error:
+        raise AgentError(400, "session: %s" % error)
+
+
+def compare_config(app, user):
+    """What the comparison's page draws from: the visual guide's pieces, its own words."""
+    _, out = visual_config(app, user)
+    out["words"] = dict(prompts.COMPARE_WORDS,
+                        instructions={stage: prompts.STEP_INSTRUCTIONS["compare_" + stage]
+                                      for stage in compare.STAGES})
+    out["sides"] = list(compare.SIDES)
+    return 200, out
+
+
+def compare_intro(app, user, body):
+    return 200, compare.intro(app.registry, app.catalog, user, _compare_session(body),
+                              _choice(body))
+
+
+def compare_chat(app, user, body):
+    message = (body or {}).get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise AgentError(400, "message must be what you want to ask")
+    context = (body or {}).get("context")
+    return 200, compare.chat(app.registry, app.catalog, user, message.strip()[:4000],
+                             str((body or {}).get("stage") or ""), _compare_session(body),
+                             context if isinstance(context, dict) else None,
+                             _choice(body), _history(body), demo_datasets)
+
+
+def compare_plan(app, user, body):
+    """The two POST /blends/test bodies for the session's drawings, read back."""
+    try:
+        return 200, compare.plan(app.catalog, user, _compare_session(body))
+    except compare.CompareError as error:
+        raise AgentError(400, str(error))
+
+
+def _two_verifications(app, user, body):
+    rows = []
+    for name in ("a", "b"):
+        verification_id = _id(body, name)
+        row = app.registry.verification(verification_id, user["id"])
+        if row is None:
+            raise AgentError(404, "no verification %d" % verification_id)
+        rows.append(row)
+    return rows
+
+
+def compare_outcome(app, user, body):
+    """Each of the two tests, and blend A against blend B (compare.outcome)."""
+    return 200, compare.outcome(app.registry, app.catalog, user,
+                                *_two_verifications(app, user, body))
+
+
+def compare_debrief(app, user, body):
+    row_a, row_b = _two_verifications(app, user, body)
+    return 200, compare.debrief(app.registry, app.catalog, user, row_a, row_b, _choice(body),
+                                _history(body))
+
+
 # (method, path pattern, handler, extras) -- the shape of server.ROUTES, with
 # a function where the server's own routes name an App method.
 ROUTES = [
@@ -634,5 +717,11 @@ ROUTES = [
     ("POST", r"/agent/visual/chat", visual_chat, ("body",)),
     ("POST", r"/agent/visual/plan", visual_plan, ("body",)),
     ("POST", r"/agent/visual/debrief", visual_debrief, ("body",)),
+    ("GET", r"/agent/compare/config", compare_config, ()),
+    ("POST", r"/agent/compare/intro", compare_intro, ("body",)),
+    ("POST", r"/agent/compare/chat", compare_chat, ("body",)),
+    ("POST", r"/agent/compare/plan", compare_plan, ("body",)),
+    ("POST", r"/agent/compare/outcome", compare_outcome, ("body",)),
+    ("POST", r"/agent/compare/debrief", compare_debrief, ("body",)),
 ]
 ROUTES = [(method, pattern, _theirs(handler), extras) for method, pattern, handler, extras in ROUTES]

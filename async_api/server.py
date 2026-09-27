@@ -49,17 +49,22 @@ Verification
                                           report once it has one
     GET    /verifications/{id}/log        the tail of its console output
 
-Blends drawn by hand (drawn.py; the page is /visual_guide.html)
-    POST   /blends/check                  {tree, seed?} -> the drawing as a chromosome,
-                                          its ranks, whether PEFT can build it, and
-                                          what the weights are worth under the seed
-    POST   /blends/test                   {tree, seed, dataset, count?, label?, mock?,
-                                          settings?} -> 201 {job, verification}: a
+Blends drawn by hand (drawn.py; the pages are /visual_guide.html and
+/blend_comparison.html)
+    GET    /blends                        every blend of the user's a page can open,
+                                          job by job: searched and drawn alike
+    POST   /blends/check                  {tree, seed?, number?} -> the drawing as a
+                                          chromosome, its ranks, whether PEFT can build
+                                          it, and what the weights are worth under the
+                                          seed for individual `number` (1)
+    POST   /blends/test                   {tree, seed, number?, dataset, count?, label?,
+                                          mock?, settings?} -> 201 {job, verification}: a
                                           sweep of that one blend, and a verification
                                           of it beside each of its LoRAs alone on the
                                           dataset -- read back with /verifications/{id}
-    GET    /blends/{job id}               a drawn blend's job as the page draws it
-                                          again: its tree, seed and latest verification
+    GET    /blends/{job id}[?individual=N] one blend of a job as a page draws it again:
+                                          its tree, seed, number and latest verification;
+                                          a search's best unless N is given
 
 Going live
     POST   /jobs/{id}/live                 {"individual": n?, "target": "local"?}
@@ -105,6 +110,9 @@ same top bar from /nav.js. None needs a key to be served; what they show does.
     GET    /guide.html[?job=N]             the LoRA guide: trains LoRAs and blends them
     GET    /visual_guide.html              the visual guide: draw a blend of your LoRAs
                                            as a tree, and test it on a dataset
+    GET    /blend_comparison.html          two blends side by side, each opened from a
+                                           job or drawn, edited and tested on the same
+                                           questions
     GET    /runs.html                      the user's runs (reads GET /runs)
     GET    /settings.html                  appearance, and the user's defaults for the
                                            guide (reads and writes /agent/defaults)
@@ -164,14 +172,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 #                  search of the user's in it
 #   visual_guide.html  a blend drawn by hand as a tree of the user's LoRAs, and
 #                  tested (drawn.py), with the guide's chat beside it
+#   blend_comparison.html  two blends side by side, from any jobs or drawn,
+#                  edited and tested on the same questions (drawn.py again,
+#                  twice), with its own guide (async_api_agent/compare.py)
 #   runs.html      every run of the user's, from GET /runs
 #   settings.html  appearance, and what a new guide conversation starts from,
 #                  read and saved through /agent/defaults
 #   console.html   a page that exercises every endpoint; ?job=N opens that job
 #   nav.js         the top bar every page draws
 PAGES = {name: (os.path.join(HERE, name), "text/html; charset=utf-8")
-         for name in ("guide.html", "visual_guide.html", "runs.html", "settings.html",
-                      "console.html")}
+         for name in ("guide.html", "visual_guide.html", "blend_comparison.html",
+                      "runs.html", "settings.html", "console.html")}
 PAGES["nav.js"] = (os.path.join(HERE, "nav.js"), "text/javascript; charset=utf-8")
 
 # Where a page used to be, so a bookmark or an old link still lands. The query
@@ -662,17 +673,28 @@ class App:
         """A drawing, read the way the pipeline would read it (drawn.check)."""
         body = body or {}
         try:
-            return 200, drawn.check(self.catalog, user, body.get("tree"), body.get("seed"))
+            return 200, drawn.check(self.catalog, user, body.get("tree"), body.get("seed"),
+                                    body.get("number"))
         except drawn.DrawnError as error:
             raise ApiError(400, str(error))
 
-    def open_drawn(self, user, job_id):
-        """A drawn blend's job, as the visual guide draws it again."""
+    def list_blends(self, user):
+        """Every blend of the user's a page can open (drawn.sources)."""
+        return 200, {"jobs": drawn.sources(self.registry, self.catalog, user)}
+
+    def open_drawn(self, user, job_id, query):
+        """One blend of a job, as the visual guide and the comparison draw it
+        again: a drawn blend's own, or a search's (its best by default)."""
         job = self.own_job(user, job_id)
         if job["status"] == reg.DELETED:
             raise ApiError(404, "job %d's run was deleted" % job_id)
+        number = (query.get("individual") or [None])[0]
+        if number is not None:
+            if not str(number).isdigit():
+                raise ApiError(400, "individual must be a blend's number")
+            number = int(number)
         try:
-            return 200, drawn.opened(self.registry, self.catalog, user, job)
+            return 200, drawn.opened(self.registry, self.catalog, user, job, number)
         except drawn.DrawnError as error:
             raise ApiError(409, str(error))
 
@@ -930,7 +952,8 @@ ROUTES = [
     ("POST", r"/jobs/(\d+)/verify", "start_verification", ("body",)),
     ("POST", r"/blends/check", "check_drawn", ("body",)),
     ("POST", r"/blends/test", "test_drawn", ("body",)),
-    ("GET", r"/blends/(\d+)", "open_drawn", ()),
+    ("GET", r"/blends", "list_blends", ()),
+    ("GET", r"/blends/(\d+)", "open_drawn", ("query",)),
     ("GET", r"/verifications/(\d+)", "verification_detail", ()),
     ("GET", r"/verifications/(\d+)/log", "verification_log", ("query",)),
     ("POST", r"/jobs/(\d+)/live", "set_live", ("body",)),

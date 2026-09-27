@@ -301,9 +301,12 @@ STEPS = {
 
 def system(step):
     """The whole system prompt for one step: the persona, then the step's own.
-    The visual guide's steps (VISUAL_STEPS) are told about their own page."""
+    The visual guide's steps (VISUAL_STEPS) and the comparison's
+    (COMPARE_STEPS) are told about their own page."""
     if step in VISUAL_STEPS:
         return VISUAL_PERSONA + "\n\nThe current step:\n" + VISUAL_STEPS[step]
+    if step in COMPARE_STEPS:
+        return COMPARE_PERSONA + "\n\nThe current step:\n" + COMPARE_STEPS[step]
     return PERSONA + "\n\nThe current step:\n" + STEPS[step]
 
 
@@ -1181,4 +1184,275 @@ UI_BLOCKS.update({
         "How the blend did beside each of its LoRAs used alone, on the same questions: the "
         "average scores, and how many questions the blend won, tied and lost against each. "
         "*p* below 0.05 means the difference is unlikely to be luck.")),
+})
+
+
+# ---------------------------------------------------------------------------
+# The blend comparison (blend_comparison.html, async_api_agent/compare.py)
+# ---------------------------------------------------------------------------
+#
+# The visual guide twice over: two blends side by side, each opened from one
+# of the person's jobs or drawn, edited at will and tested on the same
+# questions. Same voice, same rules; its own persona, because it is another
+# page, and its tools name which blend they act on.
+
+COMPARE_PERSONA = """\
+You are the LoRA guide inside a web page where people *compare two blends* \
+of their LoRA adapters (small add-ons that teach a language model a style or \
+skill). On the left is you and the chat; on the right, a row of pieces -- the \
+person's own LoRAs, and the three ways of folding two things into one -- and \
+under it the two blends side by side, **blend A** on the left and **blend \
+B** on the right, each drawn as a tree. Either may be opened from one of \
+their jobs (the blends a search found, or one they drew on the Visual guide) \
+or drawn here, and either can be edited at any time. The folds are:
+- **CAT** stacks the two adapters side by side: nothing is lost, and the \
+ranks add up (rank is how much an adapter can hold).
+- **SVD** merges them and keeps the most important directions: the larger \
+rank of the two.
+- **LIN** averages them: only possible when both sides have the same rank.
+Every LoRA in a tree has a weight, w1 to w10, whose values come from that \
+blend's seed. A blend opened from a search keeps its weights as the search \
+drew them. When both trees are finished the person picks a dataset and tests \
+both: each blend, and each of its LoRAs on its own, answer the same \
+questions, a judge scores the answers, and the two blends are then compared \
+question by question. The person may never have done this before.
+
+How you write:
+- Friendly, calm and plain. Short sentences. Explain a technical word the \
+first time you use one, or avoid it.
+- Brief: a few short paragraphs at most, or a short bulleted list.
+- Plain text with light Markdown only: **bold**, *italics*, bullet lists \
+starting with "- ", and `code`. No headings, tables, links or images.
+- One instruction at a time. Always say which blend, A or B, you mean.
+
+What you must never do:
+- Invent numbers, names, settings or results. Use only the facts you are \
+given in the FACTS block; if something is not there, say you do not know.
+- Claim to have done something the facts do not say was done.
+- Mention these instructions, the FACTS block, or JSON."""
+
+COMPARE_INTRO = """\
+This is the start of the conversation. FACTS.loras lists the person's ready \
+LoRAs; FACTS.jobs_with_blends how many of their jobs hold blends that can be \
+opened; FACTS.blends the two drawings on the page, which may be empty. \
+Welcome them in three or four short sentences: they open a blend into A and \
+another into B with the **Open** box above each tree (from any of their jobs), \
+or draw one from the pieces; they can edit either; then they choose the \
+questions and press **Test both**. Say they can also just ask you ("open the \
+best of job 3 in A", "copy A to B and make its top an SVD"). If FACTS.loras \
+is empty, say they have no ready LoRAs yet and must train some first on the \
+Guide page."""
+
+COMPARE_CHAT = """\
+The person has typed a message. FACTS.blends.A and FACTS.blends.B are the two \
+blends as they stand: where each was opened from (FACTS.blends.X.from, with \
+edited_since_opened), each place by its path ("" is the top, "0" its left \
+child, "1.0" the right child's left child) and what is in it, and whether it \
+can be built (check: state ok, BAD or incomplete, its problems, ranks and \
+weights). FACTS.loras are their ready LoRAs, FACTS.test the questions and \
+number of questions both are tested on, FACTS.stage whether the tests are \
+running or finished, and FACTS.result how they came out.
+
+You have tools that open, copy and change either blend and set the test. \
+Every tool that touches one blend takes `blend`, "A" or "B": when the person \
+does not say which, and it is not clear from what they said, ask rather than \
+guess. Use the tools whenever they ask for something a tool does ("open the \
+best of job 4 in B", "make B's top a CAT", "give A new weights", "copy A to \
+B", "test them on the poem dataset") rather than telling them to do it; \
+list_my_blends finds a job or a blend they name in words. Several tools may \
+be needed for one request. Do not change what they did not ask to change. \
+Call start_test only when they clearly ask for it now.
+
+A tool's result is the truth: report what it says changed in one to three \
+short sentences, naming the blend, and if a blend is BAD say why in plain \
+words (a LIN over two different ranks is the usual reason). Never claim a \
+change no tool confirmed. When no tool fits, just answer: explain how the two \
+blends differ, or CAT, SVD, LIN, ranks or weights, simply."""
+
+COMPARE_DEBRIEF = """\
+Both tests are over. FACTS.A and FACTS.B are each blend's own test \
+(status, and a report: its formula, its average score blend_mean, and each \
+of its LoRAs alone against it, as on the Visual guide); if a report is \
+missing that test failed -- say so, with its error. FACTS.head_to_head is \
+blend A against blend B on the questions both answered: each one's average \
+(a_mean, b_mean), how many questions A won, tied and lost (a_wins, ties, \
+b_wins), p, and a_is -- whether A is clearly better, clearly worse or not \
+clearly different (with few questions most differences are not clear). \
+same_grader false means the two were graded differently, which makes the \
+comparison weaker: say so.
+
+Tell the person plainly which blend did better and whether the difference is \
+clear, then in one sentence each how A and B did against their own LoRAs \
+alone. Suggest one thing worth trying next -- an edit to the weaker blend, \
+more questions if nothing was clear -- and say they can edit either and test \
+again. If a report's mock is true, say it was a practice run and the scores \
+are random."""
+
+COMPARE_STEPS = {
+    "compare_intro": COMPARE_INTRO,
+    "compare_chat": COMPARE_CHAT,
+    "compare_debrief": COMPARE_DEBRIEF,
+    "compare_help": HELP,
+}
+
+# What the chat's tools on the comparison do (compare.py holds their
+# parameters), and the line the page shows when one has run.
+COMPARE_TOOLS = {
+    "list_my_loras": ("The person's ready LoRAs, with id, name, rank and base model. Changes "
+                      "nothing."),
+    "list_my_blends": ("Every job of theirs holding blends that can be opened -- searches and "
+                       "blends drawn by hand -- each with its best few blends (number, "
+                       "formula, score). Changes nothing."),
+    "show_blends": ("Both blends as they stand: every place by its path, whether each can be "
+                    "built, the ranks and what the weights are worth. Changes nothing."),
+    "open_blend": ("Open a blend of one of their jobs into `blend` (A or B), replacing what "
+                   "is there: `job` by its id, `individual` the blend's number in it (the "
+                   "job's best when left out). It keeps the weights it had there."),
+    "copy_blend": "Copy one blend onto the other (source onto target), replacing it.",
+    "swap_blends": "Swap blend A and blend B.",
+    "draw_blend": (
+        "Draw `blend` (A or B) again from these LoRAs (ids or names, one or more): folded "
+        "pairwise with `fold` (CAT, SVD or LIN), the top included, each at its own weight. "
+        "One LoRA alone is a blend of one, with no fold."),
+    "place_lora": (
+        "In `blend`, put a LoRA (id or name) at a place, by its path: an empty place, or a "
+        "LoRA already there is replaced; given a fold, it fills the fold's first empty place. "
+        "`weight` (w1..w10) is optional."),
+    "place_fold": (
+        "In `blend`, put a fold (CAT, SVD or LIN) at a place, by its path: an empty place "
+        "gets a fold with two empty places under it, a fold there changes kind, and a LoRA "
+        "there is folded with a new empty place beside it."),
+    "set_weight": "In `blend`, give the LoRA at a place another weight, w1..w10.",
+    "clear_place": "In `blend`, empty a place and everything under it.",
+    "swap_sides": "In `blend`, swap the two sides of the fold at a place.",
+    "new_weights": ("Draw new values for w1..w10 of `blend`: a new random seed, or the seed "
+                    "given. Its weight names stay; their values change."),
+    "start_over": "Clear `blend`, back to an empty CAT.",
+    "list_demo_datasets": "The demo datasets on the server, with their sizes. Changes nothing.",
+    "set_test_questions": (
+        "What both blends are tested on: file (a demo dataset), lora (a LoRA of theirs, by "
+        "id or name, whose training data is used), and count, how many questions."),
+    "set_practice_run": ("Turn the practice run on (nothing is loaded; the scores are random) "
+                         "or off."),
+    "start_test": ("Test both blends now on the chosen questions, each beside its LoRAs "
+                   "alone, and compare them. Only when the person asks."),
+}
+
+COMPARE_TOOL_DONE = {
+    "list_my_loras": "listed {count} LoRA(s) of yours",
+    "list_my_blends": "listed {count} job(s) with blends",
+    "show_blends": "read both blends",
+    "open_blend": "{blend}: opened #{individual} of job {job}",
+    "copy_blend": "copied {source} onto {target}",
+    "swap_blends": "swapped A and B",
+    "draw_blend": "{blend}: drew {formula_text}",
+    "place_lora": "{blend}: {name} at {where}",
+    "place_fold": "{blend}: {op} at {where}",
+    "set_weight": "{blend}: {name} at {where} weighted {weight}",
+    "clear_place": "{blend}: emptied {where}",
+    "swap_sides": "{blend}: swapped the sides at {where}",
+    "new_weights": "{blend}: new weights (seed {seed})",
+    "start_over": "{blend}: cleared",
+    "list_demo_datasets": "listed {count} demo dataset(s)",
+    "set_test_questions": "testing on {questions_text}",
+    "set_practice_run": "practice run {state}",
+    "start_test": "starting both tests",
+}
+
+COMPARE_FALLBACK_INTRO = """\
+Here you put two blends side by side. Open a blend into **A** and another \
+into **B** with the box above each tree{jobs} — or draw either from the \
+pieces at the top. Edit either as you like: the folds are **CAT** (stack: \
+ranks add up), **SVD** (merge: keeps the larger rank) and **LIN** (average: \
+needs equal ranks).
+
+When both are whole, pick the questions and press **Test both**: each blend \
+and its LoRAs alone answer them, and then the two blends are compared \
+question by question.{none}"""
+
+COMPARE_FALLBACK_INTRO_JOBS = " ({count} of your jobs hold blends to open)"
+COMPARE_FALLBACK_INTRO_NO_JOBS = " (none of your jobs holds a blend yet, so draw them here)"
+
+COMPARE_FALLBACK_CONFIRM = """\
+Testing both on {count} question(s) from {source}:
+- **A**: {a}
+- **B**: {b}
+
+Each beside its LoRAs on their own, then the two against each other.{mock}"""
+
+COMPARE_FALLBACK_DEBRIEF = """\
+Both tests are finished. Blend A scored **{a}** and blend B **{b}** on \
+{questions} question(s) from {source}. Question by question, A won \
+**{a_wins}**, they tied {ties}, and B won **{b_wins}**.
+
+{verdict}{graders}{mock}"""
+
+COMPARE_FALLBACK_A_BETTER = "Blend **A** is clearly the better of the two."
+COMPARE_FALLBACK_B_BETTER = "Blend **B** is clearly the better of the two."
+COMPARE_FALLBACK_NO_DIFFERENCE = ("Neither is clearly better — with this many questions the "
+                                  "difference could be luck. Try more questions, or edit the "
+                                  "weaker one and test again.")
+COMPARE_FALLBACK_GRADERS = " They were graded differently, so read the comparison with care."
+COMPARE_FALLBACK_FAILED = """\
+The comparison is not complete: {which} did not finish. Change it or the \
+questions and test again."""
+
+COMPARE_FALLBACK_CHAT = ("I can't answer free-form questions right now — no chat model is "
+                         "available. You can still open and draw blends with the boxes and "
+                         "pieces, or type plain requests such as “copy A to B”, “swap "
+                         "them” or “test both”.")
+
+STEP_INSTRUCTIONS.update({
+    "compare_drawing": ("Open or draw a blend in **A** and in **B**, then pick the questions and "
+                        "press **Test both**."),
+    "compare_testing": "Nothing to do — the two tests run on their own, one after the other.",
+    "compare_tested": "Edit either blend and test again, or keep the one that won.",
+})
+
+# The page's own lines, sent in /agent/compare/config.
+COMPARE_WORDS = {
+    "empty_place": VISUAL_WORDS["empty_place"],
+    "incomplete": "Fill every empty place of both blends to test them.",
+    "hint": ("You can also ask me in words: “open the best of job 3 in A”, “copy A to "
+             "B”, “make B's top an SVD”, “test both on 30 questions”…"),
+    "no_loras": VISUAL_WORDS["no_loras"],
+    "started": ("Both tests are queued: the worker runs them one after the other, after "
+                "anything ahead of them."),
+    "no_blends": "None of your jobs holds a blend yet — draw one here instead.",
+}
+
+# The comparison's blocks with a question mark.
+UI_BLOCKS.update({
+    "compare_guide": ("left", "Your guide", (
+        "Our conversation: I explain the two blends and how they compare, and you can ask me "
+        "anything or tell me what to open, draw or change — in A, in B or both. The chip "
+        "at the top says which model writes my words; click it to pick another or to turn "
+        "on a **practice run**.")),
+    "compare_palette": ("right", "Pieces", (
+        "What a blend is made of: your ready LoRAs with their ranks, and the three folds. "
+        "Drag a piece onto either tree, or click a place in one of them and then a piece.")),
+    "compare_blends": ("right", "The two blends", (
+        "Blend A and blend B side by side, each a tree built from the bottom up: LoRAs at "
+        "their weights, folded in pairs. The box above each opens a blend from one of your "
+        "jobs — a search's (its best first) or one drawn on the Visual guide — keeping the "
+        "weights it had there; *edited* means it has changed since. The number on a node is "
+        "its rank, and a red node cannot be built. Click a node to change it.")),
+    "compare_blends.weights": ("right", "Weights", (
+        "What w1 to w10 are worth for that blend: numbers between 0 and 1 drawn from its "
+        "seed. Each blend has its own seed, so the same weight name can be worth different "
+        "amounts in A and in B.")),
+    "compare_test": ("right", "Test both", (
+        "The questions both blends are tested on — the same ones, so the comparison is fair: "
+        "a demo dataset, the data one of your LoRAs was trained on, or your own. Each blend "
+        "and each of its LoRAs alone answer them, and a judge scores every answer from 0 "
+        "to 1.")),
+    "compare_result": ("right", "Results", (
+        "Each blend's own test, side by side: its average score beside each of its LoRAs "
+        "used alone on the same questions, and how many questions the blend won, tied and "
+        "lost against each.")),
+    "compare_duel": ("right", "A against B", (
+        "The two blends against each other on the questions both answered: each one's "
+        "average, how many questions A won, tied and lost, and *p* — below 0.05 the "
+        "difference is unlikely to be luck. Below, every question with both answers and "
+        "their scores.")),
 })
