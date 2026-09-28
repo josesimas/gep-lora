@@ -27,7 +27,7 @@ loras/*
 !loras/*.md
 
 
-*.bat
+# *.bat
 
 # The async API: its registry and every job folder
 api_jobs
