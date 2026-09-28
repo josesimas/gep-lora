@@ -88,6 +88,8 @@
   .meter i { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
   .chromosome { font: 12px var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .error { color: var(--bad); font-size: 12px; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
   .empty { text-align: center; padding: 40px 10px; color: var(--muted); }
   .empty b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 4px; }
   .gate { max-width: 420px; margin: 60px auto; }
@@ -149,10 +151,13 @@ const FILTERS = [["all", "All"], ["active", "Running"], ["done", "Finished"], ["
 // The key is kept under one name for every page (nav.js).
 const recallKey = gepNav.recallKey, rememberKey = gepNav.rememberKey;
 
-async function api(path) {
+async function api(path, body, method) {
   let response;
   try {
-    response = await fetch(path, { headers: { "Authorization": "Bearer " + key } });
+    const headers = { "Authorization": "Bearer " + key };
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    response = await fetch(path, { headers, method: method || (body === undefined ? "GET" : "POST"),
+                                   body: body === undefined ? undefined : JSON.stringify(body) });
   } catch (_) {
     throw new Error("The API server cannot be reached. Is it running? (run_api_server.bat)");
   }
@@ -272,10 +277,15 @@ function runRow(run) {
       run.live.length ? el("span", { class: "tag live", title: run.live.map((d) => `blend #${d.individual} · deployment ${d.id}`).join("\n") },
         `live ×${run.live.length}`) : null),
     el("div", { class: "run-actions" },
-      drawn ? el("a", { class: "button primary", href: `/visual_guide.html?job=${run.id}` }, "Open in the visual guide")
-            : el("a", { class: "button primary", href: `/guide.html?job=${run.id}` }, "Open in the guide"),
+      drawn ? el("a", { class: "button primary", href: `/visual_guide.html?job=${run.id}`, title: "Open it in the visual guide" }, "Visual Guide")
+            : el("a", { class: "button primary", href: `/guide.html?job=${run.id}`, title: "Open it in the guide" }, "Guide"),
       el("a", { class: "button", href: `/console.html?job=${run.id}`,
-                title: "The job's full detail: population, testing, verification, log, live" }, "Open in Console")),
+                title: "The job's full detail: population, testing, verification, log, live" }, "Console"),
+      el("button", { type: "button", title: "Give this run another label", onclick: () => rename(run) }, "Rename"),
+      el("button", { type: "button", class: "danger", disabled: ACTIVE.includes(run.status) || undefined,
+                     title: ACTIVE.includes(run.status) ? "Stop it first: a queued or running run cannot be deleted"
+                                                        : "Delete this run, its files and anything of it that is live",
+                     onclick: () => remove(run) }, "Delete")),
     el("div", { class: "run-meta" },
       el("span", {}, `started ${when(run.created_at)}`),
       run.finished_at ? el("span", {}, `ended ${when(run.finished_at)}${took ? ` · took ${took}` : ""}`) : null,
@@ -290,6 +300,31 @@ function runRow(run) {
         el("b", { style: "color:var(--ink)" }, fmt(best.fitness)), el("span", { class: "chromosome", title: best.chromosome }, `#${best.number} ${best.chromosome}`))
         : el("div", { class: "muted small" }, run.status === "deleted" ? "its results were deleted" : "no blend scored yet"),
       run.error ? el("div", { class: "error" }, run.error) : null));
+}
+
+async function rename(run) {
+  const label = prompt(`A new label for run #${run.id} (empty clears it):`, run.label || "");
+  if (label === null || label.trim() === (run.label || "")) return;
+  try {
+    const job = (await api(`/jobs/${run.id}/label`, { label })).job;
+    run.label = job.label;
+    drawList();
+  } catch (error) {
+    alert(`Could not rename run #${run.id}: ${error.message}`);
+  }
+}
+
+async function remove(run) {
+  const name = run.label ? `"${run.label}" (#${run.id})` : `#${run.id}`;
+  const live = run.live.length ? `\n\nIt has ${run.live.length} live deployment(s); they will be taken down.` : "";
+  if (!confirm(`Delete run ${name}? Its database, results and files are removed for good.${live}`)) return;
+  try {
+    await api(`/jobs/${run.id}`, undefined, "DELETE");
+    runs = runs.filter((other) => other.id !== run.id);
+    draw();
+  } catch (error) {
+    alert(`Could not delete run #${run.id}: ${error.message}`);
+  }
 }
 
 $("changeKey").addEventListener("click", () => keyGate());

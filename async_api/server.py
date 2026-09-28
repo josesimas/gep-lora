@@ -22,6 +22,7 @@ Jobs
     GET    /jobs/{id}/database             the job's sweep database (job<id>_<label>.sqlite3)
     GET    /jobs/{id}/individuals/{n}      one individual and its transcript
     POST   /jobs/{id}/cancel               cancel a queued job, or stop a running one
+    POST   /jobs/{id}/label                {"label"} -> rename the job ("" clears it)
     POST   /jobs/{id}/resume               queue a stopped, cancelled or failed job
                                            again, to carry on from where it got to
     GET    /jobs/{id}/evaluate             what an evaluation of its answers would do
@@ -481,6 +482,17 @@ class App:
     def _has_database(self, job):
         if not os.path.exists(self.registry.database(job)):
             raise ApiError(409, "job %d has no database; its run was deleted" % job["id"])
+
+    def rename_job(self, user, job_id, body):
+        """Give a job another label -- the registry's, which is what every page
+        shows. The sweep's own `runs.label` stays what it was created with."""
+        self.own_job(user, job_id)
+        label = (body or {}).get("label")
+        if label is not None and not isinstance(label, str):
+            raise ApiError(400, "label must be a string")
+        label = (label or "").strip() or None
+        self.registry.rename_job(job_id, label)
+        return 200, {"job": job_json(self, self.own_job(user, job_id))}
 
     def resume_job(self, user, job_id):
         """Queue a search that did not finish, to carry on from where it got to."""
@@ -984,6 +996,7 @@ ROUTES = [
     ("GET", r"/jobs/(\d+)/individuals/(\d+)", "job_individual", ()),
     ("POST", r"/jobs/(\d+)/cancel", "cancel_job", ()),
     ("POST", r"/jobs/(\d+)/resume", "resume_job", ()),
+    ("POST", r"/jobs/(\d+)/label", "rename_job", ("body",)),
     ("GET", r"/jobs/(\d+)/evaluate", "evaluate_form", ()),
     ("POST", r"/jobs/(\d+)/evaluate", "start_evaluation", ("body",)),
     ("GET", r"/jobs/(\d+)/test", "test_form", ()),

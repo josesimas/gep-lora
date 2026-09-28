@@ -418,6 +418,10 @@ class Registry:
                 raise
         return self.job(row["id"])
 
+    def rename_job(self, job_id, label):
+        with self._connect() as conn:
+            conn.execute("UPDATE jobs SET label = ? WHERE id = ?", (label, job_id))
+
     def set_pid(self, job_id, pid):
         with self._connect() as conn:
             conn.execute("UPDATE jobs SET pid = ? WHERE id = ?", (pid, job_id))

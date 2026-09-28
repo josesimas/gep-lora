@@ -269,6 +269,22 @@
   tbody tr:last-child td { border-bottom: 0; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .scroll { overflow-x: auto; }
+  .tested b { overflow-wrap: anywhere; font-family: var(--mono); font-weight: 600; font-size: 11.5px; }
+  .means { display: grid; gap: 12px; max-width: 680px; margin: 6px 0 14px; }
+  .mean-row { display: grid; grid-template-columns: minmax(0, 1fr) 60px 92px; column-gap: 10px; row-gap: 4px; align-items: center; }
+  .mean-row .who { grid-column: 1 / -1; font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; line-height: 1.35; }
+  .mean-row .slot { display: inline-block; font: 600 10.5px/1 var(--mono); padding: 3px 5px; margin-right: 6px; border-radius: 5px;
+                    background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); vertical-align: 1px; }
+  .mean-row.blend .who { font-weight: 700; color: var(--ink); }
+  .mean-row .track { height: 14px; border-radius: 7px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
+  .mean-row .fill { height: 100%; border-radius: 7px; background: var(--faint); }
+  .mean-row.blend .fill { background: var(--accent); }
+  .mean-row.none .track { border-style: dashed; background: transparent; }
+  .mean-row .value { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; white-space: nowrap; }
+  .mean-row .value .muted { font-weight: 400; font-size: 12px; }
+  .mean-row .vs { font-size: 11.5px; white-space: nowrap; }
+  .mean-row .delta.up { color: var(--ok); }
+  .mean-row .delta.down { color: var(--bad); }
   svg.chart { fill: var(--muted); font-size: 12px; max-width: 640px; font-family: system-ui, sans-serif; width: 100%; height: auto; display: block; }
   pre.log { background: var(--log-bg); color: var(--log-ink); border-radius: 8px; margin: 10px 0 0; padding: 12px 14px;
             font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; }
@@ -1381,7 +1397,7 @@ function resultCard() {
   const row = S.result || S.test.verification;
   const report = row.report;
   const side = [pill(row.status), el("span", { class: "muted small" }, `verification ${row.id} · job ${S.test.job.id}`)];
-  const tested = el("p", { class: "small" }, "Tested: ", el("b", {}, S.test.check.formula || S.test.check.chromosome), ` on ${S.test.source}`);
+  const tested = el("p", { class: "small tested" }, "Tested: ", el("b", {}, S.test.check.formula || S.test.check.chromosome), ` on ${S.test.source}`);
   if (!report) {
     const waiting = row.status === "failed" ? el("p", { class: "help error" }, row.error || "The test failed — see its log.")
       : el("p", { class: "muted" }, row.status === "queued" ? "Queued: the worker takes it after anything ahead of it." : "Running: the blend and each LoRA answer the questions, then they are scored.");
@@ -1404,20 +1420,32 @@ function resultCard() {
     answersBlock(report));
 }
 
+// One row per contestant: the name above its bar (a LoRA's name is long and its tail is what
+// tells two apart, so it wraps rather than being cut), the bar on a 0-1 track, the mean, and
+// for a LoRA how far the blend is from it. A contestant with no score gets no bar, and says so.
 function meansChart(rows) {
-  const ns = "http://www.w3.org/2000/svg";
-  const make = (tag, attrs = {}, text) => { const n = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text !== undefined) n.textContent = text; return n; };
-  const bar = 20, gap = 7, left = 130, width = 440, height = rows.length * (bar + gap) + 10;
-  const svg = make("svg", { class: "chart", viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "average score of each contestant" });
-  rows.forEach((one, i) => {
-    const top = 4 + i * (bar + gap), w = Math.max(2, (width - left - 60) * (one.mean || 0));
-    svg.append(make("text", { x: left - 8, y: top + 15, "text-anchor": "end", fill: "var(--ink-2)", "font-weight": one.key === "blend" ? 700 : 400 }, contestantName(one.key)));
-    const r = make("rect", { x: left, y: top, width: w, height: bar, rx: 5, fill: one.key === "blend" ? "var(--accent)" : "var(--faint)" });
-    r.append(make("title", {}, `${contestantName(one.key)}: ${fmt(one.mean)}`));
-    svg.append(r);
-    svg.append(make("text", { x: left + w + 6, y: top + 15, fill: "var(--ink)" }, fmt(one.mean)));
-  });
-  return svg;
+  const blend = (rows.find((one) => one.key === "blend") || {}).mean;
+  const scored = (v) => typeof v === "number" && isFinite(v);
+  return el("div", { class: "means", role: "list", "aria-label": "average score of each contestant" },
+    ...rows.map((one) => {
+      const isBlend = one.key === "blend", has = scored(one.mean);
+      const width = has ? Math.max(0, Math.min(1, one.mean)) * 100 : 0;
+      let delta = null;
+      if (!isBlend && has && scored(blend)) {
+        const d = blend - one.mean;
+        delta = el("span", { class: "delta " + (d > 0 ? "up" : d < 0 ? "down" : "") },
+          Math.abs(d) < 5e-4 ? "blend ties it" : `blend ${d > 0 ? "+" : "−"}${fmt(Math.abs(d))}`);
+      }
+      return el("div", { class: "mean-row" + (isBlend ? " blend" : "") + (has ? "" : " none"), role: "listitem",
+          title: `${contestantName(one.key)}: ${has ? fmt(one.mean) : "no score"}` },
+        el("div", { class: "who" },
+          isBlend ? null : el("span", { class: "slot" }, one.key),
+          el("span", { class: "name" }, isBlend ? contestantName(one.key) : contestantName(one.key).replace(/ alone$/, "")),
+          isBlend ? null : el("span", { class: "muted" }, " alone")),
+        el("div", { class: "track" }, has ? el("div", { class: "fill", style: `width:${width}%` }) : null),
+        el("div", { class: "value" }, has ? fmt(one.mean) : el("span", { class: "muted" }, "no score")),
+        el("div", { class: "vs" }, delta));
+    }));
 }
 
 function answersBlock(report) {
@@ -1428,7 +1456,7 @@ function answersBlock(report) {
       el("div", { class: "q" }, `${i + 1}. ${(report.answers.blend[i] || {}).question || ""}`),
       ...keys.map((k) => { const one = (report.answers[k] || [])[i] || {};
         return el("div", { class: "a" + (k === "blend" ? " blend" : ""), title: one.reason || "" },
-          el("span", { class: "who" }, contestantName(k)), el("span", { class: "text" }, one.answer || "—"),
+          el("span", { class: "who", title: contestantName(k) }, contestantName(k)), el("span", { class: "text" }, one.answer || "—"),
           el("span", { class: "score" }, fmt(one.quality, 2))); }))));
 }
 

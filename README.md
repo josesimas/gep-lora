@@ -2860,6 +2860,7 @@ are refused with a 400 before anything is queued.
 | `GET /jobs/{id}/database` | the job's `job.sqlite3`, as a consistent snapshot (sqlite's backup), even while it runs |
 | `GET /jobs/{id}/individuals/{n}` | one individual and its transcript |
 | `POST /jobs/{id}/cancel` | a queued job at once; a running one is **stopped** within a poll, and can be resumed |
+| `POST /jobs/{id}/label` | `{"label"}` -- rename the job (an empty label clears it); the sweep's own stored label is left as it was |
 | `POST /jobs/{id}/resume` | queue a `stopped`, `cancelled` or `failed` job again, to carry on from where it got to |
 | `GET /jobs/{id}/evaluate` | what grading its answers again would do: the evaluator, the judge, how many answers and how many ungraded |
 | `POST /jobs/{id}/evaluate` | queue it to grade the answers it holds: `{"force"?, "judge_backend"?, "judge_model"?, "judge_base_url"?}` |
