@@ -1,0 +1,687 @@
+"""
+facade.py - The guide's features as plain Python, for every UI.
+
+One function per thing the guide does, each taking the service's App and
+the user -- like an App method (gep_lora/service/facade.py) -- and returning
+(status, payload), so a user's guide sees that user's LoRAs and nobody
+else's. A refusal is an AgentError, which is a ServiceError, so a UI handles
+the two alike. gep_lora/apps/web/agent_routes.py puts each at its address
+below, and runs it under the user's own defaults (`theirs`).
+
+    GET  /agent/config              providers, the defaults, the plan's ranks,
+                                    the wait choices and the demo datasets
+    GET  /agent/models?provider=    the chat models a provider lists
+         [&base_url=]
+    POST /agent/intro               {agent, mock}             -> the welcome
+    POST /agent/analyse             {agent, dataset, session?} -> facts + summary
+    POST /agent/wait                {agent, records, mock, session?, quiet?}
+                                                              -> the question, choices
+    POST /agent/plan                {dataset, epochs, mock, session?}
+                                                              -> POST /loras bodies
+    POST /agent/started             {agent, trainings, epochs, estimate, mock}
+    POST /agent/chat                {agent, message, stage, session, dataset?,
+                                     context, history}        -> the reply, and what the
+                                                                 tools changed
+    POST /agent/debrief             {agent, loras: [id], mock, history}
+
+  what the page shows (ui_help.py)
+    GET  /agent/help                every block with a question mark: {key: {where, title}}
+    POST /agent/help                {agent, block, title?, shown?, stage?, history}
+                                                              -> what that block is, and
+                                                                 what it shows now
+
+  combining them (blending.py)
+    POST /agent/blend/intro         {agent, session, prefer?: [id], history, quiet?}
+                                                              -> the user's ready LoRAs,
+                                                                 the pick, the search
+    POST /agent/blend/plan          {session, dataset?, mock, prefer?}
+                                                              -> the POST /jobs body, read back
+    POST /agent/blend/started       {agent, job: {id, queue_position}, plan, history}
+    POST /agent/blend/debrief       {agent, job: id, history} -> what the search found
+
+  after the search (release.py)
+    POST /agent/test/started        {agent, job: {id, queue_position}, history}
+    POST /agent/test/debrief        {agent, job: id, session, history}
+                                                              -> every blend, tested or not,
+                                                                 and the one recommended
+    POST /agent/verify/plan         {session}                 -> the POST /jobs/{id}/verify
+                                                                 body, read back
+    POST /agent/verify/debrief      {agent, verification: id, history}
+                                                              -> the blend beside its LoRAs
+    POST /agent/live/started        {agent, deployment: id, history}
+
+  the user's defaults (guide_defaults.py; the page is /settings.html)
+    GET    /agent/defaults          every default: the server's, the saved, what is in force
+    PUT    /agent/defaults          {values: {key: value}}    -> the same, saved; replaces
+                                                                 what was saved, whole
+    DELETE /agent/defaults          back to the server's, all of them
+
+  the visual guide: a blend drawn by hand (visual.py; the page is /visual_guide.html)
+    GET  /agent/visual/config       the user's ready LoRAs, the folds, the page's words
+    POST /agent/visual/intro        {agent, session}          -> the welcome
+    POST /agent/visual/chat         {agent, message, stage, session, context, history}
+                                                              -> the reply, the drawing the
+                                                                 tools changed, its check
+    POST /agent/visual/plan         {session}                 -> the POST /blends/test body,
+                                                                 read back
+    POST /agent/visual/debrief      {agent, verification: id, history}
+                                                              -> how the test went
+
+  the blend comparison: two blends side by side (compare.py; the page is
+  /blend_comparison.html)
+    GET  /agent/compare/config      the visual guide's config, the comparison's words
+    POST /agent/compare/intro       {agent, session}          -> the welcome
+    POST /agent/compare/chat        {agent, message, stage, session, context, history}
+                                                              -> the reply, both drawings
+                                                                 as the tools left them,
+                                                                 their checks
+    POST /agent/compare/plan        {session}                 -> the two POST /blends/test
+                                                                 bodies, read back
+    POST /agent/compare/outcome     {a: id, b: id}            -> each test, and A against B
+                                                                 question by question
+    POST /agent/compare/debrief     {agent, a: id, b: id, history}
+                                                              -> how the comparison went
+
+  the journey so far (create_summary.py)
+    POST /agent/summary             {agent, stage, mock, dataset?: the page's analysis,
+                                     loras?: [id], job?, verification?, deployment?,
+                                     transcript?: [{who, text}]}
+                                                              -> {title, markdown, charts,
+                                                                 journey, facts, by, note}
+
+`agent` is the page's choice of model -- {"provider", "model", "base_url",
+"conversation"}, the last an id per conversation for the providers that route
+by one --
+`dataset` is {"text", "name"} for pasted or uploaded data, or {"file"} for
+one of the shared datasets, and `session` is what the chat has set up so far
+(planner.session_of): the part of the dataset in use, the ranks, the epochs,
+the options. None of these trains anything: the page sends the plan to
+POST /loras itself, and carries out the actions a chat reply hands back.
+
+The blend half is the same bargain: /agent/blend/plan returns a POST /jobs
+body naming the user's own LoRAs by catalogue id, the page submits it, and
+watches GET /jobs/{id}/status; /agent/blend/debrief reads only a job of the
+user's own (another user's is a 404, as on /jobs/{id}).
+
+And so is the last part. The page queues the testing pass itself (POST
+/jobs/{id}/test) and watches the job; /agent/verify/plan returns the body of a
+POST /jobs/{id}/verify, which the page sends and watches through GET
+/verifications/{id}; the page puts a blend live with POST /jobs/{id}/live and
+tries it through POST /infer. The token that call returns stays in the page:
+/agent/live/started is sent the deployment's id, never its token, so no model
+is ever shown one.
+
+Every handler runs under the user's own defaults (`theirs`): what they saved
+on /settings.html is what settings.py's knobs read as for that request, so a
+plan, a search and the config the page starts from are all theirs.
+"""
+
+import functools
+import os
+
+from gep_lora.service import drawn
+from gep_lora.service.facade import ServiceError, deployment_json
+from gep_lora.service import settings as api_settings
+from gep_lora.assistant import agent
+from gep_lora.assistant import analysis
+from gep_lora.assistant import blending
+from gep_lora.assistant import compare
+from gep_lora.assistant import create_summary
+from gep_lora.assistant import guide_defaults
+from gep_lora.assistant import planner
+from gep_lora.assistant import prompts
+from gep_lora.assistant import providers
+from gep_lora.assistant import release
+from gep_lora.assistant import settings
+from gep_lora.assistant import ui_help
+from gep_lora.assistant import visual
+from gep_lora.core.search.generate_population import VARIABLES
+from gep_lora import paths
+
+_ROOT = paths.ROOT
+
+# The biggest dataset file the demo list reads to describe.
+_DESCRIBE_BYTES = 4 * 1024 * 1024
+
+
+class AgentError(ServiceError):
+    """A request the guide cannot serve: a ServiceError, sent as {"error"}."""
+
+    def __init__(self, status, message):
+        super().__init__(status, message)
+
+
+def _shared_dir():
+    return os.path.abspath(os.path.join(_ROOT, api_settings.SHARED_DATASETS_DIR))
+
+
+def _shared_path(name):
+    shared = _shared_dir()
+    path = os.path.abspath(os.path.join(shared, str(name)))
+    if os.path.commonpath([shared, path]) != shared or not os.path.isfile(path):
+        raise AgentError(400, "no shared dataset %r" % name)
+    return path
+
+
+def _read(path):
+    with open(path, encoding="utf-8-sig", errors="replace") as handle:
+        return handle.read()
+
+
+def dataset_of(body):
+    """-> (text, name, shared file name or None)."""
+    value = (body or {}).get("dataset")
+    if not isinstance(value, dict):
+        raise AgentError(400, "dataset must be {\"text\", \"name\"?} or {\"file\"}")
+    if value.get("file"):
+        return _read(_shared_path(value["file"])), value["file"], value["file"]
+    text = value.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise AgentError(400, "the dataset is empty -- paste it, upload a file or pick one")
+    name = value.get("name") if isinstance(value.get("name"), str) else None
+    return text, name, None
+
+
+def _analysed(body, selection=None):
+    text, name, shared = dataset_of(body)
+    try:
+        return analysis.analyse(text, name, selection), shared
+    except analysis.DatasetError as error:
+        raise AgentError(400, "I could not read that dataset: %s" % error)
+
+
+def _session(body):
+    try:
+        return planner.session_of((body or {}).get("session"))
+    except planner.SessionError as error:
+        raise AgentError(400, "session: %s" % error)
+
+
+def _choice(body):
+    choice = (body or {}).get("agent")
+    return choice if isinstance(choice, dict) else None
+
+
+def _history(body):
+    history = (body or {}).get("history")
+    return [one for one in history if isinstance(one, dict)] if isinstance(history, list) else []
+
+
+def _records(body):
+    records = (body or {}).get("records")
+    if not isinstance(records, int) or isinstance(records, bool) or records < 1:
+        raise AgentError(400, "records must be the number of conversations, at least 1")
+    return records
+
+
+def _epochs(body):
+    epochs = (body or {}).get("epochs")
+    if isinstance(epochs, bool) or not isinstance(epochs, (int, float)) \
+            or not settings.MIN_EPOCHS <= epochs <= settings.MAX_EPOCHS:
+        raise AgentError(400, "epochs must be between %s and %s"
+                         % (settings.MIN_EPOCHS, settings.MAX_EPOCHS))
+    return float(epochs)
+
+
+def demo_datasets():
+    """The shared datasets, each described well enough to choose from."""
+    try:
+        names = sorted(name for name in os.listdir(_shared_dir())
+                       if os.path.isfile(os.path.join(_shared_dir(), name)))
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        path = os.path.join(_shared_dir(), name)
+        entry = {"file": name, "bytes": os.path.getsize(path), "usable": False,
+                 "records": 0, "format": None, "first": None, "keywords": []}
+        if entry["bytes"] <= _DESCRIBE_BYTES:
+            try:
+                found = analysis.analyse(_read(path), name)
+                entry.update(usable=found["usable"], records=found["records"],
+                             format=found["format"],
+                             first=found["samples"][0]["user"] if found["samples"] else None,
+                             keywords=[one["word"] for one in found["keywords"][:5]])
+            except (analysis.DatasetError, OSError):
+                pass
+        out.append(entry)
+    return out
+
+
+# --- the handlers ------------------------------------------------------------
+
+
+def config(app, user):
+    options = planner.recipe()
+    value = guide_defaults.value
+    return 200, {"providers": providers.describe(),
+                 "default": {"provider": value("PROVIDER"), "model": value("MODEL")},
+                 "ranks": planner.default_ranks(), "base_model": options["base_model"],
+                 "chat_template": options["chat_template"],
+                 "recipe": {key: options[key] for key in ("batch_size", "grad_accum",
+                                                          "learning_rate", "alpha", "scheduler")},
+                 "wait_choices": guide_defaults.wait_choices(),
+                 "min_epochs": settings.MIN_EPOCHS, "max_epochs": settings.MAX_EPOCHS,
+                 "mock": bool(value("MOCK")), "few_records": settings.FEW_RECORDS,
+                 "datasets": demo_datasets(),
+                 # The page's own lines, so every word the agent says is prompts.py's.
+                 "blend": {"generations": value("BLEND_GENERATIONS"),
+                           "population": value("BLEND_POPULATION"),
+                           "questions": value("BLEND_QUESTIONS"),
+                           "max_generations": settings.MAX_BLEND_GENERATIONS,
+                           "min_population": settings.MIN_BLEND_POPULATION,
+                           "max_population": settings.MAX_BLEND_POPULATION,
+                           "max_questions": settings.MAX_BLEND_QUESTIONS,
+                           "slots": len(blending.SLOTS),
+                           "min_places": blending.MIN_PLACES},
+                 "words": {"instructions": prompts.STEP_INSTRUCTIONS,
+                           "not_yet": prompts.NOT_YET, "ask_dataset": prompts.ASK_DATASET,
+                           "another_dataset": prompts.ANOTHER_DATASET,
+                           "stopped": prompts.STOPPED, "blend_stopped": prompts.BLEND_STOPPED,
+                           "blend_resumed": prompts.BLEND_RESUMED,
+                           "pick_search": prompts.PICK_SEARCH,
+                           "no_searches": prompts.NO_SEARCHES,
+                           "chat_hint": prompts.CHAT_HINT,
+                           "blend_hint": prompts.BLEND_HINT,
+                           "test_stopped": prompts.TEST_STOPPED,
+                           "release_hint": prompts.RELEASE_HINT},
+                 "release": {"splits": list(release.SPLITS),
+                             "questions": value("VERIFY_QUESTIONS"),
+                             "max_questions": settings.MAX_VERIFY_QUESTIONS},
+                 # Whether the defaults in force are the user's own (/settings.html).
+                 "own_defaults": sorted(guide_defaults.stored(_saved(app, user)[0]))}
+
+
+def models(app, user, query):
+    choice = {"provider": (query.get("provider") or [None])[0],
+              "base_url": (query.get("base_url") or [""])[0]}
+    try:
+        resolved = providers.resolve(choice)
+        found = providers.list_models(resolved)
+    except providers.ProviderError as error:
+        raise AgentError(502, str(error))
+    return 200, {"provider": resolved["name"], "base_url": resolved["base_url"],
+                 "models": found, "default": resolved["model"]}
+
+
+def intro(app, user, body):
+    ready = len(blending.mine(app.catalog, user))
+    out = agent.intro(_choice(body), bool((body or {}).get("mock")), ready)
+    out["ready_loras"] = ready
+    return 200, out
+
+
+def analyse(app, user, body):
+    found, shared = _analysed(body, _session(body)["selection"])
+    message = agent.summarise(found, _choice(body))
+    found.pop("lines")
+    return 200, {"analysis": found, "shared_file": shared, "message": message}
+
+
+def wait(app, user, body):
+    return 200, agent.wait(app.catalog, _records(body), _choice(body),
+                           bool((body or {}).get("mock")), _history(body), _session(body),
+                           bool((body or {}).get("quiet")))
+
+
+def plan(app, user, body):
+    session = _session(body)
+    found, shared = _analysed(body, session["selection"])
+    if not found["usable"]:
+        raise AgentError(400, "that dataset has no conversations to train on")
+    epochs, mock = _epochs(body), bool((body or {}).get("mock"))
+    trainings = planner.plan(app.catalog, user, found, epochs, mock, shared, session)
+    estimate = planner.estimate(app.catalog, found["records"], epochs, mock, session=session)
+    return 200, {"trainings": trainings, "estimate": estimate, "epochs": epochs,
+                 "message": agent.confirm(trainings, estimate, mock)}
+
+
+def started(app, user, body):
+    trainings = (body or {}).get("trainings")
+    if not isinstance(trainings, list) or not all(isinstance(one, dict) for one in trainings):
+        raise AgentError(400, "trainings must be a list of {name, rank, queue_position}")
+    estimate = (body or {}).get("estimate")
+    return 200, {"message": agent.started(trainings, _epochs(body),
+                                          estimate if isinstance(estimate, dict) else None,
+                                          bool((body or {}).get("mock")), _choice(body),
+                                          _history(body))}
+
+
+def chat(app, user, body):
+    message = (body or {}).get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise AgentError(400, "message must be what you want to ask")
+    context = (body or {}).get("context")
+    session = _session(body)
+    dataset = dataset_of(body) if (body or {}).get("dataset") else None
+    return 200, agent.chat(app.catalog, user, message.strip()[:4000],
+                           str((body or {}).get("stage") or ""), session, dataset,
+                           context if isinstance(context, dict) else None,
+                           _choice(body), _history(body), demo_datasets, app.registry)
+
+
+def debrief(app, user, body):
+    ids = (body or {}).get("loras")
+    if not isinstance(ids, list) or not ids:
+        raise AgentError(400, "loras must list the LoRA ids to report on")
+    return 200, agent.debrief(app.catalog, user, ids, _choice(body), _history(body),
+                              bool((body or {}).get("mock")))
+
+
+# --- what the page shows ------------------------------------------------------
+
+
+def help_blocks(app, user):
+    return 200, {"blocks": ui_help.blocks()}
+
+
+def explain(app, user, body):
+    body = body or {}
+    try:
+        found = ui_help.explain(body.get("block"), body.get("title"), body.get("shown"),
+                                body.get("stage"), _choice(body), _history(body))
+    except ui_help.HelpError as error:
+        raise AgentError(400, str(error))
+    return 200, found
+
+
+# --- combining the LoRAs ------------------------------------------------------
+
+
+def _prefer(body):
+    """The LoRA ids the page would like picked -- the ones it just trained."""
+    ids = (body or {}).get("prefer")
+    return [one for one in ids if isinstance(one, int) and not isinstance(one, bool)] \
+        if isinstance(ids, list) else []
+
+
+def blend_intro(app, user, body):
+    return 200, agent.blend_intro(app.catalog, user, _session(body), _choice(body),
+                                  _history(body), _prefer(body),
+                                  bool((body or {}).get("quiet")))
+
+
+def blend_plan(app, user, body):
+    session = _session(body)
+    session["mock"] = session["mock"] or bool((body or {}).get("mock"))
+    dataset = dataset_of(body) if (body or {}).get("dataset") else None
+    try:
+        found = blending.plan(app.catalog, app.registry, user, session, session["mock"],
+                              dataset, _prefer(body))
+    except blending.BlendError as error:
+        raise AgentError(400, str(error))
+    found["message"] = agent.blend_confirm(found)
+    found["blend"] = dict(session["blend"], loras=[one["id"] for one in found["loras"]])
+    return 200, found
+
+
+def blend_started(app, user, body):
+    job = (body or {}).get("job")
+    plan = (body or {}).get("plan")
+    if not isinstance(job, dict) or not isinstance(plan, dict):
+        raise AgentError(400, "job must be {id, queue_position} and plan what /agent/blend/plan "
+                              "returned")
+    return 200, {"message": agent.blend_started(job, plan, _choice(body), _history(body))}
+
+
+def blend_debrief(app, user, body):
+    job_id = (body or {}).get("job")
+    if not isinstance(job_id, int) or isinstance(job_id, bool):
+        raise AgentError(400, "job must be the search's job id")
+    job = app.registry.job(job_id, user["id"])
+    if job is None:
+        raise AgentError(404, "no job %d" % job_id)
+    return 200, agent.blend_debrief(app.registry, app.catalog, user, job, _choice(body),
+                                    _history(body))
+
+
+# --- after the search ------------------------------------------------------------
+
+
+def _id(body, name):
+    value = (body or {}).get(name)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise AgentError(400, "%s must be an id" % name)
+    return value
+
+
+def _blends(app, user, job_id):
+    """release.blends() for one of the user's own jobs; another's is a 404."""
+    job = app.registry.job(job_id, user["id"])
+    if job is None:
+        raise AgentError(404, "no job %d" % job_id)
+    try:
+        return release.blends(app.registry, app.catalog, user, job)
+    except release.ReleaseError as error:
+        raise AgentError(409, str(error))
+
+
+def test_started(app, user, body):
+    job = (body or {}).get("job")
+    if not isinstance(job, dict) or not isinstance(job.get("id"), int):
+        raise AgentError(400, "job must be {id, queue_position}")
+    found = _blends(app, user, job["id"])
+    return 200, {"message": agent.test_started(found, job, _choice(body), _history(body))}
+
+
+def test_debrief(app, user, body):
+    """Every blend of the search, tested or not; the session's release part
+    comes back pointing at this job, with a blend picked if none was."""
+    job_id = _id(body, "job")
+    found = _blends(app, user, job_id)
+    part = dict(_session(body)["release"], job=job_id)
+    numbers = {one["number"] for one in found["blends"] if one["state"] != "BAD"}
+    if part["individual"] not in numbers:
+        part["individual"] = found["recommended"]
+    out = agent.test_debrief(found, _choice(body), _history(body))
+    return 200, {"message": out, "result": found, "release": part}
+
+
+def verify_plan(app, user, body):
+    """The POST /jobs/{id}/verify body for the session's picked blend."""
+    part = _session(body)["release"]
+    if part["job"] is None:
+        raise AgentError(400, "the session names no search to verify a blend of")
+    found = _blends(app, user, part["job"])
+    questions = part["questions"] or {}
+    name = None
+    if questions.get("lora") is not None:
+        row = app.catalog.get(questions["lora"])
+        name = row["name"] if row is not None and row["owner"] == user["name"] else None
+    try:
+        planned = release.verify_request(found, part, name)
+    except release.ReleaseError as error:
+        raise AgentError(400, str(error))
+    planned["message"] = agent.verify_start(planned, found["mock"])
+    planned["release"] = dict(part, individual=planned["blend"]["number"])
+    return 200, planned
+
+
+def verify_debrief(app, user, body):
+    verification_id = _id(body, "verification")
+    row = app.registry.verification(verification_id, user["id"])
+    if row is None:
+        raise AgentError(404, "no verification %d" % verification_id)
+    facts = release.verification_outcome(app.registry, app.catalog, user, row)
+    return 200, {"message": agent.verify_debrief(facts, _choice(body), _history(body)),
+                 "result": facts}
+
+
+def live_started(app, user, body):
+    deployment_id = _id(body, "deployment")
+    row = app.registry.deployment(deployment_id, user["id"])
+    if row is None or row["revoked_at"]:
+        raise AgentError(404, "no live deployment %d" % deployment_id)
+    shown = deployment_json(row)
+    found = _blends(app, user, row["job_id"])
+    one = next((blend for blend in found["blends"] if blend["number"] == row["number"]), None)
+    formula = one["formula"] if one else row["chromosome"]
+    return 200, {"message": agent.live(shown, formula, _choice(body), _history(body)),
+                 "deployment": shown, "formula": formula}
+
+
+# --- the user's defaults --------------------------------------------------------------
+
+
+def _saved(app, user):
+    """(the user's saved defaults, when) -- none for an App without a registry."""
+    registry = getattr(app, "registry", None)
+    return registry.guide_defaults(user["id"]) if registry is not None else ({}, None)
+
+
+def defaults(app, user):
+    saved, when = _saved(app, user)
+    return 200, guide_defaults.form(guide_defaults.stored(saved), when)
+
+
+def save_defaults(app, user, body):
+    values = (body or {}).get("values")
+    try:
+        kept = guide_defaults.check(values if values is not None else {})
+    except guide_defaults.DefaultsError as error:
+        raise AgentError(400, str(error))
+    when = app.registry.set_guide_defaults(user["id"], kept)
+    return 200, guide_defaults.form(kept, when)
+
+
+def reset_defaults(app, user):
+    app.registry.set_guide_defaults(user["id"], {})
+    return 200, guide_defaults.form({}, None)
+
+
+def theirs(handler):
+    """`handler`, run with the user's saved defaults in force."""
+    @functools.wraps(handler)
+    def run(app, user, *args):
+        with guide_defaults.applied(_saved(app, user)[0]):
+            return handler(app, user, *args)
+    return run
+
+
+# --- the journey so far -------------------------------------------------------------
+
+
+def summary(app, user, body):
+    """The illustrated summary of everything so far (create_summary.py)."""
+    return 200, create_summary.create(app.registry, app.catalog, user, body or {},
+                                      _choice(body))
+
+
+# --- the visual guide (visual.py; the page is /visual_guide.html) -----------------
+
+
+def _visual_session(body):
+    try:
+        return visual.session_of((body or {}).get("session"))
+    except visual.VisualError as error:
+        raise AgentError(400, "session: %s" % error)
+
+
+def visual_config(app, user):
+    """What the visual guide's page draws from: the pieces, the page's words."""
+    return 200, {"loras": [blending.describe(row) for row in blending.mine(app.catalog, user)],
+                 "folds": drawn.FOLDS, "weights": list(VARIABLES),
+                 "max_leaves": drawn.MAX_LEAVES, "max_questions": drawn.MAX_QUESTIONS,
+                 "default_count": visual.DEFAULT_COUNT, "datasets": demo_datasets(),
+                 "words": dict(prompts.VISUAL_WORDS,
+                               instructions={stage: prompts.STEP_INSTRUCTIONS["visual_" + stage]
+                                             for stage in visual.STAGES})}
+
+
+def visual_intro(app, user, body):
+    return 200, visual.intro(app.catalog, user, _visual_session(body), _choice(body))
+
+
+def visual_chat(app, user, body):
+    message = (body or {}).get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise AgentError(400, "message must be what you want to ask")
+    context = (body or {}).get("context")
+    return 200, visual.chat(app.catalog, user, message.strip()[:4000],
+                            str((body or {}).get("stage") or ""), _visual_session(body),
+                            context if isinstance(context, dict) else None,
+                            _choice(body), _history(body), demo_datasets)
+
+
+def visual_plan(app, user, body):
+    """The POST /blends/test body for the session's drawing, read back."""
+    try:
+        return 200, visual.plan(app.catalog, user, _visual_session(body))
+    except visual.VisualError as error:
+        raise AgentError(400, str(error))
+
+
+def visual_debrief(app, user, body):
+    verification_id = _id(body, "verification")
+    row = app.registry.verification(verification_id, user["id"])
+    if row is None:
+        raise AgentError(404, "no verification %d" % verification_id)
+    return 200, visual.debrief(app.registry, app.catalog, user, row, _choice(body),
+                               _history(body))
+
+
+# --- the blend comparison (compare.py; the page is /blend_comparison.html) -------------
+
+
+def _compare_session(body):
+    try:
+        return compare.session_of((body or {}).get("session"))
+    except compare.CompareError as error:
+        raise AgentError(400, "session: %s" % error)
+
+
+def compare_config(app, user):
+    """What the comparison's page draws from: the visual guide's pieces, its own words."""
+    _, out = visual_config(app, user)
+    out["words"] = dict(prompts.COMPARE_WORDS,
+                        instructions={stage: prompts.STEP_INSTRUCTIONS["compare_" + stage]
+                                      for stage in compare.STAGES})
+    out["sides"] = list(compare.SIDES)
+    return 200, out
+
+
+def compare_intro(app, user, body):
+    return 200, compare.intro(app.registry, app.catalog, user, _compare_session(body),
+                              _choice(body))
+
+
+def compare_chat(app, user, body):
+    message = (body or {}).get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise AgentError(400, "message must be what you want to ask")
+    context = (body or {}).get("context")
+    return 200, compare.chat(app.registry, app.catalog, user, message.strip()[:4000],
+                             str((body or {}).get("stage") or ""), _compare_session(body),
+                             context if isinstance(context, dict) else None,
+                             _choice(body), _history(body), demo_datasets)
+
+
+def compare_plan(app, user, body):
+    """The two POST /blends/test bodies for the session's drawings, read back."""
+    try:
+        return 200, compare.plan(app.catalog, user, _compare_session(body))
+    except compare.CompareError as error:
+        raise AgentError(400, str(error))
+
+
+def _two_verifications(app, user, body):
+    rows = []
+    for name in ("a", "b"):
+        verification_id = _id(body, name)
+        row = app.registry.verification(verification_id, user["id"])
+        if row is None:
+            raise AgentError(404, "no verification %d" % verification_id)
+        rows.append(row)
+    return rows
+
+
+def compare_outcome(app, user, body):
+    """Each of the two tests, and blend A against blend B (compare.outcome)."""
+    return 200, compare.outcome(app.registry, app.catalog, user,
+                                *_two_verifications(app, user, body))
+
+
+def compare_debrief(app, user, body):
+    row_a, row_b = _two_verifications(app, user, body)
+    return 200, compare.debrief(app.registry, app.catalog, user, row_a, row_b, _choice(body),
+                                _history(body))

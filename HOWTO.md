@@ -9,9 +9,9 @@ Three drivers at the top level; everything else is in a folder named for what
 it does.
 
 ```
-main.py           a whole search in one command
-start_run.py      one sweep, through one generation
-continue_run.py   an existing sweep, carried on
+gep_lora/core/pipeline/main.py           a whole search in one command
+gep_lora/core/pipeline/start_run.py      one sweep, through one generation
+gep_lora/core/pipeline/continue_run.py   an existing sweep, carried on
 
 config/  search/  blends/  templates/  storage/
 evaluators/  testing/  reporting/  adapters/  tools/
@@ -21,7 +21,7 @@ The drivers are run as files. Everything below the top level is run as a
 module, from the repo root:
 
 ```bash
-python -m storage.store --show 0
+python -m gep_lora.core.storage.store --show 0
 ```
 
 `python main.py` and the rest never need this — only the commands in sections
@@ -151,8 +151,8 @@ Windows host — on native Linux, with the judge on the same box, that is
 
 **Which commands need it.** Everything under [1. Train](#1-train-the-adapters),
 `test_lora.py`, and the `process` and `evaluate` steps — so in practice all of
-`main.py` and `continue_run.py`. The rest (`test.py`, `store.py`,
-`start_run.py population trees runs`, anything with the mocked template) runs on any
+`gep_lora/core/pipeline/main.py` and `gep_lora/core/pipeline/continue_run.py`. The rest (`test.py`, `store.py`,
+`gep_lora/core/pipeline/start_run.py population trees runs`, anything with the mocked template) runs on any
 Python 3.
 
 Activate the venv before those commands — `.venv\Scripts\activate.bat` on
@@ -168,7 +168,7 @@ activation did not stick — a `(.venv)` prompt does not prove it. `where python
 full path to the interpreter — `.venv\Scripts\python.exe` or `.venv/bin/python` —
 always works regardless of PATH.
 
-This matters more than it looks: `start_run.py process` launches every generated
+This matters more than it looks: `gep_lora/core/pipeline/start_run.py process` launches every generated
 script with `sys.executable`, so the wrong interpreter fails the whole population
 at once rather than one script.
 
@@ -186,13 +186,13 @@ list. Not a JSON array.
 Print the plan first:
 
 ```bash
-python -m adapters.create_all_loras --dataset poem --values 16 16 8 4 32 --dry-run
+python -m gep_lora.core.adapters.create_all_loras --dataset poem --values 16 16 8 4 32 --dry-run
 ```
 
 Then train (hours):
 
 ```bash
-python -m adapters.create_all_loras --dataset poem --values 16 16 8 4 32
+python -m gep_lora.core.adapters.create_all_loras --dataset poem --values 16 16 8 4 32
 ```
 
 `--values` sets the ranks explicitly and sets the count from its length. Without
@@ -206,7 +206,7 @@ you did not use the default folders.
 One extra adapter:
 
 ```bash
-python -m adapters.create_lora loras/Lora006/shout_adapter --dataset uppercase --rank 8
+python -m gep_lora.core.adapters.create_lora loras/Lora006/shout_adapter --dataset uppercase --rank 8
 ```
 
 ---
@@ -216,7 +216,7 @@ python -m adapters.create_lora loras/Lora006/shout_adapter --dataset uppercase -
 Answer one question with and without the adapter (needs the venv):
 
 ```bash
-python -m adapters.test_lora --lora Lora003 "Describe autumn."
+python -m gep_lora.core.adapters.test_lora --lora Lora003 "Describe autumn."
 ```
 
 With no question it keeps asking. `--demo` runs three built-in prompts and exits.
@@ -226,7 +226,7 @@ train.
 Check a chromosome without a GPU:
 
 ```bash
-python -m tools.test CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+python -m gep_lora.tools.test CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
 ```
 
 Prints the tree, the build order, the final rank and `ok` or `BAD`. Writes
@@ -326,9 +326,9 @@ with `BASE_MODEL` would have the model under test marking its own homework.
 `JUDGE_SYSTEM_PROMPT` (or `JUDGE_REFERENCE_SYSTEM_PROMPT`, or
 `JUDGE_ANSWERS_SYSTEM_PROMPT`, or `JUDGE_BASELINE_SYSTEM_PROMPT`) is what the
 search optimises for. Read it first. None of the four is a setting: each is a
-constant at the top of the evaluator that sends it — `evaluators/llm_judge.py`,
-`evaluators/llm_judge_reference.py`, `evaluators/llm_judge_answers.py`,
-`evaluators/llm_judge_baseline.py` — and `evaluators/panel.py` keeps its own
+constant at the top of the evaluator that sends it — `gep_lora/core/evaluators/llm_judge.py`,
+`gep_lora/core/evaluators/llm_judge_reference.py`, `gep_lora/core/evaluators/llm_judge_answers.py`,
+`gep_lora/core/evaluators/llm_judge_baseline.py` — and `gep_lora/core/evaluators/panel.py` keeps its own
 copy of the first two.
 
 ### 3d. Set the size
@@ -383,7 +383,7 @@ python main.py --db dbtemplates/test_new_run.sqlite3
 ```
 
 A *prepared* database is one holding a sweep with settings, a dataset and no
-individuals. Point `main.py` at one and it runs that sweep rather than
+individuals. Point `gep_lora/core/pipeline/main.py` at one and it runs that sweep rather than
 starting a second one beside it — its stored settings *and* its stored dataset
 rows, so `settings.py` and `datasets/` are not read, and the results go back into
 the same file.
@@ -403,7 +403,7 @@ Prepare a database by creating a sweep and adding its splits with
 `add_dataset.py`, or copy `dbtemplates/test_new_run.sqlite3` and edit its
 `settings` table.
 
-The flag underneath it is `--from-db`, which `start_run.py`, `continue_run.py` and
+The flag underneath it is `--from-db`, which `gep_lora/core/pipeline/start_run.py`, `gep_lora/core/pipeline/continue_run.py` and
 `test_run_with_dataset.py` each take with `--run`.
 
 Resume:
@@ -421,15 +421,15 @@ crashed individual is stored as a failed execution; the sweep continues.
 ## 4. Read the results
 
 ```bash
-python -m storage.store --list
+python -m gep_lora.core.storage.store --list
 ```
 
 ```bash
-python -m storage.store --show 0
+python -m gep_lora.core.storage.store --show 0
 ```
 
 ```bash
-python -m storage.store --export 0 --into export
+python -m gep_lora.core.storage.store --export 0 --into export
 ```
 
 `--export` writes population, trees, scripts, outputs, transcripts, results and
@@ -451,8 +451,8 @@ python run_db\run_003.py "Help me plan my week."
 ### What it cost
 
 ```bash
-python -m metrics.report
-python -m metrics.report --step process
+python -m gep_lora.core.metrics.report
+python -m gep_lora.core.metrics.report --step process
 ```
 
 Which step took the time, what it did for it, and where inside it the seconds

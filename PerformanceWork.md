@@ -15,17 +15,17 @@ sample it says so.
 A sweep records what it cost as it runs. Nothing to switch on.
 
 ```bash
-python -m metrics.report                        # the latest sweep
-python -m metrics.report --run 3 --step process # one step in full
-python -m metrics.report --csv                  # the rows behind the tables
-python -m reporting.generate_html_db_stats run_db/gep.sqlite3   # the same, drawn
+python -m gep_lora.core.metrics.report                        # the latest sweep
+python -m gep_lora.core.metrics.report --run 3 --step process # one step in full
+python -m gep_lora.core.metrics.report --csv                  # the rows behind the tables
+python -m gep_lora.core.reporting.generate_html_db_stats run_db/gep.sqlite3   # the same, drawn
 ```
 
 Two tables in `run_db/gep.sqlite3` hold it: `step_timings` (one row per step per
 pass — wall seconds, items, skipped) and `phase_timings` (one row per phase —
-calls, total, worst). `metrics/record.py` is the write side, `metrics/report.py`
+calls, total, worst). `gep_lora/core/metrics/record.py` is the write side, `gep_lora/core/metrics/report.py`
 the read side, and the HTML report's **Cost** section draws the same rows. See
-the schema comments in `storage/store.py` and the "What each step cost" section
+the schema comments in `gep_lora/core/storage/store.py` and the "What each step cost" section
 of `CLAUDE.md`.
 
 **Read these two rules before drawing conclusions from the tables:**
@@ -83,7 +83,7 @@ the slowest script *is* the svd script. Two nodes inflated the sweep by roughly
 
 ### Batched generation (2026-09-06)
 
-`templates/template_code.py` and `template_code_mocked.py` now answer
+`gep_lora/core/templates/template_code.py` and `template_code_mocked.py` now answer
 `ANSWER_BATCH` (8) prompts in one `generate()` call instead of one call per
 prompt. Left padding with an eos fallback for the pad token; each batch's
 exchanges are printed as it completes, so a timed-out script still leaves the
@@ -154,7 +154,7 @@ anything. If 32s becomes 12s for free, the case for the rest weakens a lot.
 **Then the model server.** The design discussed (and the right one for this
 codebase): a long-lived process that loads the base model once and exposes an
 API — build this blend, answer these prompts — with a new
-`templates/template_remote_code.py` whose generated scripts are thin clients,
+`gep_lora/core/templates/template_remote_code.py` whose generated scripts are thin clients,
 and a settings flag for how many servers to start.
 
 Why it fits: the pipeline's contract is *"a generated script prints a
@@ -262,7 +262,7 @@ six generations).
 
 ## 6. Gotchas that cost real time
 
-- **`tools.test` emits `WEIGHT_SEED = None`.** Two runs of one chromosome are
+- **`gep_lora.tools.test` emits `WEIGHT_SEED = None`.** Two runs of one chromosome are
   therefore *different blends*, not one blend measured twice. This invalidated
   an A/B and produced a garbage transcript that looked like a batching bug for
   an hour. Worth adding a `--seed` flag. Until then, pin the seed by hand or
@@ -296,7 +296,7 @@ six generations).
    population trees runs process` with the venv's python
    (`D:\sage-is\loras\.venv\Scripts\python.exe`). `process` alone needs no
    judge.
-3. **Compare** — `python -m metrics.report --db run_db/<scratch>.sqlite3
+3. **Compare** — `python -m gep_lora.core.metrics.report --db run_db/<scratch>.sqlite3
    --step process` against §2 above, phase by phase.
 4. Delete the scratch database and any `run_db/run_0*.py` left by a `BAD`
    individual.

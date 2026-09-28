@@ -96,7 +96,7 @@ d-----         9/23/2026   9:19 AM                __pycache__
 -a----         8/13/2026   9:13 AM             63 activate.bat                                                         
 -a----         9/17/2026   2:18 PM           1216 async_api.txt                                                        
 -a----         9/23/2026   1:44 PM          95254 CLAUDE.md                                                            
--a----         9/17/2026   1:52 PM          18815 continue_run.py                                                      
+-a----         9/17/2026   1:52 PM          18815 gep_lora/core/pipeline/continue_run.py                                                      
 -a----         8/13/2026   9:13 AM            213 create_env.bat                                                       
 -a----         8/13/2026   9:13 AM            108 delete_env.bat                                                       
 -a----         8/13/2026   9:41 AM            787 download_wheels.bat                                                  
@@ -104,7 +104,7 @@ d-----         9/23/2026   9:19 AM                __pycache__
 -a----          9/8/2026   7:41 AM             62 generate_report.bat                                                  
 -a----         9/17/2026   1:52 PM          16237 HOWTO.md                                                             
 -a----         8/25/2026   9:13 AM          34523 LICENSE                                                              
--a----         9/18/2026   8:31 AM          37452 main.py                                                              
+-a----         9/18/2026   8:31 AM          37452 gep_lora/core/pipeline/main.py                                                              
 -a----         9/23/2026   6:29 AM              0 NUL                                                                  
 -a----          9/6/2026   5:21 PM          14181 PerformanceWork.md                                                   
 -a----         8/24/2026   8:58 AM            809 plan.txt                                                             
@@ -113,7 +113,7 @@ d-----         9/23/2026   9:19 AM                __pycache__
 -a----         9/17/2026   8:45 AM            714 run_api_worker.bat                                                   
 -a----          9/7/2026   9:17 AM             45 run_unit_tests.bat                                                   
 -a----         8/13/2026   9:41 AM           1400 setup_torch.bat                                                      
--a----         9/23/2026   6:33 AM          76069 start_run.py                                                         
+-a----         9/23/2026   6:33 AM          76069 gep_lora/core/pipeline/start_run.py                                                         
 
 
 
@@ -240,7 +240,7 @@ D:\sage-is\loras\gep-lora\templates\template_baseline_mocked.py
 
 _Thinking:_
 
-This is a substantial project. Let me explore the core modules. Note that `start_run.py` is 76KB, `main.py` 37KB, `store.py` etc. Let me look at the key files. I'll use parallel reads and the explore agent.
+This is a substantial project. Let me explore the core modules. Note that `gep_lora/core/pipeline/start_run.py` is 76KB, `gep_lora/core/pipeline/main.py` 37KB, `store.py` etc. Let me look at the key files. I'll use parallel reads and the explore agent.
 
 Let me check line counts and read the core files.
 
@@ -263,13 +263,13 @@ Lines File
 ----- ----                                            
  2424 reporting\generate_html_db_stats.py             
  1388 storage\store.py                                
- 1291 start_run.py                                    
+ 1291 gep_lora/core/pipeline/start_run.py                                    
  1007 tools\compare_servers.py                        
   914 async_api\server.py                             
   883 unittests\async_api_agent\test_agent.py         
   763 adapters\base_models_and_loras_comparison.py    
   758 testing\test_run_with_dataset.py                
-  705 main.py                                         
+  705 gep_lora/core/pipeline/main.py                                         
   635 async_api\registry.py                           
   616 adapters\create_lora.py                         
   607 blends\generate_runs.py                         
@@ -295,7 +295,7 @@ Lines File
   341 templates\template_code_mocked.py               
   338 async_api\train.py                              
   336 async_api_agent\blending.py                     
-  326 continue_run.py                                 
+  326 gep_lora/core/pipeline/continue_run.py                                 
   326 templates\template_remote_code.py               
   325 api_jobs\user1\job6\job_run1\run_010.py         
   325 api_jobs\user1\job6\job_run1\run_024.py         
@@ -323,7 +323,7 @@ Lines File
 1: """
 2: settings.py - The knobs for a complete run, in one place.
 3: 
-4: start_run.py reads this module. Keeping the values here rather than at the top of it
+4: gep_lora/core/pipeline/start_run.py reads this module. Keeping the values here rather than at the top of it
 5: means there is no second copy to drift, and it is what lets a sweep record the
 6: settings it ran under without listing them by hand -- snapshot() takes every
 7: upper-case name below, so a knob added here is a knob stored there.
@@ -354,7 +354,7 @@ Lines File
 32: 
 33: # --- continuing a sweep ----------------------------------------------------
 34: 
-35: # How many generations continue_run.py runs when it is not told otherwise. One
+35: # How many generations gep_lora/core/pipeline/continue_run.py runs when it is not told otherwise. One
 36: # generation is trees -> runs -> process -> evaluate -> fitness -> elitism ->
 37: # selection -> mutation -> weight_mutation over the population already in the
 38: # database.
@@ -544,7 +544,7 @@ Lines File
 222: # resident together -- but it is now paid once per driver rather than once per
 223: # individual: the servers stay up across generations, and only come down early
 224: # when JUDGE_BACKEND = "unsloth" means the evaluate step wants the card for a
-225: # judge of its own. Measured on one card (tools/compare_servers.py): 1 -> 2
+225: # judge of its own. Measured on one card (gep_lora/tools/compare_servers.py): 1 -> 2
 226: # servers gave 1.64x throughput and -16% on the process step; 2 -> 4 gave only
 227: # 1.29x and -4%, at +23% per individual. A warm server has already removed the
 228: # CPU-bound import and load that used to overlap well, and what is left is
@@ -677,7 +677,7 @@ Lines File
 355: # --- how an answer is scored -----------------------------------------------
 356: 
 357: # Which evaluator the evaluate step uses. One name, out of the registry in the
-358: # evaluators package -- one module per evaluator, plus evaluators/common.py:
+358: # evaluators package -- one module per evaluator, plus gep_lora/core/evaluators/common.py:
 359: #
 360: #   "llm_judge"            a judge model grades the answer on its own merits.
 361: #                          Needs an endpoint. The original behaviour, and the
@@ -732,7 +732,7 @@ Lines File
 410: # "llm_judge_baseline", and by
 411: # "panel" for everything except which models sit on it. The API key is deliberately *not* here: a sweep
 412: # writes its settings into the database, so the key is read from the
-413: # JUDGE_API_KEY environment variable by evaluators/common.py instead.
+413: # JUDGE_API_KEY environment variable by gep_lora/core/evaluators/common.py instead.
 414: 
 415: # How the judge is reached. Two transports, one instrument: the rubrics, the
 416: # retries, the abandon rule and the way a score is read out of the reply are
@@ -751,7 +751,7 @@ Lines File
 429: # What the local backend costs: the judge is loaded once per evaluate step, on
 430: # the first answer it grades rather than while preparing (llm_judge_baseline
 431: # runs the base model while preparing, and the two should not be on the card at
-432: # once), and released the moment the step is done -- main.py goes straight into
+432: # once), and released the moment the step is done -- gep_lora/core/pipeline/main.py goes straight into
 433: # the next generation, whose scripts each want the VRAM back.
 434: JUDGE_BACKEND = "endpoint"
 435: 
@@ -848,11 +848,11 @@ Lines File
 526: # The three judging rubrics used to live here. Each is now a constant in the
 527: # evaluator that sends it, beside the code that sends it:
 528: #
-529: #   JUDGE_SYSTEM_PROMPT            evaluators/llm_judge.py
-530: #   JUDGE_REFERENCE_SYSTEM_PROMPT  evaluators/llm_judge_reference.py
-531: #   JUDGE_BASELINE_SYSTEM_PROMPT   evaluators/llm_judge_baseline.py
+529: #   JUDGE_SYSTEM_PROMPT            gep_lora/core/evaluators/llm_judge.py
+530: #   JUDGE_REFERENCE_SYSTEM_PROMPT  gep_lora/core/evaluators/llm_judge_reference.py
+531: #   JUDGE_BASELINE_SYSTEM_PROMPT   gep_lora/core/evaluators/llm_judge_baseline.py
 532: #
-533: # JUDGE_ANSWERS_SYSTEM_PROMPT (evaluators/llm_judge_answers.py) was never a
+533: # JUDGE_ANSWERS_SYSTEM_PROMPT (gep_lora/core/evaluators/llm_judge_answers.py) was never a
 534: # setting at all -- that evaluator arrived after the move, so it has no stored
 535: # value in any sweep to fall back to.
 536: #
@@ -896,7 +896,7 @@ Lines File
 574: # not a chat completion), so it gets its own settings. The API key is
 575: # deliberately not one of them, for the same reason JUDGE_API_KEY isn't: it is
 576: # read from the TYPESAFE_API_KEY environment variable by
-577: # evaluators/jev_judge_reference.py instead.
+577: # gep_lora/core/evaluators/jev_judge_reference.py instead.
 578: 
 579: # The TypeSafe evaluation endpoint's host. None uses the public API.
 580: JEV_BASE_URL = None
@@ -1027,7 +1027,7 @@ Lines File
 
 _Thinking:_
 
-This is a big and well-documented project. The user wants a code critique. Let me read the core modules to understand the actual code quality, not just the docs. Let me focus on the biggest / most important: start_run.py, store.py, generate_population.py, generate_runs.py, process_run.py, main.py, selection.py, mutation.py, and the templates.
+This is a big and well-documented project. The user wants a code critique. Let me read the core modules to understand the actual code quality, not just the docs. Let me focus on the biggest / most important: gep_lora/core/pipeline/start_run.py, store.py, generate_population.py, generate_runs.py, process_run.py, gep_lora/core/pipeline/main.py, selection.py, mutation.py, and the templates.
 
 Let me spawn parallel explore agents to examine different parts, and read some files directly.
 
@@ -1052,7 +1052,7 @@ Actually, let me be strategic. I'll read key files myself for the critique. Let 
 3: 
 4: This is the root module of the pipeline: it owns the symbols an individual is
 5: made of, the Node type, and the encode/decode pair everything else reads trees
-6: with. start_run.py calls build_population() for a sweep's population and decode() for
+6: with. gep_lora/core/pipeline/start_run.py calls build_population() for a sweep's population and decode() for
 7: each tree; there is no second parser anywhere.
 8: 
 9: Encoding
@@ -1249,7 +1249,7 @@ Actually, let me be strategic. I'll read key files myself for the critique. Let 
 <type>file</type>
 <content>
 1: """
-2: store.py - The sqlite database behind start_run.py.
+2: store.py - The sqlite database behind gep_lora/core/pipeline/start_run.py.
 3: 
 4: A sweep scattered across a folder -- a population file, a tree file, an index,
 5: a script, an output and a transcript per individual -- is easy to read and
@@ -1284,7 +1284,7 @@ Actually, let me be strategic. I'll read key files myself for the critique. Let 
 34: A sweep therefore records what it produced *and* what it cost, in the same
 35: file and to the same standard: which step, how many items it was, and which
 36: phase inside it -- see the step_timings and phase_timings comments below, and
-37: `python -m metrics.report` for the read side.
+37: `python -m gep_lora.core.metrics.report` for the read side.
 38: 
 39: Everything a scorer needs is reachable from one query, and nothing is derived
 40: from a filename. The only thing that still has to exist on disk is the generated
@@ -1304,9 +1304,9 @@ Actually, let me be strategic. I'll read key files myself for the critique. Let 
 54: 
 55: Usage from the command line:
 56: 
-57:     python -m storage.store --list                  # the sweeps in the database
-58:     python -m storage.store --show 3                # one sweep, summarised
-59:     python -m storage.store --export 3 --into dump  # write it back out as text files
+57:     python -m gep_lora.core.storage.store --list                  # the sweeps in the database
+58:     python -m gep_lora.core.storage.store --show 3                # one sweep, summarised
+59:     python -m gep_lora.core.storage.store --export 3 --into dump  # write it back out as text files
 60: """
 61: 
 62: import argparse
@@ -1530,7 +1530,7 @@ Actually, let me be strategic. I'll read key files myself for the critique. Let 
 280: -- These rows are that answer, kept the way every other result is kept.
 281: --
 282: -- One row per *step*, per *pass* over the sweep: a pass is one run of
-283: -- start_run.run(), which is exactly one generation when continue_run.py is
+283: -- start_run.run(), which is exactly one generation when gep_lora/core/pipeline/continue_run.py is
 284: -- turning the crank and one partial run when a step list was named by hand. So
 285: -- `process` appears once per generation rather than once per sweep, and the
 286: -- cost of a generation is the sum of the rows sharing its pass_no.
@@ -1703,7 +1703,7 @@ Actually, let me be strategic. I'll read key files myself for the critique. Let 
 453: def now():
 454:     """The timestamp these tables carry, for a caller that stamps its own.
 455: 
-456:     start_run.py marks a step's start before it runs it and only knows how long
+456:     gep_lora/core/pipeline/start_run.py marks a step's start before it runs it and only knows how long
 457:     it took afterwards, so it cannot let the INSERT do it.
 458:     """
 459:     return _now()
@@ -2344,7 +2344,7 @@ Actually, let me be strategic. I'll read key files myself for the critique. Let 
 
 _Thinking:_
 
-Let me continue reading store.py and read other core files. Let me look at the rest of store.py, start_run.py, main.py, generate_runs.py, process_run.py, selection.py, mutation.py.
+Let me continue reading store.py and read other core files. Let me look at the rest of store.py, gep_lora/core/pipeline/start_run.py, gep_lora/core/pipeline/main.py, generate_runs.py, process_run.py, selection.py, mutation.py.
 
 Given the huge size, let me be strategic and use the explore agent to summarize areas, while I read key files. Actually for a critique I need to actually see the code. Let me read several files in parallel with offsets.
 
@@ -2625,7 +2625,7 @@ Let me read the rest of store.py, generate_runs.py, process_run.py, and the temp
 1343: 
 1344: def pass_costs(conn, run_id):
 1345:     """What each pass over the sweep cost, oldest first -- a generation each,
-1346:     when continue_run.py is the one turning the crank."""
+1346:     when gep_lora/core/pipeline/continue_run.py is the one turning the crank."""
 1347:     return conn.execute(
 1348:         "SELECT pass_no, MAX(generation) AS generation, MAX(watermark) AS watermark,"
 1349:         "       MIN(started_at) AS started_at, SUM(seconds) AS seconds,"
@@ -2960,7 +2960,7 @@ Let me read the rest of store.py, generate_runs.py, process_run.py, and the temp
 4: Each individual becomes one self-contained script, written in the style of
 5: combination.py: load the base model once, attach the LoRAs the tree names, fold
 6: them together with PEFT's add_weighted_adapter, then chat through the resulting
-7: adapter. start_run.py calls plan() and render() here for every individual in a sweep
+7: adapter. gep_lora/core/pipeline/start_run.py calls plan() and render() here for every individual in a sweep
 8: and stores what comes back; the script only reaches disk long enough to be run.
 9: 
 10: The script itself comes from a template -- template_code.py by default -- which
@@ -3017,7 +3017,7 @@ Let me read the rest of store.py, generate_runs.py, process_run.py, and the temp
 61: 
 62: from config import settings
 63: 
-64: from search.generate_population import UNARY_OPS, decode, levels
+64: from gep_lora.core.search.generate_population import UNARY_OPS, decode, levels
 65: 
 66: # The repo folder, one above this one. Every path a setting names is
 67: # resolved against it, so nothing here depends on the cwd a driver was
@@ -3092,7 +3092,7 @@ Let me read the rest of store.py, generate_runs.py, process_run.py, and the temp
 136:     TRAINING_SET is a setting rather than a line in the templates, so the eval
 137:     set can be repointed without editing generated-script code and a sweep
 138:     records which prompts it was scored against. A relative value is taken from
-139:     this file's folder, the way start_run.py resolves DB_RUN_DIR, so it never depends
+139:     this file's folder, the way gep_lora/core/pipeline/start_run.py resolves DB_RUN_DIR, so it never depends
 140:     on the cwd a driver happened to be started from; an absolute one is used as
 141:     it stands. None means whatever settings.py currently says -- callers holding
 142:     a sweep's stored settings should pass that instead, or a resumed sweep would
@@ -3585,7 +3585,7 @@ Let me read the rest of store.py, generate_runs.py, process_run.py, and the temp
 629:     `weight_seed` is what the script's WEIGHT_SEED becomes. None leaves the
 630:     script redrawing its blend weights from the OS every execution, so the same
 631:     chromosome is judged under different weights each time. An int pins the draw,
-632:     which is how start_run.py makes a stored sweep repeatable -- it records the seed
+632:     which is how gep_lora/core/pipeline/start_run.py makes a stored sweep repeatable -- it records the seed
 633:     it stamped in here.
 634: 
 635:     `training_set` is what the script's TRAINING_SET becomes, resolved to an
@@ -3594,7 +3594,7 @@ Let me read the rest of store.py, generate_runs.py, process_run.py, and the temp
 638:     `chat_template` is CHAT_TEMPLATE already resolved -- a name, or None for the
 639:     model's own -- and None is a value for both (no cap; the model's own
 640:     template), so leave them out to read settings.py.
-641:     start_run.py passes the sweep's stored values for all four, so a resumed sweep
+641:     gep_lora/core/pipeline/start_run.py passes the sweep's stored values for all four, so a resumed sweep
 642:     keeps reading the prompts, reading as many of them, blending the adapters
 643:     and loading the model it was created with even if settings.py has since
 644:     moved on.
@@ -3831,7 +3831,7 @@ Let me read the search modules and process_run.
 121: ones either, and one that culled on that basis would empty a population instead
 122: of holding it steady.
 123: 
-124: start_run.py calls this as a library:
+124: gep_lora/core/pipeline/start_run.py calls this as a library:
 125: 
 126:     selection.select(conn, run_id, count, rng, conf)
 127: """
@@ -4053,7 +4053,7 @@ Let me read the search modules and process_run.
 57: already read a missing fitness as no fitness, so a mutant simply waits its turn
 58: until process and evaluate have given it one of its own.
 59: 
-60: start_run.py calls this as a library:
+60: gep_lora/core/pipeline/start_run.py calls this as a library:
 61: 
 62:     mutation.apply(conn, run_id, rate, rng)
 63: """
@@ -4189,7 +4189,7 @@ Let me read the search modules and process_run.
 36: getting anywhere. The history is the record of the run as a run -- what a
 37: fitness curve is drawn from.
 38: 
-39: start_run.py calls this as a library:
+39: gep_lora/core/pipeline/start_run.py calls this as a library:
 40: 
 41:     calculate_fitness.assign(conn, run_id)
 42: """
@@ -4298,7 +4298,7 @@ Let me read the search modules and process_run.
 23: -- if the fitness rule changes, it changes in calculate_fitness.py and this step
 24: follows it without knowing that it did.
 25: 
-26: start_run.py calls this as a library:
+26: gep_lora/core/pipeline/start_run.py calls this as a library:
 27: 
 28:     elitism.elect(conn, run_id)
 29: """
@@ -4347,9 +4347,9 @@ Let me read the search modules and process_run.
 
 _Thinking:_
 
-Let me now read process_run.py, start_run.py (the driver), main.py, and the templates. Also let me look at the async API. Let me use explore agents for broad areas to save context.
+Let me now read process_run.py, gep_lora/core/pipeline/start_run.py (the driver), gep_lora/core/pipeline/main.py, and the templates. Also let me look at the async API. Let me use explore agents for broad areas to save context.
 
-Let me read process_run.py and start_run.py. start_run.py is 76KB / 1291 lines. Let me read it in chunks, but maybe first look at its structure via grep.
+Let me read process_run.py and gep_lora/core/pipeline/start_run.py. gep_lora/core/pipeline/start_run.py is 76KB / 1291 lines. Let me read it in chunks, but maybe first look at its structure via grep.
 
 **Tool: read**
 
@@ -4368,7 +4368,7 @@ Let me read process_run.py and start_run.py. start_run.py is 76KB / 1291 lines. 
 1: """
 2: process_run.py - Launch a generated script and make sense of what it printed.
 3: 
-4: start_run.py writes each individual's script out of the database, hands it to
+4: gep_lora/core/pipeline/start_run.py writes each individual's script out of the database, hands it to
 5: launch() as its own process, and files everything it said back into the
 6: database. This module is the part that knows how to do that: how to run one
 7: script, how to read a transcript out of its stdout, and how to check that this
@@ -4739,7 +4739,7 @@ Let me read process_run.py and start_run.py. start_run.py is 76KB / 1291 lines. 
 372: def batches(items, size):
 373:     """`items` in consecutive groups of at most `size`, in the order given.
 374: 
-375:     Groups rather than a refilling queue: start_run.py stores a batch's results
+375:     Groups rather than a refilling queue: gep_lora/core/pipeline/start_run.py stores a batch's results
 376:     before it starts the next one, which is what keeps the database written from
 377:     one thread and in the order the individuals were selected in.
 378:     """
@@ -4946,7 +4946,7 @@ Let me read process_run.py and start_run.py. start_run.py is 76KB / 1291 lines. 
 ```json
 {
   "pattern": "^def |^class |^STEPS|^NEXT_GENERATION",
-  "include": "start_run.py"
+  "include": "gep_lora/core/pipeline/start_run.py"
 }
 ```
 
@@ -5012,9 +5012,9 @@ D:\sage-is\loras\gep-lora\start_run.py:
 
 _Thinking:_
 
-Let me read start_run.py, at least the core parts (Context, run, steps). And main.py. Let me read start_run.py lines 1-400 and 379-700 (process/evaluate), then 836-1300.
+Let me read gep_lora/core/pipeline/start_run.py, at least the core parts (Context, run, steps). And gep_lora/core/pipeline/main.py. Let me read gep_lora/core/pipeline/start_run.py lines 1-400 and 379-700 (process/evaluate), then 836-1300.
 
-Actually, let me read the whole start_run.py in a couple chunks, since it's central. 1291 lines. Let me read 1-700 and 700-1300.
+Actually, let me read the whole gep_lora/core/pipeline/start_run.py in a couple chunks, since it's central. 1291 lines. Let me read 1-700 and 700-1300.
 
 **Tool: read**
 
@@ -5032,7 +5032,7 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 <type>file</type>
 <content>
 1: """
-2: start_run.py - Run the whole pipeline end to end against a sqlite database.
+2: gep_lora/core/pipeline/start_run.py - Run the whole pipeline end to end against a sqlite database.
 3: 
 4:     population -> trees -> runs -> process -> evaluate -> fitness -> elitism
 5:     -> selection -> mutation -> weight_mutation
@@ -5096,9 +5096,9 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 63: apply to a sweep generated from template_code_mocked.py, which loads nothing.
 64: 
 65: Reading a sweep back:
-66:     python -m storage.store --list
-67:     python -m storage.store --show 0
-68:     python -m storage.store --export 0 --into export
+66:     python -m gep_lora.core.storage.store --list
+67:     python -m gep_lora.core.storage.store --show 0
+68:     python -m gep_lora.core.storage.store --export 0 --into export
 69: """
 70: 
 71: import argparse
@@ -5147,7 +5147,7 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 114:         self.run_dir = run_dir
 115:         self.template = template      # absolute path to the template it fills
 116:         self.options = options        # the parsed command line
-117:         # "2/5" while continue_run.py is working through its generations, None
+117:         # "2/5" while gep_lora/core/pipeline/continue_run.py is working through its generations, None
 118:         # for a single pass. Nothing reads it but the banners: a generation is
 119:         # not stored, and a step must not start behaving differently in one.
 120:         self.generation = None
@@ -5167,7 +5167,7 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 134: 
 135:     # The three things a step says about its own cost. Delegated rather than
 136:     # reached through context.meter so instrumenting a step reads as part of
-137:     # the step: see metrics/record.py for what each of them is for.
+137:     # the step: see gep_lora/core/metrics/record.py for what each of them is for.
 138: 
 139:     def count(self, items, unit=None, skipped=0, note=None):
 140:         """How many units this step worked on, and how many it skipped."""
@@ -5327,7 +5327,7 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 294:         source = generate_runs.render(
 295:             row["chromosome"], steps, final,
 296:             script_name=name,
-297:             provenance="Generated by start_run.py from run %d, individual %d of %s."
+297:             provenance="Generated by gep_lora/core/pipeline/start_run.py from run %d, individual %d of %s."
 298:                        % (run_id, row["number"], os.path.basename(conn.path)),
 299:             label="Individual %d" % row["number"],
 300:             template_lines=template_lines,
@@ -5405,7 +5405,7 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 372:     gone = store.remove_scripts(context.conn, context.run_id, context.run_dir,
 373:                                 [row["script_name"] for row in rows])
 374:     print("removed %d spent script(s) from %s -- they are still in the database "
-375:           "(python start_run.py runs, or python -m storage.store --export)"
+375:           "(python start_run.py runs, or python -m gep_lora.core.storage.store --export)"
 376:           % (gone, context.run_dir))
 377: 
 378: 
@@ -5492,7 +5492,7 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 459:     # everything below is as it was.
 460:     #
 461:     # Started at most once per *run*, not once per generation: the pool is kept
-462:     # on the Context, which continue_run.py builds once and reuses for every
+462:     # on the Context, which gep_lora/core/pipeline/continue_run.py builds once and reuses for every
 463:     # generation it turns. A pool that came down at the end of each process step
 464:     # would pay its startup again next generation for nothing -- the servers
 465:     # would be reloading the same model they had just released. The exception is
@@ -5697,7 +5697,7 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 664:     # A chromosome that cannot run is a result, not a pipeline failure. Only a
 665:     # sweep where nothing at all worked points at something systemic.
 666:     if failures == len(selected):
-667:         raise SystemExit("every individual failed -- try: python -m storage.store --show %d"
+667:         raise SystemExit("every individual failed -- try: python -m gep_lora.core.storage.store --show %d"
 668:                          % run_id)
 669: 
 670: 
@@ -5711,7 +5711,7 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 678: 
 679:     A wrapper around the work for one reason: a judge graded with
 680:     JUDGE_BACKEND = 'unsloth' is a model resident in *this* process, and the
-681:     step is done with it however it ends. main.py carries straight on into the
+681:     step is done with it however it ends. gep_lora/core/pipeline/main.py carries straight on into the
 682:     next generation, whose scripts each load the base model, so a judge left on
 683:     the card would be VRAM taken from every one of them.
 684:     """
@@ -5742,7 +5742,7 @@ Actually, let me read the whole start_run.py in a couple chunks, since it's cent
 
 _Thinking:_
 
-Let me continue reading start_run.py 700-1462.
+Let me continue reading gep_lora/core/pipeline/start_run.py 700-1462.
 
 **Tool: read**
 
@@ -6281,7 +6281,7 @@ Let me continue reading start_run.py 700-1462.
 1220:     """The Context a step gets. One place, so every driver builds the same one.
 1221: 
 1222:     Which is also why the --from-db run folder is chosen here rather than in
-1223:     each driver: start_run.py and continue_run.py both come through this, so a run
+1223:     each driver: gep_lora/core/pipeline/start_run.py and gep_lora/core/pipeline/continue_run.py both come through this, so a run
 1224:     driven from a database keeps to its own folder whichever of them is turning
 1225:     the crank.
 1226:     """
@@ -6295,12 +6295,12 @@ Let me continue reading start_run.py 700-1462.
 1234: def run(steps, context):
 1235:     """Run `steps` in order. Returns the exit code for the process.
 1236: 
-1237:     A sweep that stops part way is left marked 'failed', so `python -m storage.store
+1237:     A sweep that stops part way is left marked 'failed', so `python -m gep_lora.core.storage.store
 1238:     --list` says so rather than presenting a half-finished run as a result.
 1239:     """
 1240:     started = time.time()
 1241:     # One pass over the sweep: this call, whatever steps it was given. A
-1242:     # generation, when continue_run.py is the one calling. The watermark is read
+1242:     # generation, when gep_lora/core/pipeline/continue_run.py is the one calling. The watermark is read
 1243:     # once here rather than per step, so selection raising it half way through
 1244:     # cannot file the same generation under two numbers -- see the step_timings
 1245:     # comment in store.py.
@@ -6350,7 +6350,7 @@ Let me continue reading start_run.py 700-1462.
 1289:     print("=" * 70)
 1290:     print("done: %s in %.1fs" % (", ".join(step.name for step in steps),
 1291:                                  time.time() - started))
-1292:     print("run %d in %s -- python -m storage.store --show %d"
+1292:     print("run %d in %s -- python -m gep_lora.core.storage.store --show %d"
 1293:           % (context.run_id, context.conn.path, context.run_id))
 1294:     print("=" * 70)
 1295:     return 0
@@ -6401,9 +6401,9 @@ Let me continue reading start_run.py 700-1462.
 1340:     parser.add_argument("--next-generation", action="store_true",
 1341:                         help="also run %s -- the steps that build the next "
 1342:                              "generation. Without it a full run stops after "
-1343:                              "fitness, because start_run.py's one generation is the "
+1343:                              "fitness, because gep_lora/core/pipeline/start_run.py's one generation is the "
 1344:                              "whole run and there is no next generation to "
-1345:                              "build. continue_run.py passes it for every "
+1345:                              "build. gep_lora/core/pipeline/continue_run.py passes it for every "
 1346:                              "generation but its last."
 1347:                              % ", ".join(NEXT_GENERATION))
 1348:     args = parser.parse_args(argv)
@@ -6488,7 +6488,7 @@ Let me continue reading start_run.py 700-1462.
 1427:             raise SystemExit("%s holds no runs yet -- start one with the population "
 1428:                              "step." % conn.path)
 1429:         if store.get_run(conn, run_id) is None:
-1430:             raise SystemExit("no run %d in %s. Try: python -m storage.store --list"
+1430:             raise SystemExit("no run %d in %s. Try: python -m gep_lora.core.storage.store --list"
 1431:                              % (run_id, conn.path))
 1432:         conf = store.get_settings(conn, run_id)
 1433:         print("resuming run %d in %s\n" % (run_id, conn.path))
@@ -6511,8 +6511,8 @@ Let me continue reading start_run.py 700-1462.
 1450:     try:
 1451:         return run(selected, context)
 1452:     finally:
-1453:         # Whatever the process step left standing. main.py calls this as a
-1454:         # library and then hands the same sweep to continue_run.py, so the
+1453:         # Whatever the process step left standing. gep_lora/core/pipeline/main.py calls this as a
+1454:         # library and then hands the same sweep to gep_lora/core/pipeline/continue_run.py, so the
 1455:         # servers have to go before that second driver starts its own -- one
 1456:         # interpreter, one card, and no pool outlives the driver that made it.
 1457:         context.release_pool()
@@ -6534,7 +6534,7 @@ _Thinking:_
 
 This is a very thoughtfully written codebase. Now let me look at the templates (generated scripts), the async API, the agent, and tests. Let me use explore agents for broad review, and read a few key files.
 
-Let me read template_code.py and check for issues, plus main.py and continue_run.py. And look at the async API server/registry for security issues. And check tests.
+Let me read template_code.py and check for issues, plus gep_lora/core/pipeline/main.py and gep_lora/core/pipeline/continue_run.py. And look at the async API server/registry for security issues. And check tests.
 
 Let me use parallel agents to review specific areas, plus read the template.
 
@@ -6564,7 +6564,7 @@ Let me use parallel agents to review specific areas, plus read the template.
 10: #~ valid Python: your editor, linter and `python -m compileall` all still work on
 11: #~ it, and the generated scripts are exactly what you see here.
 12: #~
-13: #~ THE BLEND ARITHMETIC BELOW IS MIRRORED IN blends/lora_server.py.
+13: #~ THE BLEND ARITHMETIC BELOW IS MIRRORED IN gep_lora/core/blends/lora_server.py.
 14: #~ attach(), combine(), _compact() and _rank() exist there too, on a base model
 15: #~ that stays loaded between individuals -- which is what
 16: #~ template_remote_code.py's clients talk to. A generated script is standalone
@@ -7171,7 +7171,7 @@ Let me use parallel agents to review specific areas, plus read the template.
 46: did not has still changed this round -- writing 0 over it would tell process to
 47: skip a chromosome that has never been run.
 48: 
-49: start_run.py calls this as a library:
+49: gep_lora/core/pipeline/start_run.py calls this as a library:
 50: 
 51:     weight_mutation.apply(conn, run_id, rate, rng)
 52: """
@@ -7267,7 +7267,7 @@ Let me launch parallel explore agents for:
 3. tests review
 4. reporting/metrics review
 
-And read main.py and continue_run.py myself.
+And read gep_lora/core/pipeline/main.py and gep_lora/core/pipeline/continue_run.py myself.
 
 **Tool: task**
 
@@ -7285,43 +7285,43 @@ And read main.py and continue_run.py myself.
 task_id: ses_f302b3b07ffe3Hf4AIoTzP13PW (for resuming to continue this task if needed)
 
 <task_result>
-I've read all thirteen modules plus the relevant supporting code (`evaluators/common.py`, `adapters/catalog.py`, `adapters/create_lora.py`). Findings below, ordered by severity.
+I've read all thirteen modules plus the relevant supporting code (`gep_lora/core/evaluators/common.py`, `gep_lora/core/adapters/catalog.py`, `gep_lora/core/adapters/create_lora.py`). Findings below, ordered by severity.
 
 ---
 
 ## Critical
 
 ### 1. SSRF + server judge-key exfiltration via `GET /judge/models`
-`async_api/server.py:603-622`
+`gep_lora/apps/web/server.py:603-622`
 
-`base_url` is taken from the query string and passed straight to `evaluators.common.list_models(base_url, evaluators.API_KEY, ...)`. That helper sets `Authorization: Bearer <key>` (`evaluators/common.py:275-277`) where `API_KEY = os.environ.get("JUDGE_API_KEY", "")` (`evaluators/common.py:66`). The only validation is scheme `http(s)` and a non-empty netloc (`server.py:614`). Any authenticated user can point it at a host they control and receive the server's `$JUDGE_API_KEY` in the request, or use it to probe internal addresses. `urllib` follows redirects and copies the request headers to the redirect target, so the key can also be forwarded to a second host (see `common.py:280`).
+`base_url` is taken from the query string and passed straight to `gep_lora.core.evaluators.common.list_models(base_url, evaluators.API_KEY, ...)`. That helper sets `Authorization: Bearer <key>` (`gep_lora/core/evaluators/common.py:275-277`) where `API_KEY = os.environ.get("JUDGE_API_KEY", "")` (`gep_lora/core/evaluators/common.py:66`). The only validation is scheme `http(s)` and a non-empty netloc (`server.py:614`). Any authenticated user can point it at a host they control and receive the server's `$JUDGE_API_KEY` in the request, or use it to probe internal addresses. `urllib` follows redirects and copies the request headers to the redirect target, so the key can also be forwarded to a second host (see `common.py:280`).
 
 ### 2. Same key exfiltration / SSRF through job and verification options
-`async_api/settings.py:40-44`, `async_api/submit.py:68-83`, `async_api/evaluate.py:31-33,80-110`, `async_api/verify.py:205-212`
+`gep_lora/service/settings.py:40-44`, `gep_lora/service/submit.py:68-83`, `gep_lora/service/evaluate.py:31-33,80-110`, `gep_lora/service/verify.py:205-212`
 
-`JUDGE_BASE_URL` (and `JUDGE_MODEL`, `JUDGE_BACKEND`) is **not** in `LOCKED_SETTINGS`, so a submission may set it; the evaluate step then POSTs to `base_url + "/chat/completions"` with the bearer key (`evaluators/common.py:356` and `:247-255`). The same applies to `judge_base_url` in an evaluation body (`evaluate.py:102-109`, which uses `_text` and performs **no URL validation at all**) and in a verification body (`verify.py:205-212`). This is strictly worse than finding #1 because it also sends the dataset/answers, and `evaluate.py`/`verify.py` never validate the scheme or host.
+`JUDGE_BASE_URL` (and `JUDGE_MODEL`, `JUDGE_BACKEND`) is **not** in `LOCKED_SETTINGS`, so a submission may set it; the evaluate step then POSTs to `base_url + "/chat/completions"` with the bearer key (`gep_lora/core/evaluators/common.py:356` and `:247-255`). The same applies to `judge_base_url` in an evaluation body (`evaluate.py:102-109`, which uses `_text` and performs **no URL validation at all**) and in a verification body (`verify.py:205-212`). This is strictly worse than finding #1 because it also sends the dataset/answers, and `evaluate.py`/`verify.py` never validate the scheme or host.
 
 ---
 
 ## High
 
 ### 3. No worker exclusivity; startup recovery fails live jobs and orphan processes are never killed
-`async_api/worker.py:402-416`, `async_api/registry.py:450-454`
+`gep_lora/service/worker.py:402-416`, `gep_lora/service/registry.py:450-454`
 
 `recover()` reads every `jobs.status = 'running'` row and marks it FAILED with no check that a live worker owns it and no OS-level lock on `JOBS_DIR`. The module docstring says "one worker per JOBS_DIR," but nothing enforces it: starting a second worker (or restarting one before the first has exited) fails the first worker's in-flight job. The stored `pid` (`registry.set_pid`, `worker.py:202`) is never used to verify or kill the orphan, so the dead worker's child can keep writing the same sweep database while a resumed run works on it. `recover_verifications`/`recover_trainings` (`worker.py:312-321,383-391`) have the same shape.
 
 ### 4. Negative `Content-Length` leads to an unbounded blocking read; no request timeout
-`async_api/server.py:834-845`, `:861`
+`gep_lora/apps/web/server.py:834-845`, `:861`
 
 `_dispatch` sets `self._unread = int(self.headers.get("Content-Length") or 0)`; a negative value passes the `length > MAX_BODY_BYTES` and `if not length` guards (`:836-839`), so `_body` executes `self.rfile.read(-1)` at `:840`. `BufferedReader.read(-1)` reads to EOF, not to a zero length. A client sending `Content-Length: -1` and holding the connection open pins that server thread indefinitely (`Handler` sets `HTTP/1.1`, no `timeout`). Even a well-formed oversized body is read fully into memory before JSON parsing against a 64 MB cap (`settings.py:31`), and `ThreadingHTTPServer` starts an unbounded thread per connection.
 
 ### 5. `os.path.commonpath` can raise out of request handling (Windows)
-`async_api/submit.py:241-250` (`shared_path`), used by `dataset_lines:259` and `server.verify_dataset:509`
+`gep_lora/service/submit.py:241-250` (`shared_path`), used by `dataset_lines:259` and `server.verify_dataset:509`
 
 For a rooted name on another drive (`{"file": "D:\\whatever"}`) or a UNC path, `os.path.commonpath([shared, path])` raises `ValueError("Paths don't have the same drive")`. That exception is not `SubmissionError`/`VerifyError`, so it escapes as a 500 traceback instead of a clean 400/`None`. The traversal check itself is correct; the failure mode is the bug.
 
 ### 6. No quotas or rate limits on expensive work; single global queue
-`async_api/train.py:48-61`, `async_api/submit.py:86-117`, `async_api/worker.py:419-453`
+`gep_lora/service/train.py:48-61`, `gep_lora/service/submit.py:86-117`, `gep_lora/service/worker.py:419-453`
 
 `NUMBERS` allows `epochs <= 10000`, `max_steps <= 10**7`, `max_seq <= 1<<20`, and a submission can override `GENERATIONS`, `COUNT`, `TRAINING_COUNT`. The worker processes one item at a time from a single unbounded queue, so any authenticated user can enqueue days of GPU work ahead of everyone else. `MAX_BODY_BYTES = 64 MB` (`settings.py:31`) combined with inline datasets makes repeated 64 MB submissions a memory amplifier. There is no per-user concurrency or queue cap.
 
@@ -7330,37 +7330,37 @@ For a rooted name on another drive (`{"file": "D:\\whatever"}`) or a UNC path, `
 ## Medium
 
 ### 7. `ModelCache` entries can be duplicated and leaked on load failure; revocation races an in-flight build
-`async_api/inference.py:151-158,192-204`
+`gep_lora/service/inference.py:151-158,192-204`
 
 `_drop` (192-196) removes the entry from `_entries` while other threads that already called `_entry` still hold a reference and may call `engine.load()` on the same half-loaded engine, and it never unloads it. New requests for the same key then create a second engine, so two copies of the model can be resident and the first is never released. `forget` (198-204) writes `entry.built_for` without holding `entry.lock`, racing a concurrent `stream` that is rebuilding that same field (179-182). `stream` holds `entry.lock` for the whole generation (170-186), so a stuck `generate()` blocks every request for that key; `UnslothEngine.stream` also `join()`s the generation thread before returning (`:107`), so a client disconnect still occupies the request thread until the model finishes.
 
 ### 8. `mocked` engine detection is wrong for never-rendered individuals
-`async_api/golive.py:131-139`
+`gep_lora/service/golive.py:131-139`
 
 `mocked = bool(source) and not (process_run.imports_unsloth(source) or server_pool.wanted(source))`. When `script_source` is empty (seed/never rendered), `bool(source)` is False, so a mocked sweep is classified as `"unsloth"` and the deployment tries to load a real model. The engine test also re-implements logic that lives in `process_run`/`server_pool`. Separately, `draw_weights` (48-58) and `_weight_of` (61-66) duplicate the generated template's weight draw and plan arithmetic; a template change silently makes a live blend differ from the one that was scored.
 
 ### 9. TOCTOU between job deletion and resume/requeue
-`async_api/server.py:447-461` (`delete_run`/`delete_job`) vs `:369-380` (`resume_job`) and `:395-410` (`start_evaluation`)
+`gep_lora/apps/web/server.py:447-461` (`delete_run`/`delete_job`) vs `:369-380` (`resume_job`) and `:395-410` (`start_evaluation`)
 
 `delete_*` checks `_finished` (status in `FINISHED`), then `shutil.rmtree`s the folder and marks/deletes the row. `RESUMABLE = (STOPPED, CANCELLED, FAILED)` overlaps `FINISHED`, and `requeue` is only atomic against the status column, not against the rmtree. A concurrent `POST /jobs/{id}/resume` after the check can queue a job whose database/folder is being deleted, producing a worker failure rather than a clean 409.
 
 ### 10. `submit()` can leave a `preparing` job row and folder behind
-`async_api/submit.py:334-358`
+`gep_lora/service/submit.py:334-358`
 
 `registry.enqueue(...)` at `:358` is outside the `try/except` that cleans up on `:350-357`. If `enqueue` raises (DB lock, disk), the reserved job row stays `preparing` (never visible to the worker) and the job folder + datasets stay on disk forever. `reserve_job`/`enqueue` are deliberately two phases, so anything that can fail in between should roll back.
 
 ### 11. Unbounded log/dataset reads; unbounded log growth
-`async_api/server.py:319-329,540-551,678-691`, `async_api/train.py:357-377`, `async_api/worker.py:153`
+`gep_lora/apps/web/server.py:319-329,540-551,678-691`, `gep_lora/service/train.py:357-377`, `gep_lora/service/worker.py:153`
 
 `job_log`, `verification_log` and `lora_log` each `handle.read()` the entire file and then slice `[-lines:]`; `lines` has no upper bound and the underlying logs are appended to without rotation (`worker.py:153-180`). `train.preview` reads a whole dataset file into memory despite a `limit`. On a long-running deployment these become straightforward memory/DoS paths.
 
 ### 12. Unsalted, non-constant-time hashing of keys and tokens
-`async_api/registry.py:165-167`
+`gep_lora/service/registry.py:165-167`
 
 `digest()` is plain SHA-256 with no server-side pepper. For the 256-bit `token_urlsafe` values this is not practically brute-forceable, but a DB exfiltration exposes every credential to offline attacks if any token is ever weakened, and lookup is by SQL equality rather than `secrets.compare_digest`. An HMAC with a server secret would be strictly better with no cost. (No password/secret value is ever logged; `supervise` writes argv, which does not include `$JUDGE_API_KEY`.)
 
 ### 13. `verify_dataset`/`list_datasets` expose shared dataset names to all users
-`async_api/server.py:592-601,503-526`
+`gep_lora/apps/web/server.py:592-601,503-526`
 
 Every authenticated user can enumerate `SHARED_DATASETS_DIR` and point a verification at any file there. Filenames alone may be sensitive, and there is no per-user allowlist; the module comment frames datasets as "shared," but the access control is effectively global read of names.
 
@@ -7368,20 +7368,20 @@ Every authenticated user can enumerate `SHARED_DATASETS_DIR` and point a verific
 
 ## Low / hardening
 
-- `async_api/registry.py:233-237` (`_migrate`) and `adapters/catalog.py:352-378` build SQL with `%` string interpolation. All inputs today are constants or `_encode`-validated column names, so it is not injectable, but it is fragile. Queries that take user values are consistently parameterized (`registry.py:326-331,341-348,489-498,706-721`), and `revoke` builds placeholders correctly (`:719-721`).
-- `async_api/server.py:301-317` `job_database`: `mkstemp` → `os.remove` → `store.connect(path)` is a classic TOCTOU on the temp path (low risk in the OS temp dir).
-- `async_api/registry.py:280-282` `remove_user` cascades jobs/verifications/trainings away but leaves files and any running worker, whose later `registry.finish(...)` silently updates zero rows.
-- `async_api/worker.py:172-178`: `KeyboardInterrupt` arriving after the poll loop but during `process.wait()` is not caught, so the child can be left running; `kill_tree` on POSIX only escalates the direct child, not the session, so grandchildren that ignore SIGTERM survive.
-- `async_api/server.py:508-526` and `:216-234`: `training_of` matches on the folder string, and `delete_lora` rmtrees `lora_catalog.absolute(row["folder"])`. Today constrained to `TRAINED_LORAS_DIR/userN/name` by `train.NAME` (`train.py:45`) and `user_dir`, but nothing asserts the folder is under the trained root before deleting.
-- `async_api/submit.py:97` and `:107-113`: slot-rank and weight-presence checks happen against `config`/template, but an empty source is not treated as mocked (see #8), so the guard for weightless adapters is skipped when no template matches.
-- `async_api/evaluate.py:104`: a user echoing the current `JUDGE_*` values is silently ignored — correct — but there is no normalization (trailing slash, case) so a cosmetically equal URL is written into the sweep as a "change."
-- `async_api/server.py:612-615`: `urlparse` validation accepts userinfo, IP literals and non-standard ports; there is no blocklist for link-local/metadata addresses.
+- `gep_lora/service/registry.py:233-237` (`_migrate`) and `gep_lora/core/adapters/catalog.py:352-378` build SQL with `%` string interpolation. All inputs today are constants or `_encode`-validated column names, so it is not injectable, but it is fragile. Queries that take user values are consistently parameterized (`registry.py:326-331,341-348,489-498,706-721`), and `revoke` builds placeholders correctly (`:719-721`).
+- `gep_lora/apps/web/server.py:301-317` `job_database`: `mkstemp` → `os.remove` → `store.connect(path)` is a classic TOCTOU on the temp path (low risk in the OS temp dir).
+- `gep_lora/service/registry.py:280-282` `remove_user` cascades jobs/verifications/trainings away but leaves files and any running worker, whose later `registry.finish(...)` silently updates zero rows.
+- `gep_lora/service/worker.py:172-178`: `KeyboardInterrupt` arriving after the poll loop but during `process.wait()` is not caught, so the child can be left running; `kill_tree` on POSIX only escalates the direct child, not the session, so grandchildren that ignore SIGTERM survive.
+- `gep_lora/apps/web/server.py:508-526` and `:216-234`: `training_of` matches on the folder string, and `delete_lora` rmtrees `lora_catalog.absolute(row["folder"])`. Today constrained to `TRAINED_LORAS_DIR/userN/name` by `train.NAME` (`train.py:45`) and `user_dir`, but nothing asserts the folder is under the trained root before deleting.
+- `gep_lora/service/submit.py:97` and `:107-113`: slot-rank and weight-presence checks happen against `config`/template, but an empty source is not treated as mocked (see #8), so the guard for weightless adapters is skipped when no template matches.
+- `gep_lora/service/evaluate.py:104`: a user echoing the current `JUDGE_*` values is silently ignored — correct — but there is no normalization (trailing slash, case) so a cosmetically equal URL is written into the sweep as a "change."
+- `gep_lora/apps/web/server.py:612-615`: `urlparse` validation accepts userinfo, IP literals and non-standard ports; there is no blocklist for link-local/metadata addresses.
 
 ---
 
 ## Code quality
 
-- **`App` is a god object** (`async_api/server.py:246-771`): ~40 methods mixing authentication, job/verification/training/deployment business logic, LoRA catalogue operations, file serving and inference wiring. It is the seam every test must mock; `unittests/async_api/support.py` presumably does. There is no `test_worker.py`, `test_evaluate.py` or `test_testpass.py` under `unittests/async_api/` (only server, submit, train, registry, results, golive, inference, verify), so the worker/queue and the evaluate/testpass option parsing are untested.
+- **`App` is a god object** (`gep_lora/apps/web/server.py:246-771`): ~40 methods mixing authentication, job/verification/training/deployment business logic, LoRA catalogue operations, file serving and inference wiring. It is the seam every test must mock; `unittests/service/support.py` presumably does. There is no `test_worker.py`, `test_evaluate.py` or `test_testpass.py` under `unittests/async_api/` (only server, submit, train, registry, results, golive, inference, verify), so the worker/queue and the evaluate/testpass option parsing are untested.
 - **Triplicated queue machinery**: `claim_next` / `claim_next_training` / `claim_next_verification` (`registry.py:350-366,500-520,603-619`), `finish`/`finish_training`/`finish_verification` (372-376,527-531,625-629), `request_cancel`/`request_training_cancel` (378-415,631-653), and `orphaned*` (450-454,533-537,659-663) are near-identical copies. A small parameterized helper would remove most of `registry.py`.
 - **Duplicated quality-join loops**: `results.population` (`results.py:112-124`) and `verify.choices` (`verify.py:80-89`) each rebuild the same `{number: quality}` projection from `store.quality_rows` + `store.individuals`.
 - **Duplicated response shaping**: `job_json`/`verification_json`/`training_json`/`lora_json`/`deployment_json` (`server.py:152-243`) all follow the same "pick columns + json.loads one field + add derived booleans" pattern with slightly different key lists.
@@ -7389,7 +7389,7 @@ Every authenticated user can enumerate `SHARED_DATASETS_DIR` and point a verific
 - **Function-local imports**: `import evaluators` inside `judge_models` (`server.py:616`), inside `submit.form` (`submit.py:186`), and `from evaluators import composite` — presumably to keep startup light, but it splits the dependency graph and is repeated in several modules.
 - **`results.py:33` `_open = connect`** is a pure indirection with no behavior; either remove or document why.
 - **`settings.py:67-78` `_override()` mutates module globals at import time**, which makes the module's values order/import-dependent and awkward to isolate in tests; an explicit `Settings` object would be cleaner.
-- **Cross-process coupling in `worker.py`**: `settle`, `search_finished` and `run_job` reach into `results.progress`/`run_status` to decide job status (`worker.py:233-264,394-399`), duplicating "how far did the search get" logic that `main.py`'s `where_it_stopped()` already owns. The CLAUDE.md rule that the planner be the single definition appears to be broken here.
+- **Cross-process coupling in `worker.py`**: `settle`, `search_finished` and `run_job` reach into `results.progress`/`run_status` to decide job status (`worker.py:233-264,394-399`), duplicating "how far did the search get" logic that `gep_lora/core/pipeline/main.py`'s `where_it_stopped()` already owns. The CLAUDE.md rule that the planner be the single definition appears to be broken here.
 - **`golive.py` duplicates template arithmetic** (`draw_weights`, `_weight_of`, the attach-then-combine plan order at `:79-85`) that also lives in `template_code.py`/`generate_runs.plan`; the docstring acknowledges the weight draw, but the plan ordering is a second implementation to keep in sync.
 - **Private-attribute access across modules**: `inference.UnslothEngine.unload` manipulates `blend._torch` and resets `blend.ready/final/built/ranks` (`inference.py:111-118`), and `golive.blend_spec` uses `start_run._SEED_LIMIT` (`golive.py:119`). These are tight couplings that will break silently on refactors.
 
@@ -7434,7 +7434,7 @@ I've read all twelve modules plus the server dispatch, registry, catalogue, the 
 `providers.resolve` (`providers.py:100-113`) allows a `base_url` override for any provider with `local: true` — which includes the default `lmstudio` and `ollama` (`settings.py:44-50`). It correctly strips the key (`providers.py:111`), but the server then issues the request: `GET {base_url}/models` (`providers.py:189-198`) and `POST {base_url}/chat/completions` (`providers.py:335-346`). `/agent/models?provider=lmstudio&base_url=http://169.254.169.254/...` (`routes.py:231-240`) returns the parsed `data[].id` values, and `/agent/chat` returns the model's reply text — a general internal-network read primitive. Auth is required (`server.py:900-902`), which limits but does not remove the risk.
 
 **3. Cross-user information leak in `_set_verify_questions`.**
-`tools.py:623` does `self.catalog.get(questions["lora"])["name"]` with no owner check. `catalog.get` (`adapters/catalog.py:380-382`) is owner-agnostic. The `questions` value comes from the page-supplied session (`planner.session_of` → `release.release_of`, which only checks it is an `int`, `release.py:74-81`). A user can send `session.release.questions = {"lora": <victim id>}`, then trigger `set_verify_questions` with only `count` (no model needed — `commands.py:229-233` turns "5 questions" into exactly that call), and the victim's LoRA name is returned in `questions_text`. If the id does not exist it raises a bare `TypeError`, reported misleadingly as "bad arguments". `routes.verify_plan` does check ownership (`routes.py:407-409`); this path does not.
+`tools.py:623` does `self.catalog.get(questions["lora"])["name"]` with no owner check. `catalog.get` (`gep_lora/core/adapters/catalog.py:380-382`) is owner-agnostic. The `questions` value comes from the page-supplied session (`planner.session_of` → `release.release_of`, which only checks it is an `int`, `release.py:74-81`). A user can send `session.release.questions = {"lora": <victim id>}`, then trigger `set_verify_questions` with only `count` (no model needed — `commands.py:229-233` turns "5 questions" into exactly that call), and the victim's LoRA name is returned in `questions_text`. If the id does not exist it raises a bare `TypeError`, reported misleadingly as "bad arguments". `routes.verify_plan` does check ownership (`routes.py:407-409`); this path does not.
 
 **4. Uncaught exceptions in tool bodies turn a bad tool call into a 500 and lose the message.**
 `Toolbox.run` catches `(ToolError, SelectionError, SessionError, DatasetError, BlendError, ReleaseError)` and `TypeError` (`tools.py:239-243`), but not plain `ValueError`/`KeyError`/`AttributeError` raised *inside* a tool. Concretely:
@@ -7469,10 +7469,10 @@ When `MAX_ROUNDS` is exhausted, `text = ""` and the message is `_summary(box)` �
 `routes.py:166-188` reads each file up to 4 MB and runs full `analysis.analyse`. It is called on every `/agent/config` and every `/agent/chat` (`routes.py:205,296`), and `tools._use_demo_dataset`/`_set_blend_questions`/`_set_verify_questions` each call `self.shared_datasets()` one to three times (`tools.py:402-414,492-512,587-611`). O(files × bytes) repeated per message.
 
 **12. Layering / circular coupling.**
-`blending._file_text` lazily imports the HTTP layer to reach private helpers (`blending.py:195-198` → `routes._read`/`routes._shared_path`), while `routes.py:73` imports `blending` — a deliberate cycle. `planner` reaches into `async_api.train`'s private `_number` (`planner.py:104`), and `session_of` lazily imports `blending`/`release` (`planner.py:136-145`). These make the "one module per concern" boundary leaky and hard to unit-test in isolation.
+`blending._file_text` lazily imports the HTTP layer to reach private helpers (`blending.py:195-198` → `routes._read`/`routes._shared_path`), while `routes.py:73` imports `blending` — a deliberate cycle. `planner` reaches into `gep_lora.service.train`'s private `_number` (`planner.py:104`), and `session_of` lazily imports `blending`/`release` (`planner.py:136-145`). These make the "one module per concern" boundary leaky and hard to unit-test in isolation.
 
 **13. Testability: network and model access are hard-wired.**
-`providers._request` uses `urllib.request` directly (`providers.py:136-159`) and `agent.say`/`agent.chat` call `providers.resolve`/`providers.chat`/`providers.converse` as module globals (`agent.py:69,80,217,224`). The only way the suite tests the wire formats is by standing up a real `HTTPServer` (`unittests/async_api_agent/test_agent.py:159-199`), so provider failure modes, timeouts and retry logic are effectively untested.
+`providers._request` uses `urllib.request` directly (`providers.py:136-159`) and `agent.say`/`agent.chat` call `providers.resolve`/`providers.chat`/`providers.converse` as module globals (`agent.py:69,80,217,224`). The only way the suite tests the wire formats is by standing up a real `HTTPServer` (`unittests/assistant/test_agent.py:159-199`), so provider failure modes, timeouts and retry logic are effectively untested.
 
 ---
 
@@ -7518,7 +7518,7 @@ When `MAX_ROUNDS` is exhausted, `text = ""` and the message is `_summary(box)` �
 ```json
 {
   "description": "Review tests and evaluators",
-  "prompt": "Review the test suite and evaluators in D:\\sage-is\\loras\\gep-lora. \n- Test files live under `unittests/` (async_api, async_api_agent, adapters, evaluators, search) plus there may be others. There is also a `run_unit_tests.bat` and no pytest config maybe.\n- Evaluators live in `evaluators/` (common.py, llm_judge*.py, panel.py, composite.py, similarity.py, heuristic.py, local_model.py, jev_judge_reference.py).\n\nAssess:\n1. Test coverage and quality: what is tested, what is conspicuously NOT tested (e.g. the core GEP search steps, storage/store.py, generate_runs.py, process_run.py). Are tests hermetic or do they hit network/GPU? Is there mocking?\n2. Test framework: is pytest used consistently? Are there tests that are really integration tests? \n3. Evaluators: duplication across the llm_judge* modules, error handling, the judge transport in common.py, robustness of score parsing.\n4. Any flaky or slow tests, and any dead/disabled tests.\n\nReport concrete findings with `file_path:line_number` references. Be specific and skeptical. Do NOT write code. Return a prioritized list of findings and a rough coverage assessment.",
+  "prompt": "Review the test suite and evaluators in D:\\sage-is\\loras\\gep-lora. \n- Test files live under `unittests/` (async_api, async_api_agent, adapters, evaluators, search) plus there may be others. There is also a `run_unit_tests.bat` and no pytest config maybe.\n- Evaluators live in `evaluators/` (common.py, llm_judge*.py, panel.py, composite.py, similarity.py, heuristic.py, local_model.py, jev_judge_reference.py).\n\nAssess:\n1. Test coverage and quality: what is tested, what is conspicuously NOT tested (e.g. the core GEP search steps, gep_lora/core/storage/store.py, generate_runs.py, process_run.py). Are tests hermetic or do they hit network/GPU? Is there mocking?\n2. Test framework: is pytest used consistently? Are there tests that are really integration tests? \n3. Evaluators: duplication across the llm_judge* modules, error handling, the judge transport in common.py, robustness of score parsing.\n4. Any flaky or slow tests, and any dead/disabled tests.\n\nReport concrete findings with `file_path:line_number` references. Be specific and skeptical. Do NOT write code. Return a prioritized list of findings and a rough coverage assessment.",
   "subagent_type": "explore"
 }
 ```
@@ -7547,24 +7547,24 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 <type>file</type>
 <content>
 1: """
-2: main.py - A sweep from nothing to the end of the search, in one command.
+2: gep_lora/core/pipeline/main.py - A sweep from nothing to the end of the search, in one command.
 3: 
-4:     start_run.py     draws a population and takes it through one generation
-5:     continue_run.py  carries that sweep on for GENERATIONS more
+4:     gep_lora/core/pipeline/start_run.py     draws a population and takes it through one generation
+5:     gep_lora/core/pipeline/continue_run.py  carries that sweep on for GENERATIONS more
 6:     test_run_with_dataset.py  puts what the search found in front of the
 7:                      testing split, and grades it
-8:     main.py          all of that, in that order, against the same sweep
+8:     gep_lora/core/pipeline/main.py          all of that, in that order, against the same sweep
 9: 
 10:     python main.py
 11: 
 12: which is:
 13: 
 14:     python start_run.py
-15:     python continue_run.py --run <the sweep start_run.py just made>
+15:     python continue_run.py --run <the sweep gep_lora/core/pipeline/start_run.py just made>
 16: 
-17: so the whole search is 1 + GENERATIONS generations -- start_run.py's own turn of the
-18: crank, then the ones continue_run.py adds. --generations controls the second
-19: half; there is no way to have fewer than the one start_run.py runs, because drawing
+17: so the whole search is 1 + GENERATIONS generations -- gep_lora/core/pipeline/start_run.py's own turn of the
+18: crank, then the ones gep_lora/core/pipeline/continue_run.py adds. --generations controls the second
+19: half; there is no way to have fewer than the one gep_lora/core/pipeline/start_run.py runs, because drawing
 20: a population and leaving it unjudged would not be a generation.
 21: 
 22: It calls the two drivers as libraries, in this interpreter. That matters: the
@@ -7572,12 +7572,12 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 24: would be one more chance to run the search under the wrong Python. Whatever you
 25: start this with is what the whole sweep uses.
 26: 
-27: The sweep is handed on by id, not by "the latest one" -- start_run.py's new sweep is
+27: The sweep is handed on by id, not by "the latest one" -- gep_lora/core/pipeline/start_run.py's new sweep is
 28: looked up once it exists and named explicitly, so a database that gains a sweep
 29: from somewhere else in between cannot be picked up by mistake.
 30: 
-31: Options are forwarded to whichever driver understands them: --label to start_run.py,
-32: --generations and --set to continue_run.py, and the rest -- --db, --run-dir,
+31: Options are forwarded to whichever driver understands them: --label to gep_lora/core/pipeline/start_run.py,
+32: --generations and --set to gep_lora/core/pipeline/continue_run.py, and the rest -- --db, --run-dir,
 33: --limit, --include-blocked, --include-unchanged, --keep-scripts, --timeout,
 34: --force -- to both, meaning there what they mean there.
 35: 
@@ -7627,21 +7627,21 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 79: search it runs there is the one it describes, not the one that machine's
 80: settings.py happens to say. --run-dir still overrides, if you want it elsewhere.
 81: 
-82: An adopted sweep must hold no individuals yet -- start_run.py's half of the run draws
+82: An adopted sweep must hold no individuals yet -- gep_lora/core/pipeline/start_run.py's half of the run draws
 83: a population, and drawing one into a search that already has one would leave two
-84: side by side. continue_run.py --from-db is what carries a started sweep on.
+84: side by side. gep_lora/core/pipeline/continue_run.py --from-db is what carries a started sweep on.
 85: 
 86: --from-db is the flag underneath all of this, and the three drivers take it on
 87: their own too:
 88: 
 89:     python start_run.py --db <prepared> --run 1 --from-db
 90:     python continue_run.py --db <prepared> --run 1 --from-db
-91:     python -m testing.test_run_with_dataset --db <prepared> --run 1 --from-db
+91:     python -m gep_lora.core.testing.test_run_with_dataset --db <prepared> --run 1 --from-db
 92: 
 93: --no-test and --test-min-quality go to the testing pass, and --db, --limit,
 94: --keep-scripts, --timeout and --force reach it too.
 95: 
-96: A failing half stops the run: if start_run.py cannot produce a sweep there is nothing
+96: A failing half stops the run: if gep_lora/core/pipeline/start_run.py cannot produce a sweep there is nothing
 97: to continue, and its exit code comes straight back out.
 98: 
 99: The testing pass at the end runs only when the sweep has a TESTING_SET, because
@@ -7733,7 +7733,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 185: 
 186: 
 187: def sweep_after(db_path, before):
-188:     """The id of the sweep start_run.py just created, or None if it made none."""
+188:     """The id of the sweep gep_lora/core/pipeline/start_run.py just created, or None if it made none."""
 189:     conn = store.connect(db_path)
 190:     try:
 191:         latest = store.latest_run(conn)
@@ -7753,7 +7753,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 205: 
 206:     Nothing else changes: a database that does not exist yet, holds no sweeps,
 207:     or whose latest sweep has a population is a database to start a new sweep
-208:     in, exactly as before -- `main.py --db run_real/gep.sqlite3` goes on
+208:     in, exactly as before -- `gep_lora/core/pipeline/main.py --db run_real/gep.sqlite3` goes on
 209:     meaning what it meant. --label suppresses this too, since a label is
 210:     something only a sweep being created can be given.
 211: 
@@ -7785,7 +7785,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 237: 
 238:     A sweep is *prepared* when the database already holds its settings and its
 239:     dataset and no individuals: everything a search needs, and none of the
-240:     search. start_run.py then draws the population into it and takes it through its
+240:     search. gep_lora/core/pipeline/start_run.py then draws the population into it and takes it through its
 241:     first generation exactly as it would into a sweep it had just created --
 242:     except that the knobs and the questions are the ones already written down,
 243:     so settings.py and the files under datasets/ are never opened, and the run
@@ -7799,7 +7799,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 251: 
 252:     A sweep that already holds individuals. The population step appends, so
 253:     joining a search that has one would draw a second population beside the
-254:     first; continue_run.py is what carries one of those on. Only --run can
+254:     first; gep_lora/core/pipeline/continue_run.py is what carries one of those on. Only --run can
 255:     reach this, since prepared() picks no such sweep in the first place.
 256:     """
 257:     run = options.run if run is None else run
@@ -7816,12 +7816,12 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 268:                 "%s holds no sweeps, so there is none to run. Drop --run to "
 269:                 "start one from settings.py." % conn.path)
 270:         if store.get_run(conn, run_id) is None:
-271:             raise SystemExit("no run %d in %s. Try: python -m storage.store --list"
+271:             raise SystemExit("no run %d in %s. Try: python -m gep_lora.core.storage.store --list"
 272:                              % (run_id, conn.path))
 273:         held = store.individuals(conn, run_id)
 274:         if held:
 275:             raise SystemExit(
-276:                 "run %d in %s already holds %d individual(s). main.py starts "
+276:                 "run %d in %s already holds %d individual(s). gep_lora/core/pipeline/main.py starts "
 277:                 "a search rather than joining one, and its first half would draw "
 278:                 "a second population beside that one.\n"
 279:                 "    Carry it on instead: python main.py --db %s --run %d --resume"
@@ -7841,7 +7841,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 293:     """Say what the adopted sweep is, before a single step runs.
 294: 
 295:     `asked` is whether --run named it. When it did not, the reason it was picked
-296:     is worth a line: this is the one decision main.py makes on its own, and
+296:     is worth a line: this is the one decision gep_lora/core/pipeline/main.py makes on its own, and
 297:     the alternative it turned down -- starting a second sweep in somebody's
 298:     prepared database -- is exactly what a person would want to be told about.
 299:     """
@@ -7888,7 +7888,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 340:     scored, and fitness restates a generation it has already recorded.
 341: 
 342:     `rest` is the steps that finish the generation it stopped in, in pipeline
-343:     order; `generations` the whole ones left after it, for continue_run.py.
+343:     order; `generations` the whole ones left after it, for gep_lora/core/pipeline/continue_run.py.
 344:     `at_rest` says the sweep sits on a fitness snapshot with at most part of
 345:     the tail run since -- `tail_done` being that part -- and `since` is every
 346:     step that finished after the snapshot (all of them, before the first).
@@ -7952,7 +7952,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 404:     try:
 405:         run_id = store.latest_run(conn) if options.run == 0 else options.run
 406:         if run_id is None or store.get_run(conn, run_id) is None:
-407:             raise SystemExit("no run %s in %s. Try: python -m storage.store --list"
+407:             raise SystemExit("no run %s in %s. Try: python -m gep_lora.core.storage.store --list"
 408:                              % (options.run, conn.path))
 409:         conf = store.get_settings(conn, run_id)
 410:         if not conf:
@@ -8003,7 +8003,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 455:             print("to finish generation %d: %s"
 456:                   % (plan.scored + (0 if plan.at_rest else 1), " -> ".join(plan.rest)))
 457:         if plan.generations:
-458:             print("then %d more generation(s) through continue_run.py" % plan.generations)
+458:             print("then %d more generation(s) through gep_lora/core/pipeline/continue_run.py" % plan.generations)
 459:     print("=" * 70)
 460:     print()
 461: 
@@ -8101,7 +8101,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 553:     adopted = adopt(options, target) if target is not None else None
 554:     if adopted:
 555:         run_id, conf, splits = adopted
-556:         # The sweep's own GENERATIONS, the way continue_run.py reads it, so a
+556:         # The sweep's own GENERATIONS, the way gep_lora/core/pipeline/continue_run.py reads it, so a
 557:         # prepared database says how long its own search is.
 558:         generations = continue_run.generation_count(options, conf)
 559:         before = None
@@ -8117,23 +8117,23 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 569: 
 570:     if generations < 1:
 571:         raise SystemExit(
-572:             "%d generation(s) for the second half; start_run.py's generation would be "
-573:             "the whole run. Use start_run.py on its own for that." % generations)
+572:             "%d generation(s) for the second half; gep_lora/core/pipeline/start_run.py's generation would be "
+573:             "the whole run. Use gep_lora/core/pipeline/start_run.py on its own for that." % generations)
 574: 
 575:     started = time.time()
 576:     print("=" * 70)
-577:     print("full run: start_run.py, then continue_run.py for %d more generation(s)"
+577:     print("full run: gep_lora/core/pipeline/start_run.py, then gep_lora/core/pipeline/continue_run.py for %d more generation(s)"
 578:           % generations)
 579:     print("=" * 70)
 580:     print()
 581:     if adopted:
 582:         describe(options, run_id, conf, splits, asked)
 583: 
-584:     # --next-generation because start_run.py's generation is this run's *first*,
-585:     # not its last: continue_run.py has at least one more to run (--generations
+584:     # --next-generation because gep_lora/core/pipeline/start_run.py's generation is this run's *first*,
+585:     # not its last: gep_lora/core/pipeline/continue_run.py has at least one more to run (--generations
 586:     # is refused below 1), and it needs a population selection and mutation
 587:     # have moved on. Only the run's last generation stops after fitness, and
-588:     # that one belongs to continue_run.py.
+588:     # that one belongs to gep_lora/core/pipeline/continue_run.py.
 589:     first = ["--next-generation"]
 590:     if adopted:
 591:         first += ["--run", str(run_id)]
@@ -8142,20 +8142,20 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 594:     code = call(start_run.main, first + forwarded(options, bool(adopted)))
 595:     if code:
 596:         print()
-597:         print("start_run.py failed; there is no sweep to continue.")
+597:         print("gep_lora/core/pipeline/start_run.py failed; there is no sweep to continue.")
 598:         return code
 599: 
 600:     if not adopted:
 601:         run_id = sweep_after(options.db, before)
 602:         if run_id is None:
 603:             print()
-604:             print("start_run.py made no new sweep in %s; nothing to continue."
+604:             print("gep_lora/core/pipeline/start_run.py made no new sweep in %s; nothing to continue."
 605:                   % options.db)
 606:             return 1
 607: 
 608:     print()
 609:     print("#" * 70)
-610:     print("# start_run.py done -- run %d. Continuing it for %d more generation(s)."
+610:     print("# gep_lora/core/pipeline/start_run.py done -- run %d. Continuing it for %d more generation(s)."
 611:           % (run_id, generations))
 612:     print("#" * 70)
 613:     print()
@@ -8170,7 +8170,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 622:     print("full run of %d generation(s) %s in %.1fs -- run %d in %s"
 623:           % (generations + 1, "finished" if not code else "STOPPED",
 624:              time.time() - started, run_id, options.db))
-625:     print("python -m storage.store --show %d" % run_id)
+625:     print("python -m gep_lora.core.storage.store --show %d" % run_id)
 626:     print("=" * 70)
 627: 
 628:     # The search is over; this is the one question it could not answer about
@@ -8240,7 +8240,7 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 692:             print()
 693:             print("no testing pass: run %d holds no testing split, so nothing "
 694:                   "says which questions it was never judged on." % run_id)
-695:             print("    add one with: python -m storage.add_dataset <file> --db %s "
+695:             print("    add one with: python -m gep_lora.core.storage.add_dataset <file> --db %s "
 696:                   "--run %d --split testing" % (options.db, run_id))
 697:             return 0
 698:         dataset = "its own testing split (%d record(s))" % records
@@ -8289,8 +8289,8 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 741: 
 742: def parse(argv):
 743:     parser = argparse.ArgumentParser(
-744:         description="Run a whole search: start_run.py for a new sweep and its first "
-745:                     "generation, then continue_run.py for the rest.")
+744:         description="Run a whole search: gep_lora/core/pipeline/start_run.py for a new sweep and its first "
+745:                     "generation, then gep_lora/core/pipeline/continue_run.py for the rest.")
 746:     parser.add_argument("--db", default=config.DB_PATH,
 747:                         help="database file (default %s)" % config.DB_PATH)
 748:     parser.add_argument("--run", type=int, default=None, metavar="ID",
@@ -8302,8 +8302,8 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 754:     parser.add_argument("--label", default=None,
 755:                         help="a note stored with the sweep, to find it again later")
 756:     parser.add_argument("--generations", type=int, default=None, metavar="N",
-757:                         help="generations for continue_run.py, on top of the one "
-758:                              "start_run.py runs (default: with --run, the sweep's own "
+757:                         help="generations for gep_lora/core/pipeline/continue_run.py, on top of the one "
+758:                              "gep_lora/core/pipeline/start_run.py runs (default: with --run, the sweep's own "
 759:                              "stored GENERATIONS; otherwise settings.py's, "
 760:                              "currently %d)" % config.GENERATIONS)
 761:     parser.add_argument("--set", action="append", default=[], dest="settings",
@@ -8352,8 +8352,8 @@ task_id: ses_f302b3a82ffefSyFd0jF8lmca6 (for resuming to continue this task if n
 804:         parser.error("--%s needs a sweep that exists: pass --run (0 = the latest)."
 805:                      % ("resume" if options.resume else "evaluate"))
 806:     if options.generations is not None and options.generations < 1:
-807:         parser.error("--generations is %d; start_run.py's generation would be the whole "
-808:                      "run. Use start_run.py on its own for that." % options.generations)
+807:         parser.error("--generations is %d; gep_lora/core/pipeline/start_run.py's generation would be the whole "
+808:                      "run. Use gep_lora/core/pipeline/start_run.py on its own for that." % options.generations)
 809:     if options.run is not None and options.label:
 810:         # create_run() is what writes a label, and --run creates nothing.
 811:         parser.error("--label names a sweep as it is created, and --run adopts one "
@@ -8379,8 +8379,8 @@ The tests agent returned empty. Let me investigate tests myself, and also look a
 Let me also verify a few of the security findings quickly, since I should be accurate in my critique. But the agents gave detailed references. I should sanity-check the most severe claims.
 
 Let me look at:
-- evaluators/common.py around list_models / API_KEY
-- async_api/server.py judge_models
+- gep_lora/core/evaluators/common.py around list_models / API_KEY
+- gep_lora/apps/web/server.py judge_models
 - unittests structure and run tests
 - pyproject/requirements
 - .gitignore includes NUL (that NUL file at root is odd)
@@ -8475,7 +8475,7 @@ D:\sage-is\loras\gep-lora\unittests\testing\__init__.py
 <type>file</type>
 <content>
 1: """
-2: evaluators/common.py - What an evaluator is, and what they all share.
+2: gep_lora/core/evaluators/common.py - What an evaluator is, and what they all share.
 3: 
 4: One file rather than six copies. Everything here is used by at least two of the
 5: evaluators beside it, and nothing here is an evaluator itself:
@@ -8571,7 +8571,7 @@ D:\sage-is\loras\gep-lora\unittests\testing\__init__.py
 95:         # {question key: what the base model said} -- the control
 96:         # llm_judge_baseline grades against, read out of the database once.
 97:         self.baselines = baselines or {}
-98:         self.notes = list(notes)      # lines start_run.py prints before scoring
+98:         self.notes = list(notes)      # lines gep_lora/core/pipeline/start_run.py prints before scoring
 99: 
 100: 
 101: class Evaluator:
@@ -8632,7 +8632,7 @@ D:\sage-is\loras\gep-lora\unittests\testing\__init__.py
 156: 
 157: 
 158: # Filled by the register() call at the foot of each evaluator module, as
-159: # evaluators/__init__.py imports them. Nothing else writes to it.
+159: # gep_lora/core/evaluators/__init__.py imports them. Nothing else writes to it.
 160: _REGISTRY = {}
 161: 
 162: 
@@ -8879,7 +8879,7 @@ D:\sage-is\loras\gep-lora\unittests\testing\__init__.py
 403: def backend_of(conf):
 404:     """Which transport a sweep grades through, checked. -> ENDPOINT or UNSLOTH.
 405: 
-406:     Its own function because start_run.py asks it when a sweep is *created*, an
+406:     Its own function because gep_lora/core/pipeline/start_run.py asks it when a sweep is *created*, an
 407:     hour before any answer needs grading: a misspelt backend should cost a line
 408:     at the top of the run, not a finished transcript nobody can score.
 409:     """
@@ -8960,7 +8960,7 @@ D:\sage-is\loras\gep-lora\unittests\testing\__init__.py
 484: 
 485:     Called by the evaluate step and by the testing pass when they are done,
 486:     whichever evaluator ran: a step that has finished scoring has no further use
-487:     for a model, and `main.py` goes straight on to a generation whose scripts
+487:     for a model, and `gep_lora/core/pipeline/main.py` goes straight on to a generation whose scripts
 488:     each want the card.
 489:     """
 490:     local_model.release()
@@ -8970,7 +8970,7 @@ D:\sage-is\loras\gep-lora\unittests\testing\__init__.py
 494:     """Whether any pending exchange has an answer worth spending a call on.
 495: 
 496:     An all-blank set -- a sweep where every script failed -- is scored 0.0 by
-497:     start_run.py without anyone being asked, and a mocked sweep arrives scored, so
+497:     gep_lora/core/pipeline/start_run.py without anyone being asked, and a mocked sweep arrives scored, so
 498:     neither should make the step demand an endpoint that need not be up, or load
 499:     a judge model that has nothing to grade.
 500:     """
@@ -9022,7 +9022,7 @@ _Thinking:_
 
 There are no project config files (no pyproject.toml, requirements.txt, ruff, pytest config). Let me verify. The `run_unit_tests.bat` probably runs `python -m unittest discover`. Let me check it, and run the tests perhaps. Also let me check the NUL file, gitignore, and a couple security claims.
 
-Let me read run_unit_tests.bat, .gitignore, and check the unittests support modules to understand test style. Also check async_api/server.py judge_models and registry digest.
+Let me read run_unit_tests.bat, .gitignore, and check the unittests support modules to understand test style. Also check gep_lora/apps/web/server.py judge_models and registry digest.
 
 Let me batch.
 
@@ -9031,7 +9031,7 @@ Let me batch.
 **Input:**
 ```json
 {
-  "command": "Get-Content run_unit_tests.bat; echo \"--- gitignore ---\"; Get-Content .gitignore; echo \"--- test_main head ---\"; Get-Content unittests/test_main.py -TotalCount 60",
+  "command": "Get-Content run_unit_tests.bat; echo \"--- gitignore ---\"; Get-Content .gitignore; echo \"--- test_main head ---\"; Get-Content unittests/core/test_main.py -TotalCount 60",
   "description": "Read test runner, gitignore, main test"
 }
 ```
@@ -9079,7 +9079,7 @@ api_jobs
 """
 test_main.py - Where a stopped sweep got to, read back out of its database.
 
-main.where_it_stopped() is what `main.py --resume` and `--evaluate` plan by.
+main.where_it_stopped() is what `gep_lora/core/pipeline/main.py --resume` and `--evaluate` plan by.
 It reads two things a driver writes as it goes -- the fitness snapshots and the
 steps that finished -- so these tests write exactly those and nothing else: a
 sweep here is the record of how far a search went, not a search.
@@ -9090,7 +9090,7 @@ import unittest
 import main
 from storage import store
 
-from unittests.search.support import SweepTestCase
+from unittests.core.search.support import SweepTestCase
 
 GENERATION = ["trees", "runs", "process", "evaluate", "fitness"]
 TAIL = ["elitism", "selection", "mutation", "weight_mutation"]
@@ -9180,7 +9180,7 @@ D:\sage-is\loras\gep-lora\async_api\registry.py:
 D:\sage-is\loras\gep-lora\async_api\server.py:
   Line 603:     def judge_models(self, user, query):
 
-  Line 618:             models = evaluators.common.list_models(
+  Line 618:             models = gep_lora.core.evaluators.common.list_models(
 
 ```
 
@@ -9235,7 +9235,7 @@ Let me batch: run unit tests (might take a while; use timeout), read server.py 5
 615:             raise ApiError(400, "base_url must be an http(s) URL, not %r" % base_url)
 616:         import evaluators                   # the judge transport, loaded when first asked
 617:         try:
-618:             models = evaluators.common.list_models(
+618:             models = gep_lora.core.evaluators.common.list_models(
 619:                 base_url, evaluators.API_KEY, settings.JUDGE_MODELS_TIMEOUT)
 620:         except SystemExit as error:
 621:             raise ApiError(502, str(error), base_url=base_url)
@@ -9330,7 +9330,7 @@ Implement this in the folder aync_api
 
 - Submit job creates a sqlite database with all the information necessary to run the job. The sqlite db is the same that is created when this process runs (see storage.py).
 
-- The backend does the batch processing in arrival order by picking up each of the sqlite files and puting them through main.py
+- The backend does the batch processing in arrival order by picking up each of the sqlite files and puting them through gep_lora/core/pipeline/main.py
 
 - The api exposes a job list per user and a job detail that shows the run results
 
@@ -9589,47 +9589,47 @@ Let me run it.
 ```
 [worker 19:59:55] job 1: done
 [worker 19:59:55] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-nmicvujh\jobs\api.sqlite
-[worker 19:59:55] verification 1 (job 1, individual 3): testing.evaluate_chromosome_against_loras --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-nmicvujh\jobs\user1\job1\job.sqlite3 --run 1 --individual 3 --into C:\Users\ze\AppData\Local\Temp\gep-api-tests-nmicvujh\jobs\user1\job1\verify1 --timeout 900 --evaluator similarity --split testing --slots L1,L2
+[worker 19:59:55] verification 1 (job 1, individual 3): gep_lora.core.testing.evaluate_chromosome_against_loras --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-nmicvujh\jobs\user1\job1\job.sqlite3 --run 1 --individual 3 --into C:\Users\ze\AppData\Local\Temp\gep-api-tests-nmicvujh\jobs\user1\job1\verify1 --timeout 900 --evaluator similarity --split testing --slots L1,L2
 [worker 19:59:58] verification 1: done
 [worker 19:59:59] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-mj0t9k7k\jobs\api.sqlite
 [worker 19:59:59] job 1: D:\sage-is\loras\gep-lora\main.py --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-mj0t9k7k\jobs\user1\job1\job.sqlite3 --run 1 --test-min-quality 0.0
 [worker 20:00:01] job 1: done
 [worker 20:00:03] verification 1 was left running by a previous worker; marked failed
 [worker 20:00:04] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\api.sqlite
-[worker 20:00:04] training 1 (tiny-qwen3.5-0.8b-20260923-r8): adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\trained\user1\tiny-qwen3.5-0.8b-20260923-r8 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\user1\lora1\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r8 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 8 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
+[worker 20:00:04] training 1 (tiny-qwen3.5-0.8b-20260923-r8): gep_lora.core.adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\trained\user1\tiny-qwen3.5-0.8b-20260923-r8 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\user1\lora1\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r8 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 8 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
 [worker 20:00:04] training 1: done
 [worker 20:00:04] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\api.sqlite
-[worker 20:00:04] training 2 (tiny-qwen3.5-0.8b-20260923-r16): adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\trained\user1\tiny-qwen3.5-0.8b-20260923-r16 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\user1\lora2\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r16 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 16 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
+[worker 20:00:04] training 2 (tiny-qwen3.5-0.8b-20260923-r16): gep_lora.core.adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\trained\user1\tiny-qwen3.5-0.8b-20260923-r16 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\user1\lora2\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r16 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 16 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
 [worker 20:00:05] training 2: done
 [worker 20:00:05] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\api.sqlite
 [worker 20:00:05] job 1: D:\sage-is\loras\gep-lora\main.py --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-26t_zi8v\jobs\user1\job1\job.sqlite3 --run 1 --no-test
 [worker 20:00:05] job 1: done
 [worker 20:00:07] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\api.sqlite
-[worker 20:00:07] training 1 (poem-qwen3.5-0.8b-20260923-r8): adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\trained\user1\poem-qwen3.5-0.8b-20260923-r8 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\user1\lora1\dataset.jsonl --dataset-source datasets/poem_lora_dataset.json --name poem-qwen3.5-0.8b-20260923-r8 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 8 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt Hi there! --mock --mock-delay 0
+[worker 20:00:07] training 1 (poem-qwen3.5-0.8b-20260923-r8): gep_lora.core.adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\trained\user1\poem-qwen3.5-0.8b-20260923-r8 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\user1\lora1\dataset.jsonl --dataset-source datasets/poem_lora_dataset.json --name poem-qwen3.5-0.8b-20260923-r8 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 8 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt Hi there! --mock --mock-delay 0
 [worker 20:00:07] training 1: done
 [worker 20:00:07] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\api.sqlite
-[worker 20:00:07] training 2 (poem-qwen3.5-0.8b-20260923-r16): adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\trained\user1\poem-qwen3.5-0.8b-20260923-r16 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\user1\lora2\dataset.jsonl --dataset-source datasets/poem_lora_dataset.json --name poem-qwen3.5-0.8b-20260923-r16 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 16 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt Hi there! --mock --mock-delay 0
+[worker 20:00:07] training 2 (poem-qwen3.5-0.8b-20260923-r16): gep_lora.core.adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\trained\user1\poem-qwen3.5-0.8b-20260923-r16 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\user1\lora2\dataset.jsonl --dataset-source datasets/poem_lora_dataset.json --name poem-qwen3.5-0.8b-20260923-r16 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-d1pt18n_\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 16 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt Hi there! --mock --mock-delay 0
 [worker 20:00:08] training 2: done
 [worker 20:00:17] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\api.sqlite
-[worker 20:00:17] training 1 (tiny-qwen3.5-0.8b-20260923-r8): adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\trained\user1\tiny-qwen3.5-0.8b-20260923-r8 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\lora1\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r8 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 8 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
+[worker 20:00:17] training 1 (tiny-qwen3.5-0.8b-20260923-r8): gep_lora.core.adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\trained\user1\tiny-qwen3.5-0.8b-20260923-r8 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\lora1\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r8 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 8 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
 [worker 20:00:17] training 1: done
 [worker 20:00:17] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\api.sqlite
-[worker 20:00:17] training 2 (tiny-qwen3.5-0.8b-20260923-r16): adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\trained\user1\tiny-qwen3.5-0.8b-20260923-r16 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\lora2\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r16 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 16 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
+[worker 20:00:17] training 2 (tiny-qwen3.5-0.8b-20260923-r16): gep_lora.core.adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\trained\user1\tiny-qwen3.5-0.8b-20260923-r16 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\lora2\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r16 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 16 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
 [worker 20:00:17] training 2: done
 [worker 20:00:17] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\api.sqlite
 [worker 20:00:17] job 1: D:\sage-is\loras\gep-lora\main.py --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\job1\job.sqlite3 --run 1 --no-test
 [worker 20:00:17] job 1: done
 [worker 20:00:18] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\api.sqlite
-[worker 20:00:18] job 1 (test): -m testing.test_run_with_dataset --from-db --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\job1\job.sqlite3 --run 1 --min-quality=-1.0 --resume
+[worker 20:00:18] job 1 (test): -m gep_lora.core.testing.test_run_with_dataset --from-db --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\job1\job.sqlite3 --run 1 --min-quality=-1.0 --resume
 [worker 20:00:18] job 1: done
 [worker 20:00:18] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\api.sqlite
-[worker 20:00:18] verification 1 (job 1, individual 1): testing.evaluate_chromosome_against_loras --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\job1\job.sqlite3 --run 1 --individual 1 --into C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\job1\verify1 --timeout 900 --split validation --count 1 --slots L1
+[worker 20:00:18] verification 1 (job 1, individual 1): gep_lora.core.testing.evaluate_chromosome_against_loras --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\job1\job.sqlite3 --run 1 --individual 1 --into C:\Users\ze\AppData\Local\Temp\gep-api-tests-pa01khbr\jobs\user1\job1\verify1 --timeout 900 --split validation --count 1 --slots L1
 [worker 20:00:18] verification 1: done
 [worker 20:00:19] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\api.sqlite
-[worker 20:00:19] training 1 (tiny-qwen3.5-0.8b-20260923-r8): adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\trained\user1\tiny-qwen3.5-0.8b-20260923-r8 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\user1\lora1\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r8 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 8 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
+[worker 20:00:19] training 1 (tiny-qwen3.5-0.8b-20260923-r8): gep_lora.core.adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\trained\user1\tiny-qwen3.5-0.8b-20260923-r8 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\user1\lora1\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r8 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 8 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
 [worker 20:00:19] training 1: done
 [worker 20:00:19] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\api.sqlite
-[worker 20:00:19] training 2 (tiny-qwen3.5-0.8b-20260923-r16): adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\trained\user1\tiny-qwen3.5-0.8b-20260923-r16 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\user1\lora2\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r16 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 16 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
+[worker 20:00:19] training 2 (tiny-qwen3.5-0.8b-20260923-r16): gep_lora.core.adapters.create_lora C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\trained\user1\tiny-qwen3.5-0.8b-20260923-r16 --dataset C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\user1\lora2\dataset.jsonl --dataset-source uploaded by alice --name tiny-qwen3.5-0.8b-20260923-r16 --catalog C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\api.sqlite --base-model unsloth/Qwen3.5-0.8B --target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --scheduler linear --optim adamw_8bit --rank 16 --alpha 16 --dropout 0.0 --epochs 1.0 --learning-rate 0.0002 --warmup-steps 5 --weight-decay 0.01 --batch-size 2 --grad-accum 4 --max-seq 2048 --seed 3407 --owner alice --prompt What is question 1? --mock --mock-delay 0
 [worker 20:00:19] training 2: done
 [worker 20:00:19] watching C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\api.sqlite
 [worker 20:00:19] job 1: D:\sage-is\loras\gep-lora\main.py --db C:\Users\ze\AppData\Local\Temp\gep-api-tests-h30_uue3\jobs\user1\job1\job.sqlite3 --run 1 --no-test
@@ -9640,7 +9640,7 @@ Let me run it.
 ...................................................................................................
 ======================================================================
 FAIL: test_it_does_not_ask_for_a_copy 
-(unittests.evaluators.test_llm_judge_answers.RubricTests.test_it_does_not_ask_for_a_copy)
+(unittests.core.evaluators.test_llm_judge_answers.RubricTests.test_it_does_not_ask_for_a_copy)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
   File "D:\sage-is\loras\gep-lora\unittests\evaluators\test_llm_judge_answers.py", line 170, in 
@@ -9790,7 +9790,7 @@ Potential real bugs I can spot:
 
 - No lint/typecheck configuration despite CLAUDE.md instructing to run lint/typecheck. There's no ruff/flake8/mypy config. The `# noqa: BLE001` comment suggests flake8/ruff usage but no config file. That's a gap.
 
-- Huge modules: reporting/generate_html_db_stats.py 2424 lines, store.py 1388, start_run.py 1462. `App` god object.
+- Huge modules: gep_lora/core/reporting/generate_html_db_stats.py 2424 lines, store.py 1388, gep_lora/core/pipeline/start_run.py 1462. `App` god object.
 
 - Documentation is enormous (CLAUDE.md 95KB, README 200KB). The docstrings are essay-like — this is unusual; a critique point is that comments are extremely verbose and duplicative (same explanation repeated in many modules), increasing maintenance burden. This is a legitimate style critique, though the user may value it. I'll note it neutrally.
 
@@ -10052,7 +10052,7 @@ _Thinking:_
 
 Confirmed: `unittests/blends`, `unittests/storage`, `unittests/tools` are empty (only pycache), and `unittests/api` has pycache for removed `test_progress.py`, `test_prompting.py`, `test_server.py`, `support.py`, `test_catalog.py` — stale bytecode from a deleted `api` test suite. These are dead artifacts.
 
-So the critical untested modules: `blends/generate_runs.py` (only exercised indirectly by test_golive and evaluate_chromosome tests), `blends/process_run.py` (only `process_run` imported in one testing test), `storage/store.py` (exercised via support fixtures but no direct tests), `reporting/generate_html_db_stats.py` (2424 lines, no tests), `metrics/report.py`, `search/draw_trees.py` (has test), `blends/lora_server.py`, `blends/server_pool.py`, `async_api/worker.py`, `async_api/evaluate.py`, `async_api/testpass.py`.
+So the critical untested modules: `gep_lora/core/blends/generate_runs.py` (only exercised indirectly by test_golive and evaluate_chromosome tests), `gep_lora/core/blends/process_run.py` (only `process_run` imported in one testing test), `gep_lora/core/storage/store.py` (exercised via support fixtures but no direct tests), `gep_lora/core/reporting/generate_html_db_stats.py` (2424 lines, no tests), `gep_lora/core/metrics/report.py`, `gep_lora/core/search/draw_trees.py` (has test), `gep_lora/core/blends/lora_server.py`, `gep_lora/core/blends/server_pool.py`, `gep_lora/service/worker.py`, `gep_lora/service/evaluate.py`, `gep_lora/service/testpass.py`.
 
 I have plenty. Let me also quickly confirm there's no requirements file at all and check the `docs/` folder. And check for any TODO/FIXME/HACK markers.
 
@@ -10197,9 +10197,9 @@ Now let me also think about architecture-level critique:
 
 1. **Massive, essay-length docstrings/comments.** ~95KB CLAUDE.md, 200KB README, and nearly every function has a multi-paragraph docstring. The code is heavily over-commented relative to its size. This is unusual and arguably a maintenance liability: comments drift from code (the failing test is evidence), and the signal-to-noise for a new contributor is poor. But the project seems to deliberately value this. I'll frame as a tradeoff.
 
-2. **Templates are duplicated logic** — `template_code.py`, `template_code_mocked.py`, `template_baseline.py`, `template_baseline_mocked.py`, `template_remote_code.py`, plus `blends/lora_server.py`. The blend arithmetic (`attach`, `combine`, `_compact`, `_rank`) exists in template_code.py, lora_server.py, and golive.py (partially). The project acknowledges this but it's a real duplication risk. `_prompt_of` is duplicated between template_code.py and generate_runs.py; `_question_of`/`_reference_of` too.
+2. **Templates are duplicated logic** — `template_code.py`, `template_code_mocked.py`, `template_baseline.py`, `template_baseline_mocked.py`, `template_remote_code.py`, plus `gep_lora/core/blends/lora_server.py`. The blend arithmetic (`attach`, `combine`, `_compact`, `_rank`) exists in template_code.py, lora_server.py, and golive.py (partially). The project acknowledges this but it's a real duplication risk. `_prompt_of` is duplicated between template_code.py and generate_runs.py; `_question_of`/`_reference_of` too.
 
-3. **God modules/objects**: `start_run.py` (1462), `store.py` (1388), `generate_html_db_stats.py` (2424), `App` (40+ methods). `metrics/report.py` also large.
+3. **God modules/objects**: `gep_lora/core/pipeline/start_run.py` (1462), `store.py` (1388), `generate_html_db_stats.py` (2424), `App` (40+ methods). `gep_lora/core/metrics/report.py` also large.
 
 4. **No packaging/dependency pinning/lint/typecheck config.** No pyproject, requirements, ruff, mypy, pre-commit, CI. CLAUDE.md tells the agent to run lint/typecheck but there's no command.
 
@@ -10215,7 +10215,7 @@ Now let me also think about architecture-level critique:
 
 10. **`store.connect` executes SCHEMA on every open** — fine (IF NOT EXISTS), but also creates the DB if the path is a typo (acknowledged; readers guard). 
 
-11. **Global mutable settings**: `config/settings.py` with `snapshot()`, `_override` in async_api mutating globals. The pipeline freezes settings into DB which is good.
+11. **Global mutable settings**: `gep_lora/core/config/settings.py` with `snapshot()`, `_override` in async_api mutating globals. The pipeline freezes settings into DB which is good.
 
 12. **Seeds via `random.Random("%s:%d" % (master, number))`** — string seeds are deterministic across Python versions? Python's `random.Random(str)` hashes the string using... actually for str/bytes, `random.seed` uses `int.from_bytes(a.encode() + sha512)` — deterministic across runs and platforms (not affected by PYTHONHASHSEED). Yes, stable. Good.
 
@@ -10241,7 +10241,7 @@ Now let me also think about architecture-level critique:
 
 I think I have more than enough. Let me now also quickly verify the `evaluate.py` lack of URL validation to be accurate, and the negative content-length. Actually I'll trust the agent's line refs but phrase carefully.
 
-Let me quickly read async_api/evaluate.py around 80-110 and server.py _body.
+Let me quickly read gep_lora/service/evaluate.py around 80-110 and server.py _body.
 
 **Tool: read**
 
@@ -10293,7 +10293,7 @@ Let me quickly read async_api/evaluate.py around 80-110 and server.py _body.
 111: 
 112: 
 113: def arguments(options):
-114:     """The main.py flags one evaluation adds to the job's command line."""
+114:     """The gep_lora/core/pipeline/main.py flags one evaluation adds to the job's command line."""
 115:     argv = ["--evaluate"]
 116:     if options.get("force"):
 117:         argv.append("--force")
@@ -10416,7 +10416,7 @@ Key points:
 
 ## Architecture / maintainability
 - Duplicated blend arithmetic across template_code.py / template_remote_code.py / lora_server.py / golive.py; duplicated `_prompt_of`/`_question_of`.
-- God modules: generate_html_db_stats.py 2424, start_run.py 1462, store.py 1388; `App` ~40 methods; triplicated queue machinery in registry.py.
+- God modules: generate_html_db_stats.py 2424, gep_lora/core/pipeline/start_run.py 1462, store.py 1388; `App` ~40 methods; triplicated queue machinery in registry.py.
 - Doc-comment volume: 200KB README + 95KB CLAUDE + paragraph docstrings; risk of drift (the failing test is one instance). Suggest trimming comments to invariants/why, moving narrative to docs.
 - Import cycles/lazy imports (blending↔routes, agent→providers globals).
 
@@ -10442,16 +10442,16 @@ I explored the codebase, read the core modules end-to-end, ran the test suite, a
 
 ## What's genuinely strong
 
-- **Reproducibility is designed in.** Settings are frozen per sweep into sqlite (`config/settings.py:693`, `start_run.freeze`), seeds are drawn-and-recorded, and every step reads the *sweep's* stored settings rather than `settings.py`. This is rare and well executed.
-- **The schema is self-contained.** Executions keep their weights/stdout/transcript; `fitness_history` and `phase_timings` snapshot the past instead of joining to the mutating present (`storage/store.py:184`, `:352`). Good instincts about history surviving culls.
-- **Grammar invariants live in one place** (`search/generate_population.py`) and mutation is class-local so every mutant decodes. The evaluator registry (`evaluators/common.py:163`) is a clean extension point.
-- **471 tests, ~90s, mostly hermetic** — the search steps run against a real temp sqlite DB (`unittests/search/support.py`), which is the right call.
+- **Reproducibility is designed in.** Settings are frozen per sweep into sqlite (`gep_lora/core/config/settings.py:693`, `start_run.freeze`), seeds are drawn-and-recorded, and every step reads the *sweep's* stored settings rather than `settings.py`. This is rare and well executed.
+- **The schema is self-contained.** Executions keep their weights/stdout/transcript; `fitness_history` and `phase_timings` snapshot the past instead of joining to the mutating present (`gep_lora/core/storage/store.py:184`, `:352`). Good instincts about history surviving culls.
+- **Grammar invariants live in one place** (`gep_lora/core/search/generate_population.py`) and mutation is class-local so every mutant decodes. The evaluator registry (`gep_lora/core/evaluators/common.py:163`) is a clean extension point.
+- **471 tests, ~90s, mostly hermetic** — the search steps run against a real temp sqlite DB (`unittests/core/search/support.py`), which is the right call.
 
 ## Defects (verified)
 
-1. **A test is failing right now.** `unittests/evaluators/test_llm_judge_answers.py:170` asserts `"Do not reward copying"` is in `JUDGE_ANSWERS_SYSTEM_PROMPT`, but the prompt (`evaluators/llm_judge_answers.py:54`) no longer contains it. Either the rubric lost an anti-copying instruction or the test is stale — prompt/test drift, and nothing catches it.
+1. **A test is failing right now.** `unittests/core/evaluators/test_llm_judge_answers.py:170` asserts `"Do not reward copying"` is in `JUDGE_ANSWERS_SYSTEM_PROMPT`, but the prompt (`gep_lora/core/evaluators/llm_judge_answers.py:54`) no longer contains it. Either the rubric lost an anti-copying instruction or the test is stale — prompt/test drift, and nothing catches it.
 2. **Unbounded blocking read via a negative `Content-Length`.** `server.py:861` does `int(...)`; `_body` (`:834-845`) checks `> MAX` and `if not length`, so `-1` reaches `self.rfile.read(-1)`, which reads to EOF. A client holding the socket open pins a thread indefinitely.
-3. **SSRF + judge API-key exfiltration.** `server.py:603-622` (`/judge/models`) takes a user-supplied `base_url` and sends `Authorization: Bearer $JUDGE_API_KEY` (`evaluators/common.py:66,267-291`). `JUDGE_BASE_URL` isn't locked (`async_api/settings.py:40-44`), and `evaluate.py:102-109` accepts a judge URL with no scheme/host validation at all. Any authenticated user can point grading at a host they control and receive the server's key.
+3. **SSRF + judge API-key exfiltration.** `server.py:603-622` (`/judge/models`) takes a user-supplied `base_url` and sends `Authorization: Bearer $JUDGE_API_KEY` (`gep_lora/core/evaluators/common.py:66,267-291`). `JUDGE_BASE_URL` isn't locked (`gep_lora/service/settings.py:40-44`), and `evaluate.py:102-109` accepts a judge URL with no scheme/host validation at all. Any authenticated user can point grading at a host they control and receive the server's key.
 4. **`os.path.commonpath` raises `ValueError` on cross-drive/UNC paths** (`submit.py:241-250`, `routes.py:98-103`), escaping as a 500 rather than the intended 400.
 5. **No worker exclusivity.** `worker.recover()` (`worker.py:402-416`) marks every `running` job failed without an OS lock on `JOBS_DIR`; the stored `pid` is never used to detect or kill an orphan, so a second worker fails the first's in-flight job.
 6. **Tool bodies can 500 the agent.** `Toolbox.run` catches a fixed exception list (`tools.py:239-243`), but `int(count)`, `float(epochs)`, `TOOL_DONE[name].format(...)` raise `ValueError`/`KeyError` on model output and propagate (`agent.py:243` only catches `ProviderError`).
@@ -10459,7 +10459,7 @@ I explored the codebase, read the core modules end-to-end, ran the test suite, a
 
 ## Testing gaps
 
-- **Core untested modules**: `storage/store.py` (exercised only through fixtures), `blends/generate_runs.py`, `blends/process_run.py` (regex transcript parsing — exactly where subtle bugs hide), `blends/lora_server.py`, `server_pool.py`, `async_api/worker.py`, `evaluate.py`, `testpass.py`, `reporting/generate_html_db_stats.py` (2424 lines), `metrics/report.py`.
+- **Core untested modules**: `gep_lora/core/storage/store.py` (exercised only through fixtures), `gep_lora/core/blends/generate_runs.py`, `gep_lora/core/blends/process_run.py` (regex transcript parsing — exactly where subtle bugs hide), `gep_lora/core/blends/lora_server.py`, `server_pool.py`, `gep_lora/service/worker.py`, `evaluate.py`, `testpass.py`, `gep_lora/core/reporting/generate_html_db_stats.py` (2424 lines), `gep_lora/core/metrics/report.py`.
 - **Dead artifacts**: `unittests/blends`, `unittests/storage`, `unittests/tools` are empty; `unittests/api/` holds only `__pycache__` from a deleted suite (`test_progress`, `test_prompting`, `test_server`).
 - No CI, so the one red test slipped through.
 
@@ -10471,8 +10471,8 @@ I explored the codebase, read the core modules end-to-end, ran the test suite, a
 
 ## Architecture / maintainability
 
-- **Duplicated blend arithmetic** across `templates/template_code.py`, `template_remote_code.py`, `blends/lora_server.py`, and `async_api/golive.py` (the plan/weight draw is reimplemented there). The prompt parser is duplicated too (`template_code._prompt_of` vs `generate_runs._question_of`/`_reference_of`). A silent divergence makes a live blend differ from the one that was scored.
-- **God modules/objects**: `generate_html_db_stats.py` (2424), `start_run.py` (1462), `store.py` (1388); `App` has ~40 methods (`server.py:246-771`); `registry.py` triplicates `claim_next`/`finish`/`orphaned*` for jobs/verifications/trainings.
+- **Duplicated blend arithmetic** across `gep_lora/core/templates/template_code.py`, `template_remote_code.py`, `gep_lora/core/blends/lora_server.py`, and `gep_lora/service/golive.py` (the plan/weight draw is reimplemented there). The prompt parser is duplicated too (`template_code._prompt_of` vs `generate_runs._question_of`/`_reference_of`). A silent divergence makes a live blend differ from the one that was scored.
+- **God modules/objects**: `generate_html_db_stats.py` (2424), `gep_lora/core/pipeline/start_run.py` (1462), `store.py` (1388); `App` has ~40 methods (`server.py:246-771`); `registry.py` triplicates `claim_next`/`finish`/`orphaned*` for jobs/verifications/trainings.
 - **Documentation volume is a liability.** README ~200 KB, CLAUDE.md ~95 KB, plus paragraph-length docstrings. It's impressive, but it duplicates itself across modules and drifts (finding #1 is one instance). Keep invariants and the *why*; move narrative to one place.
 - **Import cycles / globals**: `blending`↔`routes` lazy-import cycle; `agent.say`/`chat` call provider functions as module globals, making failure paths untestable without a live server.
 

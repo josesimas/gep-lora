@@ -1,0 +1,1903 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare blends · GEP LoRA</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f3f4f7; --panel: #ffffff; --panel-2: #f8f9fb; --ink: #161a23; --ink-2: #394150;
+    --muted: #626b7a; --faint: #8b93a1; --line: #e3e6eb; --line-2: #d2d7df;
+    --accent: #4c5fd5; --accent-ink: #ffffff; --accent-soft: #eceffd;
+    --ok: #1e8449; --warn: #b45309; --bad: #c8322f;
+    --code: #f1f3f6; --log-bg: #11151f; --log-ink: #cdd5e2;
+    --c1: #4c5fd5; --c2: #0e7490; --c3: #c2410c; --c4: #a21caf; --c5: #15803d;
+    --me: #eceffd; --me-ink: #1d2766;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .06);
+    --radius: 12px; --top: 56px;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+    /* The three folds, as the report page draws them (generate_html_db_stats.py). */
+    --cat: #4b5ee4; --svd: #7b5ce4; --lin: #2596a8;
+    /* The LoRAs, one colour each, going round. */
+    --l1: #2f7fd6; --l2: #1f9d63; --l3: #d99a1e; --l4: #d2568c; --l5: #0e7490; --l6: #c2410c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0e1117; --panel: #161a22; --panel-2: #1b2029; --ink: #e7eaf0; --ink-2: #c3c9d4;
+      --muted: #99a2b1; --faint: #6f7888; --line: #262c38; --line-2: #343b4a;
+      --accent: #8b9cff; --accent-ink: #0c0f1f; --accent-soft: #1f2547;
+      --ok: #5fd08a; --warn: #f0b454; --bad: #ff7b72;
+      --code: #1d222c; --log-bg: #0a0d13; --log-ink: #c3cbd8;
+      --c1: #8b9cff; --c2: #5ccfe6; --c3: #fb923c; --c4: #e879f9; --c5: #5fd08a;
+      --me: #232a4f; --me-ink: #dfe4ff;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+      --cat: #6f7ff0; --svd: #9a7cf0; --lin: #2aa9bd;
+      --l1: #4d95e6; --l2: #2fb577; --l3: #d9a53a; --l4: #e070a3; --l5: #2aa0b8; --l6: #e0703a;
+    }
+  }
+
+  /* --- base: the guide's ----------------------------------------------------------- */
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  h2 { font-size: 13px; margin: 0; }
+  h3 { font-size: 13px; margin: 0; font-weight: 600; }
+  p { margin: 0 0 8px; }
+  a { color: var(--accent); }
+  code { font-family: var(--mono); font-size: 12px; background: var(--code); padding: 1px 5px; border-radius: 5px; overflow-wrap: anywhere; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  label { display: block; font-size: 12px; font-weight: 500; color: var(--ink-2); margin: 0 0 4px; }
+  input, textarea, select { width: 100%; font: inherit; color: var(--ink); background: var(--panel);
+           border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 10px; min-height: 34px;
+           transition: border-color .12s, box-shadow .12s; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent);
+           box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  textarea { font-family: var(--mono); font-size: 12px; resize: vertical; line-height: 1.45; }
+  input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; min-height: 0; margin: 0; }
+  button { font: inherit; font-weight: 500; border: 1px solid var(--line-2); background: var(--panel);
+           color: var(--ink); border-radius: 8px; padding: 0 12px; min-height: 32px; cursor: pointer;
+           white-space: nowrap; transition: background .12s, border-color .12s, color .12s; }
+  button:hover:not(:disabled) { background: var(--panel-2); border-color: var(--faint); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--ink)); border-color: transparent; }
+  button.danger { color: var(--bad); }
+  button.ghost { border-color: transparent; background: transparent; }
+  button.sm { min-height: 28px; padding: 0 10px; font-size: 13px; }
+  button.lg { min-height: 38px; padding: 0 18px; }
+  button:disabled { opacity: .45; cursor: default; }
+  label.check { display: flex; gap: 8px; align-items: center; color: var(--ink); font-size: 13px;
+                font-weight: 400; margin: 0; cursor: pointer; }
+  .help { font-size: 12px; color: var(--muted); line-height: 1.4; margin-top: 4px; }
+  .help:empty { display: none; }
+  .help.error { color: var(--bad); }
+  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 9px 1px 7px; border-radius: 999px;
+          font-size: 12px; font-weight: 500; line-height: 1.6; color: var(--muted);
+          background: color-mix(in srgb, currentColor 11%, transparent); white-space: nowrap; }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .s-ok, .s-done { color: var(--ok); } .s-BAD, .s-failed { color: var(--bad); }
+  .s-running { color: var(--accent); } .s-queued, .s-incomplete { color: var(--muted); }
+  .s-running::before { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .tag { display: inline-block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+         padding: 1px 6px; border-radius: 5px; color: var(--muted); background: var(--code); vertical-align: 1px; }
+  .tag.mock { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+
+  /* --- the two halves ----------------------------------------------------------------- */
+  .halves { display: grid; grid-template-columns: var(--split, minmax(340px, 440px)) minmax(0, 1fr); height: calc(100vh - var(--top)); }
+  .agent { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--line); }
+  .board { overflow-y: auto; padding: 20px 22px 40px; min-width: 0; }
+  @media (max-width: 960px) {
+    .halves { grid-template-columns: minmax(0, 1fr); height: auto; }
+    .agent { height: 70vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    .board { overflow: visible; padding: 16px; }
+  }
+  @media (max-width: 560px) { .agent-head { flex-wrap: wrap; row-gap: 4px; } .model-chip { max-width: 100%; order: 5; } }
+
+  .agent-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .agent-head h2 { font-size: 14px; white-space: nowrap; }
+  .agent-head > :not(.model-chip):not(.spacer) { flex: none; }
+  .spacer { flex: 1; }
+  .model-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 9px; font-size: 12px;
+                max-width: 230px; min-width: 0; flex: 0 1 auto; border-radius: 999px; color: var(--muted); }
+  .model-chip span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .model-chip::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+  .model-chip.up::before { background: var(--ok); }
+  .model-chip.down::before { background: var(--warn); }
+  .settings { padding: 12px 16px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2); display: grid; gap: 10px; }
+  .settings .row { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+  .settings .inline { display: flex; gap: 6px; }
+
+  .transcript { flex: 1; overflow-y: auto; padding: 16px 16px 8px; display: flex; flex-direction: column; gap: 12px; }
+  .msg .who { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 3px; display: flex; gap: 6px; align-items: center; }
+  .msg .who .by { font-weight: 400; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bubble { padding: 10px 13px; border-radius: 4px 12px 12px 12px; background: var(--panel-2);
+            border: 1px solid var(--line); overflow-wrap: anywhere; }
+  .bubble p:last-child, .bubble ul:last-child, .bubble ol:last-child { margin-bottom: 0; }
+  .bubble ul, .bubble ol { margin: 0 0 8px; padding-left: 20px; }
+  .msg.me { align-self: flex-end; max-width: 85%; }
+  .msg.me .who { justify-content: flex-end; }
+  .msg.me .bubble { background: var(--me); color: var(--me-ink); border-color: transparent; border-radius: 12px 4px 12px 12px; }
+  .msg .note { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .msg .note.warn { color: var(--warn); }
+  .msg.event { align-self: center; font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  .msg.event::before, .msg.event::after { content: ""; width: 24px; height: 1px; background: var(--line-2); }
+  .msg.event.tool { align-self: flex-start; color: var(--accent); background: var(--accent-soft); padding: 3px 10px; border-radius: 999px; }
+  .msg.event.tool::before, .msg.event.tool::after { display: none; }
+  .msg.event.tool.failed { color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, var(--panel)); }
+  .typing { display: inline-flex; gap: 4px; padding: 4px 0; }
+  .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); animation: bounce 1.2s infinite; }
+  .typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
+  @keyframes bounce { 0%, 60%, 100% { transform: none; opacity: .5; } 30% { transform: translateY(-4px); opacity: 1; } }
+
+  .action { border-top: 1px solid var(--line); padding: 12px 16px; background: var(--panel); }
+  .action:empty { display: none; }
+  .action .ask { font-size: 12px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+  .action .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .composer { display: flex; gap: 8px; align-items: flex-end; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+  .composer textarea { font-family: inherit; font-size: 14px; min-height: 38px; max-height: 140px; resize: none; }
+  .composer button { min-height: 38px; }
+  .gate { margin: auto 0; padding: 24px 20px; }
+  .gate h3 { font-size: 16px; margin-bottom: 6px; }
+
+  /* --- the board ------------------------------------------------------------------------ */
+  .board-inner { max-width: 1180px; margin: 0 auto; display: grid; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+          box-shadow: var(--shadow); padding: 16px 18px; min-width: 0; }
+  .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .card-head .side { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .empty-state { text-align: center; padding: 30px 20px; color: var(--muted); }
+  .empty-state b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 4px; }
+  .seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
+  .seg button { border: 0; background: transparent; min-height: 26px; color: var(--muted); font-size: 13px; }
+  .seg button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+
+  /* The row of pieces: the user's LoRAs and the three folds. */
+  .palette { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+  .palette .group { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+  .palette .divider { width: 1px; background: var(--line); margin: 2px 4px; }
+  .piece { display: inline-grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; align-items: center; text-align: left;
+           padding: 6px 12px 6px 8px; min-height: 42px; border-radius: 10px; cursor: grab; user-select: none; font-weight: 400;
+           max-width: 240px; background: var(--panel); border: 1px solid var(--line-2); transition: transform .12s, box-shadow .12s, border-color .12s; }
+  .piece:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--shadow); border-color: var(--faint); }
+  .piece:active { cursor: grabbing; }
+  .piece .dot { grid-row: span 2; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+                font: 700 10px var(--mono); color: #fff; }
+  .piece b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .piece span { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .piece.fold .dot { width: 34px; border-radius: 7px; }
+  /* A fold is not a LoRA: outlined in its own colour, where a LoRA has the plain grey. */
+  .piece.fold { border: 1.5px solid var(--fold); background: color-mix(in srgb, var(--fold) 8%, var(--panel)); }
+  .piece.fold:hover:not(:disabled) { border-color: var(--fold); background: color-mix(in srgb, var(--fold) 14%, var(--panel)); }
+  .piece.dragging { opacity: .45; }
+  .palette-note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .model-filter { font-size: 12px; color: var(--muted); }
+  .lora-search { width: 190px; min-height: 28px; padding: 2px 10px; font-size: 12px; font-family: inherit; }
+  .palette-none { align-self: center; padding: 8px 4px; }
+  .model-filter select { width: auto; max-width: 320px; min-height: 28px; padding: 2px 8px; font-size: 12px; }
+
+  /* The tree. */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px; margin-bottom: 10px;
+             background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; min-height: 46px; }
+  .toolbar .what { font-size: 13px; color: var(--ink-2); margin-right: auto; min-width: 0; }
+  .toolbar select { width: auto; min-height: 28px; padding: 2px 8px; font-size: 13px; }
+  .treewrap { overflow-x: auto; padding: 6px 0 4px; border-radius: 10px;
+              background-image: radial-gradient(color-mix(in srgb, var(--line-2) 70%, transparent) 1px, transparent 1px);
+              background-size: 16px 16px; }
+  svg.tree { display: block; margin: 0 auto; max-width: none; height: auto; font-family: var(--mono); }
+  svg.tree .edge { fill: none; stroke: var(--line-2); stroke-width: 1.8; }
+  svg.tree .edge.to-empty { stroke-dasharray: 4 4; }
+  svg.tree .tnode { cursor: pointer; }
+  svg.tree .tnode rect.body { stroke-width: 1.5; transition: filter .12s; }
+  svg.tree .tnode:hover rect.body { filter: brightness(1.08); }
+  svg.tree text { font-size: 13px; fill: #fff; pointer-events: none; }
+  svg.tree .leaf text.name { font-size: 12.5px; font-weight: 600; font-family: system-ui, sans-serif; }
+  svg.tree .leaf text.wt, svg.tree .op text.rank { font-size: 10.5px; opacity: .9; }
+  svg.tree .op text.sym { font-weight: 700; }
+  svg.tree .op-cat rect.body { fill: var(--cat); stroke: var(--cat); }
+  svg.tree .op-svd rect.body { fill: var(--svd); stroke: var(--svd); }
+  svg.tree .op-lin rect.body { fill: var(--lin); stroke: var(--lin); }
+  svg.tree rect.halo { fill: none; stroke-width: 1.6; }
+  svg.tree .op-cat rect.halo { stroke: var(--cat); }
+  svg.tree .op-svd rect.halo { stroke: var(--svd); }
+  svg.tree .op-lin rect.halo { stroke: var(--lin); }
+  svg.tree .broken rect.halo { stroke: var(--bad); }
+  svg.tree .broken rect.body { stroke: var(--bad); stroke-width: 3; stroke-dasharray: 5 3; }
+  svg.tree .broken text.rank { font-weight: 700; }
+  svg.tree .empty rect.body { fill: var(--panel); stroke: var(--faint); stroke-dasharray: 5 4; }
+  svg.tree .empty text { fill: var(--muted); font-family: system-ui, sans-serif; font-size: 11.5px; }
+  svg.tree .empty:hover rect.body, svg.tree .over rect.body { stroke: var(--accent); fill: var(--accent-soft); }
+  svg.tree .over rect.body { stroke-width: 3; }
+  svg.tree rect.ring { fill: none; stroke: var(--ink); stroke-width: 2; stroke-dasharray: 3 3; }
+  svg.tree .next rect.body { stroke: var(--accent); }
+  .verdict { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; margin-top: 12px; font-size: 13px; }
+  .verdict .formula { color: var(--ink-2); overflow-wrap: anywhere; }
+  .problems { margin: 6px 0 0; padding-left: 18px; color: var(--bad); font-size: 13px; }
+
+  .weights { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; margin-top: 8px; }
+  .weight { padding: 5px 8px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px;
+            font-variant-numeric: tabular-nums; }
+  .weight b { font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 600; margin-right: 4px; }
+  .weight i { display: block; height: 3px; margin-top: 4px; border-radius: 3px; background: var(--faint); }
+  .weight.used { border-color: var(--accent); background: var(--accent-soft); }
+  .weight.used i { background: var(--accent); }
+  /* A weight is a piece too: dragged onto a LoRA in the tree, or clicked with one selected. */
+  .weight[draggable="true"] { cursor: grab; user-select: none; transition: transform .12s, box-shadow .12s, border-color .12s; }
+  .weight[draggable="true"]:hover { transform: translateY(-1px); box-shadow: var(--shadow); border-color: var(--faint); }
+  .weight[draggable="true"]:active { cursor: grabbing; }
+  .weight.dragging { opacity: .45; }
+  .weight.current { outline: 2px solid var(--ink); outline-offset: 1px; }
+  /* A value set by hand, over the seed's draw. */
+  .weight.set { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, var(--panel)); }
+  .weight.set i { background: var(--warn); }
+  .weight .reset { float: right; border: 0; background: none; min-height: 0; height: 16px; padding: 0 2px; margin: -1px -3px 0 0;
+                   font-size: 12px; line-height: 1; color: var(--muted); cursor: pointer; }
+  .weight .reset:hover { color: var(--ink); }
+  .weight input.value { width: 100%; min-height: 24px; height: 24px; margin-top: 2px; padding: 1px 5px; font: 12px var(--mono); }
+  .weights-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .weights-head .grow { flex: 1; }
+  svg.tree .leaf.over rect.body { stroke: var(--ink) !important; stroke-width: 3; stroke-dasharray: 4 3; }
+  .seedrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .seedrow input { width: 150px; min-height: 30px; font-family: var(--mono); font-size: 12px; }
+  .sub { display: flex; align-items: center; gap: 6px; margin: 16px 0 4px; }
+
+  /* The test. */
+  .test-grid { display: grid; gap: 12px; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: end; }
+  @media (max-width: 760px) { .test-grid { grid-template-columns: minmax(0, 1fr); } }
+  .drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center;
+          min-height: 80px; border: 1.5px dashed var(--line-2); border-radius: 10px; padding: 12px; cursor: pointer;
+          color: var(--muted); font-size: 13px; background: var(--panel-2); }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop b { color: var(--ink); }
+  .go { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+
+  /* The result. */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; background: var(--panel-2); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scroll { overflow-x: auto; }
+  .tested b { overflow-wrap: anywhere; font-family: var(--mono); font-weight: 600; font-size: 11.5px; }
+  .means { display: grid; gap: 12px; max-width: 680px; margin: 6px 0 14px; }
+  .mean-row { display: grid; grid-template-columns: minmax(0, 1fr) 60px 92px; column-gap: 10px; row-gap: 4px; align-items: center; }
+  .mean-row .who { grid-column: 1 / -1; font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; line-height: 1.35; }
+  .mean-row .slot { display: inline-block; font: 600 10.5px/1 var(--mono); padding: 3px 5px; margin-right: 6px; border-radius: 5px;
+                    background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); vertical-align: 1px; }
+  .mean-row.blend .who { font-weight: 700; color: var(--ink); }
+  .mean-row .track { height: 14px; border-radius: 7px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
+  .mean-row .fill { height: 100%; border-radius: 7px; background: var(--faint); }
+  .mean-row.none .track { border-style: dashed; background: transparent; }
+  .mean-row .value { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; white-space: nowrap; }
+  .mean-row .value .muted { font-weight: 400; font-size: 12px; }
+  .mean-row .vs { font-size: 11.5px; white-space: nowrap; }
+  .mean-row .delta.up { color: var(--ok); }
+  .mean-row .delta.down { color: var(--bad); }
+  svg.chart { fill: var(--muted); font-size: 12px; max-width: 640px; font-family: system-ui, sans-serif; width: 100%; height: auto; display: block; }
+  pre.log { background: var(--log-bg); color: var(--log-ink); border-radius: 8px; margin: 10px 0 0; padding: 12px 14px;
+            font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; }
+  details.answers { margin-top: 12px; }
+  details.answers summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+  .qa { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .qa:last-child { border-bottom: 0; }
+  .qa .q { font-weight: 600; margin-bottom: 6px; }
+  .qa .a { display: grid; grid-template-columns: 130px minmax(0, 1fr) 48px; gap: 8px; font-size: 13px; padding: 3px 0; }
+  .qa .a .who { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .qa .a .text { white-space: pre-wrap; color: var(--ink-2); max-height: 7.5em; overflow: auto; }
+  .qa .a .score { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .qa .a.blend .who { color: var(--accent); font-weight: 600; }
+
+  /* "What is this?" -- the guide's question marks (ui_help.py). */
+  button.qm { display: inline-grid; place-items: center; width: 20px; height: 20px; min-height: 0; padding: 0;
+              margin-left: 6px; border: 0; border-radius: 50%; background: transparent; color: var(--faint);
+              vertical-align: -5px; cursor: help; }
+  button.qm svg { width: 16px; height: 16px; display: block; }
+  button.qm:hover:not(:disabled), button.qm:focus-visible { color: var(--accent); background: var(--accent-soft); }
+  .explained { animation: explained 1.8s ease-out; border-radius: 10px; }
+  @keyframes explained { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
+                         25% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 25%, transparent); }
+                         100% { box-shadow: 0 0 0 0 transparent; } }
+  .fresh { animation: arrive .4s ease-out; }
+  @keyframes arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* --- the comparison: two of everything ------------------------------------------------- */
+  :root { --side-a: #4c5fd5; --side-b: #c2410c; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --side-a: #8b9cff; --side-b: #fb923c; } }
+  .board-inner { max-width: 1440px; }
+  .duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 1180px) { .duo { grid-template-columns: minmax(0, 1fr); } }
+  .side-col { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px 12px 14px;
+              background: var(--panel); }
+  .side-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .side-head .grow { flex: 1; min-width: 0; }
+  .badge { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; flex: none;
+           background: var(--side); color: #fff; font: 700 13px var(--mono); }
+  .side-name { font-weight: 600; font-size: 14px; }
+  .opener { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; margin-bottom: 8px; }
+  .opener select { min-height: 30px; padding: 2px 8px; font-size: 12.5px; }
+  @media (max-width: 560px) { .opener { grid-template-columns: minmax(0, 1fr); } }
+  .from { font-size: 12px; color: var(--muted); margin: 0 0 8px; min-height: 18px; overflow-wrap: anywhere; }
+  .from .tag { margin-left: 4px; }
+  .from .save { margin-left: 8px; min-height: 24px; padding: 0 9px; font-size: 12px; vertical-align: 1px; }
+  .tag.edited { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+  .side-col .toolbar { min-height: 42px; padding: 6px 8px; }
+  .side-col .toolbar .what { font-size: 12.5px; }
+  .side-col .treewrap { min-height: 120px; }
+  .side-col svg.tree { max-width: 100%; }
+  .side-col .verdict { font-size: 12.5px; }
+  .side-col .weights { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
+  .side-col .weight { font-size: 11.5px; padding: 4px 6px; }
+  .vs { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .results-duo .side-col { padding-top: 10px; }
+  .results-duo .side-col h4 { margin: 0; font-size: 13px; }
+
+  /* A against B. */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); min-width: 0; }
+  .tile .k { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .tile .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.25; }
+  .tile .s { font-size: 12px; color: var(--muted); }
+  .tally { display: flex; height: 26px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); margin: 4px 0 6px; }
+  .tally > div { display: grid; place-items: center; font-size: 12px; font-weight: 600; color: #fff; min-width: 0; white-space: nowrap; overflow: hidden; }
+  .tally .aw { background: var(--side-a); } .tally .tie { background: var(--faint); } .tally .bw { background: var(--side-b); }
+  .tally-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .verdict-line { font-size: 14px; margin: 10px 0 0; }
+  .warnline { color: var(--warn); font-size: 13px; margin: 6px 0 0; }
+  .pairs { margin-top: 12px; }
+  .pairs summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+  .pair { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .pair:last-child { border-bottom: 0; }
+  .pair .q { font-weight: 600; margin-bottom: 6px; }
+  .pair .ab { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  @media (max-width: 760px) { .pair .ab { grid-template-columns: minmax(0, 1fr); } }
+  .pair .one { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 13px; min-width: 0; }
+  .pair .one.won { background: color-mix(in srgb, var(--side) 8%, var(--panel)); }
+  .pair .one .who { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 3px; }
+  .pair .one .text { white-space: pre-wrap; color: var(--ink-2); max-height: 9em; overflow: auto; }
+  svg.dots { display: block; width: 100%; max-width: 720px; height: auto; font-family: system-ui, sans-serif; font-size: 11px; fill: var(--muted); }
+</style>
+<script src="/themes/themes.js"></script>
+</head>
+<body>
+<header class="topbar" id="nav" data-page="compare" data-about="two blends side by side: open, edit and test them"></header>
+<script src="/nav.js"></script>
+<script src="/code_view.js"></script>
+<script src="/splitter.js"></script>
+
+<div class="halves" data-left-column="compare">
+  <!-- left: the guide -->
+  <section class="agent" aria-label="The guide">
+    <div class="agent-head">
+      <h2>Your guide<span id="guideHelp"></span></h2>
+      <span id="mockTag" class="tag mock" hidden>practice run</span>
+      <span class="spacer"></span>
+      <button type="button" class="sm ghost model-chip" id="modelChip" title="Which model the guide talks through"><span>…</span></button>
+      <button type="button" class="sm ghost" id="restart" title="Forget this conversation and both blends, and start again">Start over</button>
+    </div>
+    <div class="settings" id="settings" hidden>
+      <div class="row">
+        <div>
+          <label for="provider">Provider</label>
+          <select id="provider"></select>
+        </div>
+        <div>
+          <label for="model">Model</label>
+          <div class="inline">
+            <input id="model" list="modelList" placeholder="the provider's default" autocomplete="off">
+            <button type="button" class="sm" id="refreshModels" title="Ask the provider which models it has">↻</button>
+          </div>
+          <datalist id="modelList"></datalist>
+        </div>
+      </div>
+      <div id="baseUrlRow">
+        <label for="baseUrl">Endpoint</label>
+        <input id="baseUrl" placeholder="http://host:1234/v1" autocomplete="off">
+      </div>
+      <p class="help" id="providerHelp"></p>
+      <label class="check"><input type="checkbox" id="mock"> Practice run — load nothing, random scores, done in seconds</label>
+    </div>
+    <div class="transcript" id="transcript" aria-live="polite"></div>
+    <div class="action" id="action"></div>
+    <form class="composer" id="composer">
+      <textarea id="say" rows="1" placeholder="Tell me what to open, draw or compare…" aria-label="Message"></textarea>
+      <button type="submit" class="primary" id="send">Send</button>
+    </form>
+  </section>
+
+  <!-- right: the stage -- the pieces, the two blends, the test, the results -->
+  <main class="board" aria-label="The two blends">
+    <div class="board-inner" id="board"></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+// --- state -------------------------------------------------------------------------
+//
+// The page holds both drawings and the conversation; the server keeps neither.
+// S.session is what the chat's tools act on (gep_lora/assistant/compare.py): each
+// side's drawing -- the visual guide's tree, seed and number, and where it was
+// opened from -- and the test both share. Saved to this browser after every
+// change; the results are read again from the server rather than kept.
+
+const WEIGHTS = ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9", "w10"];
+const FOLDS = ["CAT", "SVD", "LIN"];
+const SIDES = ["A", "B"];
+const LORA_COLOURS = 6;
+const other = (side) => side === "A" ? "B" : "A";
+
+let key = "";
+let config = null;          // GET /agent/config: providers, demo datasets
+let visual = null;          // GET /agent/compare/config: the LoRAs, the folds, the page's words
+let sources = null;         // GET /blends: every blend of theirs that can be opened
+let helpBlocks = {};
+let S = fresh();
+let busy = false;
+let undo = [];              // [{side, tree}], newest last; not kept across reloads
+let checkTimers = {}, checkSeq = { A: 0, B: 0 }, pollTimer = null;
+let dragged = null;         // the piece being dragged
+let datasetMode = "demo";
+let picking = { A: null, B: null };   // the job chosen in each side's Open box
+let editingValues = { A: false, B: false };   // each side's weight tiles are boxes to type values into
+
+function conversationId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
+}
+
+function emptyTree() { return { op: "CAT", children: [null, null] }; }
+function emptySide() { return { tree: emptyTree(), seed: null, number: 1, pin: null, values: {}, from: null }; }
+
+function fresh() {
+  return { conversation: conversationId(), stage: "drawing", transcript: [],
+           session: { blends: { A: emptySide(), B: emptySide() }, questions: null, count: 20, mock: false },
+           given: null,          // {text, name}: a dataset pasted or uploaded, sent with the tests
+           baseModel: null,      // the Pieces filter: a base model, "*" for all, null to follow the blend
+           loraQuery: "",
+           checks: { A: null, B: null },       // the last POST /blends/check of each
+           checkErrors: { A: null, B: null },
+           selected: null,       // {side, path}: the place clicked
+           tests: null,          // {A: {job, verification, check}, B: ..., source, at}
+           results: { A: null, B: null },      // GET /verifications/{id} of each
+           logs: { A: [], B: [] },
+           duel: null };         // POST /agent/compare/outcome: A against B
+}
+
+const $ = (id) => document.getElementById(id);
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs)) {
+    if (value === null || value === undefined || value === false) continue;
+    if (name === "class") node.className = value;
+    else if (name === "html") node.innerHTML = value;
+    else if (name === "style" && typeof value === "object") Object.assign(node.style, value);
+    else if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
+    else node.setAttribute(name, value === true ? "" : value);
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : String(child));
+  }
+  return node;
+}
+
+function remember(name, value) {
+  try { localStorage.setItem("gep-compare-" + name, typeof value === "string" ? value : JSON.stringify(value)); } catch (_) { /* private mode, or full */ }
+}
+function recall(name, parse = false) {
+  try {
+    const raw = localStorage.getItem("gep-compare-" + name);
+    return parse ? (raw ? JSON.parse(raw) : null) : (raw || "");
+  } catch (_) { return parse ? null : ""; }
+}
+const recallKey = gepNav.recallKey, rememberKey = gepNav.rememberKey;
+
+// Kept per API key, as the guides keep theirs: a hash of the key, never the key.
+function sessionName() {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) hash = Math.imul(hash ^ key.charCodeAt(i), 0x01000193) >>> 0;
+  return "session-" + hash.toString(16);
+}
+
+function save() {
+  // The results and the duel are the server's: read again, not kept.
+  const copy = Object.assign({}, S, { results: { A: null, B: null }, logs: { A: [], B: [] }, duel: null });
+  if (copy.given && copy.given.text && copy.given.text.length > 1e6) copy.given = null;
+  if (key) remember(sessionName(), copy);
+}
+
+const fmt = (value, digits = 3) => (value === null || value === undefined || Number.isNaN(value)) ? "–" : Number(value).toFixed(digits);
+const clock = (date) => new Date(date || Date.now()).toTimeString().slice(0, 5);
+const pill = (status, text) => el("span", { class: "pill s-" + status }, text || status);
+const sideVar = (side) => `var(--side-${side.toLowerCase()})`;
+
+async function api(method, path, body) {
+  let response, data = null;
+  try {
+    response = await fetch(path, {
+      method,
+      headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    try { data = await response.json(); } catch (_) { /* empty body */ }
+  } catch (_) {
+    throw new Error("The API server cannot be reached. Is it running? (run_api_server.bat)");
+  }
+  if (!response.ok) {
+    const stale = response.status === 404 && data && /^no such endpoint/.test(data.error || "");
+    const error = new Error(stale ? `${data.error} — the API server is older than this page. Restart it and try again.`
+                                  : (data && data.error) || response.status + " " + response.statusText);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+// --- light Markdown, as the guides render it ---------------------------------------------
+
+const mdEscape = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const mdInline = (s) => mdEscape(s)
+  .replace(/`([^`]+)`/g, "<code>$1</code>")
+  .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+  .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?![*\w])/g, "$1<i>$2</i>");
+
+function md(text) {
+  const out = [];
+  let list = null, para = [];
+  const flush = () => {
+    if (para.length) out.push("<p>" + para.map(mdInline).join("<br>") + "</p>");
+    para = [];
+    if (list) out.push(`<${list.tag}>` + list.items.map((i) => "<li>" + mdInline(i) + "</li>").join("") + `</${list.tag}>`);
+    list = null;
+  };
+  for (const raw of String(text || "").replace(/\r/g, "").split("\n")) {
+    const line = raw.trimEnd();
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/), number = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (!line.trim()) { flush(); continue; }
+    if (bullet || number) {
+      const tag = bullet ? "ul" : "ol";
+      if (para.length || (list && list.tag !== tag)) flush();
+      if (!list) list = { tag, items: [] };
+      list.items.push((bullet || number)[1]);
+      continue;
+    }
+    if (list) flush();
+    para.push(line.replace(/^#+\s*/, ""));
+  }
+  flush();
+  return out.join("");
+}
+
+// --- the transcript ---------------------------------------------------------------------
+
+function agentSays(message, extra = {}) {
+  S.transcript.push(Object.assign({ who: "agent", text: message.text, by: message.by, note: message.note,
+                                    warn: Boolean(message.fallback && message.note), at: Date.now() }, extra));
+  save(); drawTranscript();
+}
+function userSays(text) { S.transcript.push({ who: "me", text, at: Date.now() }); save(); drawTranscript(); }
+function marker(text) { S.transcript.push({ who: "event", text, at: Date.now() }); save(); drawTranscript(); }
+function toolMarker(done) {
+  S.transcript.push({ who: "event", tool: true, ok: done.ok, text: done.summary, at: Date.now() });
+  save(); drawTranscript();
+}
+const words = (name) => (visual && visual.words && visual.words[name]) || "";
+const plain = (text) => ({ text, by: "built-in wording", note: null });
+
+function pastTurns() {
+  return S.transcript.filter((m) => m.who !== "event")
+    .map((m) => ({ role: m.who === "me" ? "user" : "assistant", content: m.text }));
+}
+
+let thinking = false;
+function drawTranscript() {
+  const box = $("transcript");
+  box.replaceChildren(...S.transcript.map((m) => {
+    if (m.who === "event") return el("div", { class: "msg event" + (m.tool ? " tool" : "") + (m.tool && !m.ok ? " failed" : "") },
+      m.tool ? el("span", { "aria-hidden": "true" }, "⚙") : null, m.text);
+    const me = m.who === "me";
+    return el("div", { class: "msg" + (me ? " me" : "") },
+      el("div", { class: "who" }, me ? "You" : "Guide",
+         !me && m.by ? el("span", { class: "by", title: m.by }, "· " + m.by) : null,
+         el("span", { class: "by" }, clock(m.at))),
+      el("div", { class: "bubble", html: md(m.text) }),
+      m.note ? el("div", { class: "note" + (m.warn ? " warn" : "") }, m.note) : null);
+  }), ...(thinking ? [el("div", { class: "msg" }, el("div", { class: "who" }, "Guide"),
+    el("div", { class: "bubble" }, el("span", { class: "typing", "aria-label": "thinking" }, el("i"), el("i"), el("i"))))] : []));
+  box.scrollTop = box.scrollHeight;
+}
+
+// One thing at a time: nothing else can be asked while the guide is answering.
+async function step(work) {
+  if (busy) return;
+  busy = true; thinking = true;
+  drawTranscript(); drawAction(); $("send").disabled = true;
+  try {
+    await work();
+  } catch (error) {
+    agentSays(plain("Something went wrong: " + error.message), { note: "It can be tried again.", warn: true });
+  } finally {
+    busy = false; thinking = false;
+    $("send").disabled = false;
+    drawTranscript(); drawAction(); drawBoard();
+  }
+}
+
+function setStage(stage) { S.stage = stage; save(); drawAction(); drawBoard(); }
+
+// --- "what is this?" --------------------------------------------------------------------
+
+const QM_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true">' +
+  '<circle cx="8" cy="8" r="7" fill="currentColor" opacity=".12"/>' +
+  '<circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
+  '<path d="M6.2 6.3a1.85 1.85 0 1 1 2.6 1.7c-.5.25-.8.6-.8 1.15v.35" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+  '<circle cx="8" cy="11.5" r=".95" fill="currentColor"/></svg>';
+
+function qm(block, title) {
+  if (!helpBlocks[block]) return null;
+  const question = `What is “${title}”?`;
+  return el("button", { type: "button", class: "qm", title: question, "aria-label": question, disabled: busy, html: QM_SVG,
+                        onclick: (e) => { e.stopPropagation(); explain(block, title, e.currentTarget); } });
+}
+
+function helped(block, node) {
+  const head = node.querySelector(".card-head h3");
+  const button = head && qm(block, head.textContent);
+  if (button) head.append(button);
+  return node;
+}
+
+function explain(block, title, button) {
+  if (busy || !config) return;
+  const box = button.closest("section.card") || button.closest(".sub")?.parentElement || button.closest(".agent-head");
+  const shown = box ? [box.innerText || "", ...[...box.querySelectorAll("svg title")].map((one) => one.textContent)].join("\n").trim() : "";
+  if (box) { box.classList.remove("explained"); void box.offsetWidth; box.classList.add("explained"); }
+  const past = pastTurns();
+  userSays(`What is “${title}”?`);
+  step(async () => {
+    const reply = await api("POST", "/agent/help", { agent: agentChoice(), block, title, shown, stage: "compare_" + S.stage, history: past });
+    agentSays(reply.message);
+  });
+}
+
+// --- the two drawings -------------------------------------------------------------------
+//
+// The visual guide's edits (and the chat's tools, compare.py's box over
+// visual.py's), on either side. A place is a side and a path: "" the top, "0"
+// its left side, "1.0" the right side's left side.
+
+const blendOf = (side) => S.session.blends[side];
+const treeOf = (side) => S.session.blends[side].tree;
+
+function at(tree, path) {
+  let parent = null, index = null, node = tree;
+  for (const part of path ? path.split(".") : []) {
+    if (!node || !node.op) return null;
+    parent = node; index = Number(part); node = node.children[index];
+  }
+  return { parent, index, node };
+}
+
+function places(tree) {
+  const out = [], queue = [["", tree]];
+  while (queue.length) {
+    const [path, node] = queue.shift();
+    out.push([path, node]);
+    if (node && node.op) node.children.forEach((child, i) => queue.push([path === "" ? String(i) : path + "." + i, child]));
+  }
+  return out;
+}
+
+const firstEmpty = (tree) => (places(tree).find(([, node]) => node === null) || [null])[0];
+const where = (path) => path === "" ? "the top" : path.split(".").map((p) => p === "0" ? "left" : "right").join(" › ");
+const loraById = (id) => (visual ? visual.loras : []).find((one) => one.id === id);
+const loraName = (id) => (loraById(id) || {}).name || `LoRA #${id}`;
+const ALL_MODELS = "*";
+const modelOf = (one) => (one && one.base_model) || "unknown base model";
+function blendModels(tree, except = null) {
+  return [...new Set(places(tree).filter(([path, n]) => n && n.lora !== undefined && path !== except)
+    .map(([, n]) => modelOf(loraById(n.lora))))];
+}
+// The side the pieces go to: the one with a place selected, else A.
+const activeSide = () => (S.selected && S.selected.side) || "A";
+// Which base model the Pieces show: the one chosen, else the active blend's,
+// else the other's, else the one most of the user's LoRAs are on.
+function shownModel() {
+  const loras = (visual && visual.loras) || [];
+  const known = new Set(loras.map(modelOf));
+  if (S.baseModel === ALL_MODELS || (S.baseModel && known.has(S.baseModel))) return S.baseModel;
+  const used = blendModels(treeOf(activeSide())).concat(blendModels(treeOf(other(activeSide()))));
+  if (used.length) return used[0];
+  const counts = {};
+  for (const one of loras) counts[modelOf(one)] = (counts[modelOf(one)] || 0) + 1;
+  return Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))[0] || ALL_MODELS;
+}
+
+const loraColour = (id) => {
+  const index = (visual ? visual.loras : []).findIndex((one) => one.id === id);
+  return `var(--l${((index < 0 ? 0 : index) % LORA_COLOURS) + 1})`;
+};
+
+function nextWeight(tree) {
+  const used = new Set(places(tree).filter(([, n]) => n && n.lora !== undefined).map(([, n]) => n.weight));
+  return WEIGHTS.find((w) => !used.has(w)) || "w1";
+}
+
+function pushUndo(side) {
+  undo.push({ side, blend: JSON.stringify(blendOf(side)) });
+  if (undo.length > 200) undo.shift();
+}
+
+// Change one side's drawing: remembered for undo, saved, and read again by the server.
+function edit(side, change, note) {
+  const before = JSON.stringify(treeOf(side));
+  const tree = JSON.parse(before);
+  const outcome = change(tree);
+  if (outcome === false) return false;
+  pushUndo(side);
+  blendOf(side).tree = outcome && outcome.tree !== undefined ? outcome.tree : tree;
+  if (outcome && outcome.select !== undefined) S.selected = outcome.select === null ? null : { side, path: outcome.select };
+  afterChange(side);
+  if (note) flash(note);
+  return true;
+}
+
+function afterChange(...sides) {
+  linkToBlends();
+  save(); drawBoard(); drawAction();
+  for (const side of sides) scheduleCheck(side);
+}
+
+// The last change to `side` (or to either, when not said) taken back.
+function undoLast(side = null) {
+  let i = undo.length - 1;
+  while (i >= 0 && side && undo[i].side !== side) i -= 1;
+  if (i < 0) return;
+  const [entry] = undo.splice(i, 1);
+  S.session.blends[entry.side] = JSON.parse(entry.blend);
+  if (S.selected && S.selected.side === entry.side && !at(treeOf(entry.side), S.selected.path)) S.selected = null;
+  afterChange(entry.side);
+}
+const canUndo = (side) => undo.some((one) => one.side === side);
+
+let flashText = { A: "", B: "" };
+function flash(text, side = activeSide()) {
+  flashText[side] = text; drawBoard();
+  setTimeout(() => { if (flashText[side] === text) { flashText[side] = ""; drawBoard(); } }, 2600);
+}
+
+function putLora(side, path, id) {
+  return edit(side, (tree) => {
+    let found = at(tree, path);
+    if (!found) return false;
+    if (found.node && found.node.op) {
+      const i = found.node.children.findIndex((child) => child === null);
+      if (i < 0) { flash(`The ${found.node.op} at ${where(path)} is full — click one of its sides first.`, side); return false; }
+      path = path === "" ? String(i) : path + "." + i;
+      found = { parent: found.node, index: i, node: null };
+    }
+    const others = blendModels(tree, path), mine = modelOf(loraById(id));
+    if (others.length && !others.includes(mine)) {
+      flash(`${loraName(id)} was trained on ${mine}, and blend ${side} is on ${others.join(", ")} — `
+            + "a blend needs all its LoRAs on one base model.", side);
+      return false;
+    }
+    const weight = found.node && found.node.lora !== undefined ? found.node.weight : nextWeight(tree);
+    const made = { lora: id, weight };
+    if (!found.parent) return { tree: made, select: "" };
+    found.parent.children[found.index] = made;
+    return { select: firstEmpty(tree) };
+  });
+}
+
+function putFold(side, path, op) {
+  return edit(side, (tree) => {
+    const found = at(tree, path);
+    if (!found) return false;
+    if (found.node && found.node.op) {
+      if (found.node.op === op) return false;
+      found.node.op = op;
+      return { select: firstEmpty(tree) ?? path };
+    }
+    const made = { op, children: [found.node, null] };
+    if (!found.parent) return { tree: made, select: firstEmpty(made) ?? path };
+    found.parent.children[found.index] = made;
+    return { select: firstEmpty(tree) ?? path };
+  });
+}
+
+function setWeight(side, path, weight) {
+  edit(side, (tree) => { const found = at(tree, path); if (!found || !found.node || found.node.lora === undefined) return false; found.node.weight = weight; });
+}
+function clearPlace(side, path) {
+  edit(side, (tree) => {
+    const found = at(tree, path);
+    if (!found || found.node === null) return false;
+    if (!found.parent) return { tree: null, select: "" };
+    found.parent.children[found.index] = null;
+    return { select: path };
+  });
+}
+function swapSides(side, path) {
+  edit(side, (tree) => { const found = at(tree, path); if (!found || !found.node || !found.node.op) return false; found.node.children.reverse(); });
+}
+function clearBlend(side) {
+  pushUndo(side);
+  S.session.blends[side] = emptySide();
+  S.checks[side] = null;
+  S.selected = { side, path: "0" };
+  afterChange(side);
+}
+// A random blend in `side`, on the base model that blend is on (else the other's,
+// else the one the Pieces show).
+function randomBlend(side) {
+  if (busy) return;
+  step(async () => {
+    // A model's name, never the page's words for a LoRA with none.
+    const named = (model) => model && model !== ALL_MODELS && model !== modelOf(null) ? model : null;
+    const model = named(blendModels(treeOf(side))[0]) || named(blendModels(treeOf(other(side)))[0]) || named(shownModel());
+    const found = await api("POST", "/blends/random", model ? { base_model: model } : {});
+    pushUndo(side);
+    S.session.blends[side] = { tree: found.tree, seed: found.seed, number: 1, pin: null, values: {}, from: null };
+    checkSeq[side] += 1;
+    S.checks[side] = found.check;
+    if (S.selected && S.selected.side === side) S.selected = null;
+    linkToBlends(); save();
+  });
+}
+
+// The Python a side runs as when it is processed (POST /blends/code): the script
+// its run stored, when it is still a job's blend; else what saving or testing it would run.
+function showCode(side) {
+  if (busy) return;
+  const blend = blendOf(side);
+  step(async () => {
+    const body = { tree: blend.tree, seed: blend.seed, number: blend.number || 1, pin: blend.pin ?? null,
+                   values: blend.values || {}, count: S.session.count, mock: $("mock").checked };
+    if (blend.from) body.job = blend.from.job;
+    const found = await api("POST", "/blends/code", body);
+    gepCode.show({ title: `The code blend ${side} runs`, name: found.name, source: found.source, note: found.note, exact: found.exact });
+  });
+}
+
+function usePiece(piece, side = null, path = null) {
+  side = side || activeSide();
+  const target = path ?? (S.selected && S.selected.side === side ? S.selected.path : null) ?? firstEmpty(treeOf(side));
+  if (target === null || target === undefined) { flash(`Every place of blend ${side} is filled — click a node to replace it, or a fold to change it.`, side); return; }
+  if (piece.kind === "lora") putLora(side, target, piece.id);
+  else putFold(side, target, piece.op);
+}
+
+// --- opening a blend from a job ------------------------------------------------------------
+
+async function loadSources() {
+  try { sources = (await api("GET", "/blends")).jobs || []; } catch (_) { sources = sources || []; }
+  drawBoard();
+}
+
+const jobKind = (job) => job.task === "blend" ? "drawn" : "search";
+const jobText = (job) => `#${job.job} · ${job.label || "untitled"} · ${jobKind(job)}`;
+
+async function openBlend(side, jobId, number = null) {
+  const query = number ? `?individual=${number}` : "";
+  const found = await api("GET", `/blends/${jobId}${query}`);
+  pushUndo(side);
+  S.session.blends[side] = { tree: found.tree, seed: found.seed, number: found.number || 1, pin: found.pin ?? null, values: found.values || {},
+                              from: { job: found.job, individual: found.number, label: found.label, chromosome: found.drawn, seed: found.seed, pin: found.pin ?? null, values: found.values || {} } };
+  picking[side] = found.job;
+  checkSeq[side] += 1;                  // whatever check is in flight was about the drawing before
+  S.checks[side] = null;
+  if (S.selected && S.selected.side === side) S.selected = null;
+  marker(`${side}: opened #${found.number} of job ${found.job}`);
+  afterChange(side);
+  return found;
+}
+
+function openBox(side) {
+  const jobs = sources || [];
+  if (!jobs.length) return el("p", { class: "from" }, sources ? words("no_blends") : "Reading your jobs…");
+  const chosen = jobs.find((one) => one.job === picking[side]) || null;
+  const pickJob = el("select", { "aria-label": `Open a job's blend into ${side}`,
+      onchange: (e) => { picking[side] = Number(e.target.value) || null; drawBoard(); } },
+    el("option", { value: "" }, "— open from a job —"),
+    ...jobs.map((one) => el("option", { value: one.job, selected: chosen && one.job === chosen.job }, jobText(one))));
+  const pickBlend = el("select", { "aria-label": `Which blend of that job to open into ${side}`, disabled: !chosen || busy,
+      // Let go of the box at once: the blend arrives after the change event, and a
+      // board redraw waits while one of its controls has the focus.
+      onchange: (e) => { const n = Number(e.target.value); e.target.blur(); if (n && chosen) step(() => openBlend(side, chosen.job, n)); } },
+    el("option", { value: "" }, chosen ? `— one of its ${chosen.blends.length} blend(s) —` : "— then a blend —"),
+    ...(chosen ? chosen.blends.map((one) => el("option", { value: one.number, disabled: one.state === "BAD",
+        selected: blendOf(side).from && blendOf(side).from.job === chosen.job && blendOf(side).from.individual === one.number },
+      `#${one.number}${one.is_best ? " ★" : ""} · ${fmt(one.quality ?? one.fitness, 3)} · ${one.formula}${one.state === "BAD" ? " (cannot be built)" : ""}`)) : []));
+  return el("div", { class: "opener" }, pickJob, pickBlend);
+}
+
+function fromLine(side) {
+  const blend = blendOf(side), from = blend.from, check = S.checks[side];
+  if (!from) return el("p", { class: "from" }, "Drawn here.");
+  // compare.edited(): another drawing, or other weights.
+  const edited = (check && check.chromosome !== from.chromosome) || blend.seed !== from.seed
+    || (blend.pin ?? null) !== (from.pin ?? null) || !sameValues(blend.values, from.values);
+  const ready = check && check.state === "ok";
+  return el("p", { class: "from", title: from.chromosome ? `As it was there: ${from.chromosome}` : null },
+    `From job ${from.job}${from.label ? ` (${from.label})` : ""}, blend #${from.individual}`,
+    edited ? el("span", { class: "tag edited" }, "edited") : null,
+    edited ? el("button", { type: "button", class: "sm primary save", onclick: () => saveBlend(side), disabled: busy || !ready,
+      title: ready ? `Save blend ${side} into job ${from.job}'s run as a new blend, with the weights shown`
+                   : "Finish the blend first: it has to be one that can be built" }, `Save into job ${from.job}`) : null);
+}
+
+// An edited side saved into the run it was opened from, as a brand new blend of
+// it with the weights on screen pinned (POST /blends/{job}/save). The side then
+// is that new blend: its number, and its pin.
+function saveBlend(side) {
+  const blend = blendOf(side), from = blend.from;
+  if (busy || !from) return;
+  step(async () => {
+    const saved = await api("POST", `/blends/${from.job}/save`,
+      { tree: blend.tree, seed: blend.seed, number: blend.number || 1, pin: blend.pin ?? null, values: blend.values || {} });
+    Object.assign(blend, { number: saved.number, pin: saved.check.weight_seed });
+    blend.from = { job: saved.job, individual: saved.number, label: from.label, chromosome: saved.drawn,
+                   seed: blend.seed, pin: blend.pin, values: Object.assign({}, blend.values || {}) };
+    S.checks[side] = saved.check;
+    marker(`${side}: saved as blend #${saved.number} of job ${saved.job}`);
+    agentSays(plain(`Blend ${side} is saved into job ${saved.job} as blend **#${saved.number}**, with the weights you see pinned. `
+      + "It is one of that run's blends now: it can be opened, verified or put live, and a resumed search runs and scores it with the rest."));
+    linkToBlends(); save();
+    loadSources();
+  });
+}
+
+// --- asking the server what each drawing is -------------------------------------------------
+
+function scheduleCheck(side, now = false) {
+  clearTimeout(checkTimers[side]);
+  checkTimers[side] = setTimeout(() => runCheck(side), now ? 0 : 250);
+}
+
+async function runCheck(side) {
+  const seq = ++checkSeq[side];
+  const blend = blendOf(side);
+  const sentTree = JSON.stringify(blend.tree), sentSeed = blend.seed;
+  try {
+    const found = await api("POST", "/blends/check", { tree: blend.tree, seed: blend.seed, number: blend.number || 1, pin: blend.pin ?? null, values: blend.values || {} });
+    const now = blendOf(side);
+    if (seq !== checkSeq[side] || sentTree !== JSON.stringify(now.tree) || (sentSeed !== null && sentSeed !== now.seed)) return;
+    S.checks[side] = found;
+    if (now.seed === null) now.seed = found.seed;       // a seed drawn once, then kept
+    S.checkErrors[side] = null;
+  } catch (error) {
+    if (seq !== checkSeq[side]) return;
+    S.checkErrors[side] = error.message;
+  }
+  save(); drawBoard(); drawAction();
+}
+
+function newWeights(side, seed = null) {
+  pushUndo(side);
+  blendOf(side).seed = seed; blendOf(side).pin = null;      // a new draw is no saved blend's
+  blendOf(side).values = {};                                 // and has nothing set by hand
+  save(); scheduleCheck(side, true);
+}
+
+// --- the board ------------------------------------------------------------------------------
+
+function card(title, side, ...body) {
+  return el("section", { class: "card" },
+    el("div", { class: "card-head" }, el("h3", {}, title), side ? el("div", { class: "side" }, side) : null), ...body);
+}
+
+// A redraw replaces every control on the board, so one from the background
+// waits while a control on it has the focus (as on the visual guide).
+let boardWaiting = false, boardChanged = false;
+const holdingBoard = () => {
+  const active = document.activeElement;
+  return Boolean(active && /^(SELECT|INPUT|TEXTAREA)$/.test(active.tagName) && $("board").contains(active));
+};
+$("board").addEventListener("change", () => { boardChanged = true; setTimeout(() => { boardChanged = false; }, 0); }, true);
+const catchUp = () => { if (boardWaiting && !holdingBoard()) drawBoard(); };
+$("board").addEventListener("focusout", () => setTimeout(catchUp, 0));
+setInterval(catchUp, 500);
+
+function drawBoard() {
+  if (key && visual && holdingBoard() && !boardChanged) { boardWaiting = true; return; }
+  boardWaiting = false; boardChanged = false;
+  if (!key || !visual) return $("board").replaceChildren(card("Nothing yet", null, el("div", { class: "empty-state" },
+    el("b", {}, "Waiting for your API key"), el("p", {}, "Paste it on the left to begin."))));
+  const scroll = [...document.querySelectorAll(".treewrap")].map((one) => one.scrollLeft);
+  const logs = [...document.querySelectorAll("pre.log")].map((log) => log.scrollTop + log.clientHeight >= log.scrollHeight - 20);
+  const cards = [helped("compare_blends", blendsCard()), helped("compare_palette", paletteCard()), helped("compare_test", testCard())];
+  if (S.tests) cards.push(helped("compare_result", resultCard()));
+  if (S.duel && S.duel.head_to_head) cards.push(helped("compare_duel", duelCard(S.duel.head_to_head)));
+  $("board").replaceChildren(...cards);
+  document.querySelectorAll(".treewrap").forEach((one, i) => { one.scrollLeft = scroll[i] || 0; });
+  document.querySelectorAll("pre.log").forEach((log, i) => { if (logs[i] !== false) log.scrollTop = log.scrollHeight; });
+}
+
+// The pieces: every ready LoRA of theirs, then the three folds; they go to the
+// blend a place is selected in (A until one is).
+const loraText = (one) => `${one.name} r${one.rank ?? ""} ${modelOf(one)}`.toLowerCase();
+const matchesQuery = (one) => (S.loraQuery || "").toLowerCase().split(/\s+/).filter(Boolean)
+  .every((word) => loraText(one).includes(word));
+
+function applyLoraQuery() {
+  const pieces = [...document.querySelectorAll(".palette .piece[data-lora]")];
+  let visible = 0;
+  for (const node of pieces) {
+    const ok = matchesQuery(loraById(Number(node.dataset.lora)) || {});
+    node.hidden = !ok;
+    visible += ok;
+  }
+  const none = document.querySelector(".palette-none");
+  if (none) none.hidden = visible > 0 || !pieces.length;
+  const count = document.querySelector(".palette-count");
+  if (count) count.textContent = countText(visible, (visual.loras || []).length);
+}
+const countText = (visible, total) => visible === total ? `${total} LoRA(s) of yours` : `${visible} of your ${total} LoRAs`;
+
+function paletteCard() {
+  const all = visual.loras, shown = shownModel(), side = activeSide();
+  const loras = shown === ALL_MODELS ? all : all.filter((one) => modelOf(one) === shown);
+  const used = blendModels(treeOf(side));
+  const counts = {};
+  for (const one of all) counts[modelOf(one)] = (counts[modelOf(one)] || 0) + 1;
+  const models = Object.keys(counts).sort();
+  const filter = models.length > 1 ? el("label", { class: "check model-filter" }, "Base model",
+    el("select", { "aria-label": "Show the LoRAs trained on this base model",
+                   onchange: (e) => { S.baseModel = e.target.value; save(); drawBoard(); } },
+      ...models.map((model) => el("option", { value: model, selected: model === shown },
+        `${model} · ${counts[model]}${used.includes(model) ? ` (blend ${side})` : ""}`)),
+      el("option", { value: ALL_MODELS, selected: shown === ALL_MODELS }, `All base models · ${all.length}`))) : null;
+  const search = all.length ? el("input", { type: "search", class: "lora-search", value: S.loraQuery || "",
+    placeholder: "Find a LoRA…", "aria-label": "Show only the LoRAs whose name has these words",
+    oninput: (e) => { S.loraQuery = e.target.value; save(); applyLoraQuery(); },
+    onkeydown: (e) => { if (e.key === "Escape" && e.target.value) { e.stopPropagation(); e.target.value = ""; S.loraQuery = ""; save(); applyLoraQuery(); } } }) : null;
+  const matching = loras.filter(matchesQuery).length;
+  const elsewhere = used.length && shown !== ALL_MODELS && !used.includes(shown)
+    ? el("p", { class: "help error" }, `Blend ${side} is on ${used.join(", ")}; these LoRAs are on ${shown} and cannot join it.`) : null;
+  const piece = (data, dot, colour, name, sub, title) => el("button", {
+    type: "button", class: "piece" + (data.kind === "fold" ? " fold" : ""), draggable: "true", title,
+    onclick: () => usePiece(data),
+    ondragstart: (e) => { dragged = data; e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", JSON.stringify(data)); e.currentTarget.classList.add("dragging"); },
+    ondragend: (e) => { dragged = null; e.currentTarget.classList.remove("dragging"); document.querySelectorAll(".over").forEach((n) => n.classList.remove("over")); },
+  }, el("span", { class: "dot", style: `background:${colour}` }, dot), el("b", {}, name), el("span", {}, sub));
+  const loraPieces = loras.map((one) => {
+    const node = piece({ kind: "lora", id: one.id }, "L", loraColour(one.id), one.name,
+      `rank ${one.rank ?? "?"}${one.practice_run ? " · practice" : ""}`,
+      `${one.name}: rank ${one.rank ?? "?"} on ${one.base_model || "?"} — drag it onto either tree, or click it to put it at the selected place`);
+    node.dataset.lora = one.id;
+    node.hidden = !matchesQuery(one);
+    return node;
+  });
+  const foldPieces = FOLDS.map((op) => {
+    const node = piece({ kind: "fold", op }, op, `var(--${op.toLowerCase()})`,
+      { CAT: "Stack", SVD: "Merge", LIN: "Average" }[op], visual.folds[op], `${op} — ${visual.folds[op]}`);
+    node.style.setProperty("--fold", `var(--${op.toLowerCase()})`);
+    return node;
+  });
+  return card("Pieces", [search, filter, el("span", { class: "muted small palette-count" }, countText(matching, all.length))],
+    all.length ? null : el("p", { class: "help error" }, words("no_loras")),
+    elsewhere,
+    el("div", { class: "palette" },
+      el("div", { class: "group" }, ...loraPieces,
+        el("span", { class: "muted small palette-none", hidden: matching > 0 || !loras.length },
+          "No LoRA here matches — try other words, or another base model.")),
+      loras.length ? el("div", { class: "divider" }) : null,
+      el("div", { class: "group" }, ...foldPieces)),
+    el("p", { class: "palette-note" }, "Drag a piece onto either tree, or click a place in one and then a piece; drag a weight onto a LoRA to change its weight. A click goes to ",
+       el("b", { style: `color:${sideVar(side)}` }, `blend ${side}`), " now. ",
+       el("b", {}, "Delete"), " empties the selected place, ", el("b", {}, "Ctrl+Z"), " undoes."));
+}
+
+// The hero: the two blends side by side.
+function blendsCard() {
+  return card("The two blends", [
+      el("button", { type: "button", class: "sm", onclick: loadSources, title: "Read your jobs again" }, "Refresh jobs")],
+    el("div", { class: "duo" }, ...SIDES.map(sideColumn)));
+}
+
+function sideColumn(side) {
+  const check = S.checks[side];
+  const state = !check ? null : check.state === "ok" ? pill("ok", `can be built · rank ${check.rank}`)
+    : check.state === "BAD" ? pill("BAD", "cannot be built") : pill("incomplete", `${check.empty.length} empty`);
+  const verdict = el("div", { class: "verdict" },
+    check && check.formula ? el("span", { class: "formula" }, check.formula) : el("span", { class: "muted" }, check && check.state === "incomplete" ? "Fill every empty place." : ""),
+    check && check.chromosome ? el("code", { title: "The chromosome a search would hold this blend as" }, check.chromosome) : null);
+  const problems = check && check.state === "BAD" && check.problems.length
+    ? el("ul", { class: "problems" }, ...check.problems.map((p) => el("li", {}, p))) : null;
+  return el("div", { class: "side-col", style: `--side:${sideVar(side)}`, "data-side": side },
+    el("div", { class: "side-head" },
+      el("span", { class: "badge" }, side),
+      el("span", { class: "grow" }, el("span", { class: "side-name" }, `Blend ${side}`), " ", state),
+      el("button", { type: "button", class: "sm", onclick: () => undoLast(side), disabled: !canUndo(side), title: `Undo the last change to ${side}` }, "Undo"),
+      el("button", { type: "button", class: "sm", onclick: () => showCode(side), disabled: busy || !check || !check.chromosome,
+                     title: check && check.chromosome ? `The Python blend ${side} runs as when it is processed`
+                                                      : "Fill every place to see the code" }, "Show code"),
+      el("button", { type: "button", class: "sm", onclick: () => randomBlend(side), disabled: busy,
+                     title: `A random blend of your LoRAs in ${side}, grown the way a search grows one — a new one every click` }, "🎲 Random"),
+      el("button", { type: "button", class: "sm", onclick: () => clearBlend(side), title: "Back to an empty CAT" }, "Clear")),
+    openBox(side),
+    fromLine(side),
+    toolbar(side),
+    el("div", { class: "treewrap" }, treeSvg(side)),
+    verdict, problems, S.checkErrors[side] ? el("p", { class: "help error" }, S.checkErrors[side]) : null,
+    weightsBlock(side));
+}
+
+// What can be done to the place selected, in its own blend.
+function toolbar(side) {
+  if (flashText[side]) return el("div", { class: "toolbar" }, el("span", { class: "what" }, flashText[side]));
+  const path = S.selected && S.selected.side === side ? S.selected.path : null;
+  const found = path === null ? null : at(treeOf(side), path);
+  if (!found) return el("div", { class: "toolbar" }, el("span", { class: "what muted" }, "Click a place in the tree to change it."));
+  const node = found.node;
+  const tools = [];
+  let said;
+  if (node === null) {
+    said = [el("b", {}, "Empty place"), ` at ${where(path)} — press a piece below to fill it.`];
+  } else if (node.op) {
+    said = [el("b", {}, node.op), ` at ${where(path)}`];
+    tools.push(el("div", { class: "seg" }, ...FOLDS.map((op) =>
+      el("button", { type: "button", class: op === node.op ? "active" : "", onclick: () => putFold(side, path, op) }, op))));
+    tools.push(el("button", { type: "button", class: "sm", onclick: () => swapSides(side, path) }, "Swap sides"));
+  } else {
+    const weights = (S.checks[side] || {}).weights || {};
+    said = [el("b", {}, loraName(node.lora)), ` at ${where(path)}`];
+    if (path === "") said.push(" — alone, at full strength.");
+    else tools.push(el("label", { class: "check" }, "weight",
+      el("select", { onchange: (e) => setWeight(side, path, e.target.value) },
+        ...WEIGHTS.map((w) => el("option", { value: w, selected: w === node.weight }, weights[w] !== undefined ? `${w} = ${fmt(weights[w], 3)}` : w)))));
+  }
+  if (node !== null) tools.push(el("button", { type: "button", class: "sm danger", onclick: () => clearPlace(side, path),
+    title: path === "" ? "Empty the top, and everything under it" : null }, "Remove"));
+  return el("div", { class: "toolbar" }, el("span", { class: "what" }, ...said), ...tools);
+}
+
+// One blend's tree, laid out as the visual guide lays it out.
+function treeSvg(side) {
+  const ns = "http://www.w3.org/2000/svg";
+  const make = (tag, attrs = {}, text) => {
+    const node = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const step = 150, level = 96, opW = 100, opH = 44, leafW = 134, leafH = 50, mx = 20, my = 16;
+  const nodes = (S.checks[side] || {}).nodes || {};
+  const weights = (S.checks[side] || {}).weights || {};
+  const tree = treeOf(side);
+  const placed = [];
+  let counter = 0, deepest = 0;
+  const visit = (node, path, depth) => {
+    deepest = Math.max(deepest, depth);
+    let entry;
+    if (node && node.op) {
+      const kids = node.children.map((child, i) => visit(child, path === "" ? String(i) : path + "." + i, depth + 1));
+      entry = { kind: "op", node, path, depth, kids, x: kids.reduce((s, k) => s + k.x, 0) / kids.length };
+    } else {
+      entry = { kind: node ? "leaf" : "empty", node, path, depth, kids: [], x: mx + counter * step + step / 2 };
+      counter += 1;
+    }
+    placed.push(entry);
+    return entry;
+  };
+  visit(tree, "", 0);
+  const width = mx * 2 + Math.max(1, counter) * step, height = my * 2 + deepest * level + leafH + 6;
+  // Shrunk to fit its half of the stage, but never so far that it cannot be read.
+  const svg = make("svg", { class: "tree", viewBox: `0 0 ${width} ${height}`, width, role: "img",
+                            "aria-label": `blend ${side}, as a tree`, style: `min-width:${Math.min(width, 420)}px` });
+  const y = (entry) => my + entry.depth * level;
+  const next = firstEmpty(tree);
+  for (const entry of placed) {
+    if (entry.kind !== "op") continue;
+    for (const kid of entry.kids) {
+      const sy = y(entry) + opH, ey = y(kid), mid = (sy + ey) / 2;
+      svg.append(make("path", { class: "edge" + (kid.kind === "empty" ? " to-empty" : ""),
+        d: `M${entry.x} ${sy} C ${entry.x} ${mid}, ${kid.x} ${mid}, ${kid.x} ${ey}` }));
+    }
+  }
+  for (const entry of placed) {
+    const info = nodes[entry.path] || {};
+    const top = y(entry);
+    const g = make("g", { class: "tnode " + entry.kind + (entry.kind === "op" ? " op-" + entry.node.op.toLowerCase() : "")
+                     + (info.broken ? " broken" : "") + (entry.path === next && entry.kind === "empty" ? " next" : ""),
+                     tabindex: "0", "data-path": entry.path });
+    const w = entry.kind === "op" ? opW : leafW, h = entry.kind === "op" ? opH : leafH;
+    const x0 = entry.x - w / 2;
+    let title;
+    if (entry.kind === "op") {
+      g.append(make("rect", { class: "halo", x: x0 - 4, y: top - 4, width: w + 8, height: h + 8, rx: 13 }));
+      g.append(make("rect", { class: "body", x: x0, y: top, width: w, height: h, rx: 10 }));
+      g.append(make("text", { class: "sym", x: entry.x, y: top + 19, "text-anchor": "middle" }, entry.node.op));
+      g.append(make("text", { class: "rank", x: entry.x, y: top + 35, "text-anchor": "middle" },
+        info.rank !== undefined ? (info.broken ? "ranks differ" : `rank ${info.rank}`) : "rank ?"));
+      title = `${side}: ${entry.node.op} at ${where(entry.path)} — ${visual.folds[entry.node.op]}` + (info.rank !== undefined ? `, rank ${info.rank}` : "")
+        + (info.broken ? ". PEFT cannot build this: its two sides have different ranks." : "");
+    } else if (entry.kind === "leaf") {
+      const name = loraName(entry.node.lora);
+      const alone = entry.path === "";
+      const value = weights[entry.node.weight];
+      const body = make("rect", { class: "body", x: x0, y: top, width: w, height: h, rx: 10 });
+      body.style.fill = loraColour(entry.node.lora); body.style.stroke = loraColour(entry.node.lora);
+      g.append(body);
+      g.append(make("text", { class: "name", x: entry.x, y: top + 21, "text-anchor": "middle" }, name.length > 17 ? name.slice(0, 16) + "…" : name));
+      g.append(make("text", { class: "wt", x: entry.x, y: top + 38, "text-anchor": "middle" },
+        `${alone ? "full strength" : entry.node.weight + (value !== undefined ? " = " + fmt(value, 3) : "")}${info.rank !== undefined ? " · r" + info.rank : ""}`));
+      title = alone ? `${side}: ${name} alone, at full strength${info.rank !== undefined ? ", rank " + info.rank : ""}`
+        : `${side}: ${name} at ${entry.node.weight}${value !== undefined ? " = " + fmt(value, 4) : ""}${info.rank !== undefined ? ", rank " + info.rank : ""}`;
+    } else {
+      g.append(make("rect", { class: "body", x: x0, y: top, width: w, height: h, rx: 10 }));
+      g.append(make("text", { x: entry.x, y: top + 22, "text-anchor": "middle" }, "+"));
+      g.append(make("text", { x: entry.x, y: top + 38, "text-anchor": "middle" }, words("empty_place")));
+      title = `${side}: an empty place at ${where(entry.path)}`;
+    }
+    g.append(make("title", {}, title));
+    const pad = entry.kind === "op" ? 8 : 5;
+    if (S.selected && S.selected.side === side && entry.path === S.selected.path)
+      g.append(make("rect", { class: "ring", x: x0 - pad, y: top - pad, width: w + 2 * pad, height: h + 2 * pad, rx: 10 + pad }));
+    const pick = () => {
+      const same = S.selected && S.selected.side === side && S.selected.path === entry.path;
+      S.selected = same ? null : { side, path: entry.path };
+      flashText[side] = ""; save(); drawBoard();
+    };
+    g.addEventListener("click", pick);
+    g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    // A weight lands only on a LoRA a fold weights: not a fold, an empty place or a LoRA alone at the top.
+    const takes = (piece) => piece.kind !== "weight" || (entry.kind === "leaf" && entry.path !== "");
+    g.addEventListener("dragover", (e) => { if (!dragged || !takes(dragged)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; g.classList.add("over"); });
+    g.addEventListener("dragleave", () => g.classList.remove("over"));
+    g.addEventListener("drop", (e) => {
+      e.preventDefault(); g.classList.remove("over");
+      let data = dragged;
+      try { data = data || JSON.parse(e.dataTransfer.getData("text/plain")); } catch (_) { /* not a piece */ }
+      dragged = null;
+      if (data && (data.kind === "lora" || data.kind === "fold")) usePiece(data, side, entry.path);
+      else if (data && data.kind === "weight" && takes(data)) setWeight(side, entry.path, data.weight);
+    });
+    svg.append(g);
+  }
+  return svg;
+}
+
+function weightsBlock(side) {
+  const blend = blendOf(side), check = S.checks[side];
+  const used = new Set(places(blend.tree).filter(([, n]) => n && n.lora !== undefined).map(([, n]) => n.weight));
+  const weights = (check || {}).weights || {};
+  return el("div", {},
+    el("div", { class: "weights-head" },
+      el("h3", { class: "sub" }, "Weights", qm("compare_blends.weights", "Weights"),
+         blend.number > 1 ? el("span", { class: "muted small", style: "font-weight:400" }, `drawn for #${blend.number}, as in its search`) : null),
+      el("span", { class: "grow" }),
+      el("label", { class: "check small", title: `Type what blend ${side}'s weights are worth, instead of its seed's draw` },
+        el("input", { type: "checkbox", checked: editingValues[side], onchange: (e) => { editingValues[side] = e.target.checked; drawBoard(); } }), "Edit values")),
+    el("div", { class: "seedrow" },
+      el("span", { class: "muted small" }, "seed"),
+      el("input", { type: "number", min: "0", value: blend.seed ?? "", title: `The seed blend ${side}'s w1..w10 are drawn from`,
+                    onchange: (e) => { const v = Number(e.target.value); if (Number.isInteger(v) && v >= 0) newWeights(side, v); } }),
+      el("button", { type: "button", class: "sm", onclick: () => newWeights(side, null), title: `Draw new values for blend ${side}'s w1..w10` }, "New weights")),
+    el("div", { class: "weights" }, ...WEIGHTS.map((w) => valueTile(side, w,
+      used.has(w), used.has(w) ? `${w} is used in blend ${side}` : `${w} is not used in blend ${side}`))));
+}
+
+const sameValues = (a, b) => JSON.stringify(Object.entries(a || {}).sort()) === JSON.stringify(Object.entries(b || {}).sort());
+
+// A value set by hand: typed into a tile while "Edit values" is on. Kept to the
+// draw's own range, (0, 1]; set back to what the seed drew, it is no longer set.
+function setValue(side, w, raw) {
+  const blend = blendOf(side), check = S.checks[side];
+  const value = Math.round(Number(raw) * 10000) / 10000;
+  if (!(value > 0 && value <= 1)) { flash(`${w} must be above 0 and at most 1.`, side); drawBoard(); return; }
+  pushUndo(side);
+  const values = Object.assign({}, blend.values || {});
+  if (check && check.drawn && check.drawn[w] === value) delete values[w]; else values[w] = value;
+  blend.values = values;
+  afterChange(side);
+}
+function resetValue(side, w) {
+  const blend = blendOf(side);
+  if (!blend.values || blend.values[w] === undefined) return;
+  pushUndo(side);
+  const values = Object.assign({}, blend.values);
+  delete values[w];
+  blend.values = values;
+  afterChange(side);
+}
+
+// One weight's tile. Normally a piece to drag onto a LoRA; with "Edit values"
+// on, a box its value is typed into. Either way a value set by hand is marked,
+// with ↺ to put back what the seed drew.
+function valueTile(side, w, used, title) {
+  const blend = blendOf(side), check = S.checks[side];
+  const weights = (check || {}).weights || {}, drawn = (check || {}).drawn || {};
+  const set = blend.values && blend.values[w] !== undefined;
+  const shown = weights[w] !== undefined ? fmt(weights[w], 4) : "…";
+  const reset = set ? el("button", { type: "button", class: "reset", title: `Put back the drawn value${drawn[w] !== undefined ? " (" + fmt(drawn[w], 4) + ")" : ""}`,
+    onclick: (e) => { e.stopPropagation(); resetValue(side, w); } }, "↺") : null;
+  const note = set ? ` — set by hand${drawn[w] !== undefined ? ", drawn " + fmt(drawn[w], 4) : ""}` : "";
+  if (!editingValues[side]) {
+    const tile = weightTile(w, shown, used, title + note, side);
+    if (set) { tile.classList.add("set"); tile.prepend(reset); }
+    return tile;
+  }
+  return el("div", { class: "weight" + (used ? " used" : "") + (set ? " set" : ""), title: `What ${w} is worth${note}` },
+    reset, el("b", {}, w),
+    el("input", { class: "value", type: "number", min: "0.0001", max: "1", step: "0.01", value: weights[w] ?? "",
+                  "aria-label": `What ${w} is worth, above 0 and at most 1`,
+                  onchange: (e) => setValue(side, w, e.target.value),
+                  onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); } }));
+}
+
+
+// A weight tile: dragged onto a LoRA in the tree, or clicked while one is selected.
+function weightTile(w, value, used, title, side) {
+  const target = selectedLeaf(side);
+  const tile = el("div", { class: "weight" + (used ? " used" : "") + (target && target.weight === w ? " current" : ""),
+    draggable: "true", tabindex: "0", title: title + " — drag it onto a LoRA in the tree" + (target ? ", or click it to give the selected LoRA this weight" : ""),
+    onclick: () => { if (target) setWeight(side, target.path, w); },
+    onkeydown: (e) => { if ((e.key === "Enter" || e.key === " ") && target) { e.preventDefault(); setWeight(side, target.path, w); } },
+    ondragstart: (e) => { dragged = { kind: "weight", weight: w }; e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", JSON.stringify(dragged)); e.currentTarget.classList.add("dragging"); },
+    ondragend: (e) => { dragged = null; e.currentTarget.classList.remove("dragging"); document.querySelectorAll(".over").forEach((n) => n.classList.remove("over")); } },
+    el("b", {}, w), value,
+    el("i", { style: `width:${Math.round((Number(value) || 0) * 100)}%` }));
+  return tile;
+}
+
+// The LoRA selected in `side`'s tree, when a fold weights it. -> {path, weight} or null.
+// A weight is a name, so one dragged from the other blend's tiles lands as that name
+// here, worth what this blend's seed makes it.
+function selectedLeaf(side) {
+  if (!S.selected || S.selected.side !== side || S.selected.path === "") return null;
+  const found = at(treeOf(side), S.selected.path);
+  return found && found.node && found.node.lora !== undefined ? { path: S.selected.path, weight: found.node.weight } : null;
+}
+
+// --- the test: the same questions for both -------------------------------------------------
+
+function sourceText() {
+  const q = S.session.questions;
+  if (!q) return null;
+  if (q.file) return q.file;
+  if (q.given) return q.given;
+  return `${loraName(q.lora)}'s training data`;
+}
+
+const bothReady = () => SIDES.every((side) => S.checks[side] && S.checks[side].state === "ok");
+
+function whyNot() {
+  for (const side of SIDES) {
+    const check = S.checks[side];
+    if (!check || check.state !== "ok")
+      return check && check.state === "BAD" ? `Blend ${side} cannot be built yet — see its problems above.` : words("incomplete");
+  }
+  if (!S.session.questions) return "Choose the questions to test on.";
+  if (S.stage === "testing") return "The tests are running.";
+  return null;
+}
+
+function testCard() {
+  const q = S.session.questions;
+  const demos = ((config && config.datasets) || []).filter((one) => one.usable);
+  const modes = [["demo", "Demo dataset"], ["lora", "A LoRA's data"], ["own", "Your own"]];
+  let pane;
+  if (datasetMode === "demo") {
+    pane = el("select", { onchange: (e) => setQuestions(e.target.value ? { file: e.target.value } : null) },
+      el("option", { value: "" }, "— pick a demo dataset —"),
+      ...demos.map((one) => el("option", { value: one.file, selected: q && q.file === one.file }, `${one.file} · ${one.records} conversation(s)`)));
+  } else if (datasetMode === "lora") {
+    const inTrees = new Set(SIDES.flatMap((side) => places(treeOf(side)).filter(([, n]) => n && n.lora !== undefined).map(([, n]) => n.lora)));
+    const loras = [...visual.loras].sort((a, b) => inTrees.has(b.id) - inTrees.has(a.id));
+    pane = el("select", { onchange: (e) => setQuestions(e.target.value ? { lora: Number(e.target.value) } : null) },
+      el("option", { value: "" }, "— the data one of your LoRAs was trained on —"),
+      ...loras.map((one) => el("option", { value: one.id, selected: q && q.lora === one.id }, `${one.name}${inTrees.has(one.id) ? " (in a blend)" : ""}`)));
+  } else {
+    const input = el("input", { type: "file", accept: ".json,.jsonl,.txt,.csv", hidden: true, onchange: (e) => e.target.files[0] && readFile(e.target.files[0]) });
+    const drop = el("div", { class: "drop", onclick: () => input.click(),
+      ondragover: (e) => { e.preventDefault(); drop.classList.add("over"); }, ondragleave: () => drop.classList.remove("over"),
+      ondrop: (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]); } },
+      el("b", {}, S.given ? S.given.name : "Drop a file here, or click to choose one"),
+      el("span", {}, S.given ? `${S.given.text.split(/\n/).filter((l) => l.trim()).length} line(s) — click to use another` : "JSON Lines with a “messages” list per line, or one question per line"));
+    const paste = el("textarea", { rows: 3, placeholder: "…or paste it here" });
+    pane = el("div", {}, input, drop, el("div", { style: "display:flex;gap:8px;margin-top:8px;align-items:flex-start" }, paste,
+      el("button", { type: "button", class: "sm", onclick: () => { if (paste.value.trim()) useGiven(paste.value, "your pasted questions"); } }, "Use it")));
+  }
+  const why = whyNot();
+  const mock = S.session.mock || SIDES.some((side) => S.checks[side] && S.checks[side].mock);
+  return card("Test both", el("span", { class: "muted small" }, "both blends, and each one's LoRAs alone, on the same questions"),
+    el("div", { class: "seg", style: "margin-bottom:10px" }, ...modes.map(([id, label]) =>
+      el("button", { type: "button", class: datasetMode === id ? "active" : "", onclick: () => { datasetMode = id; drawBoard(); } }, label))),
+    el("div", { class: "test-grid" },
+      el("div", {}, el("label", {}, "Questions"), pane),
+      el("div", {}, el("label", { for: "count" }, "How many"),
+        el("input", { id: "count", type: "number", min: "1", max: String(visual.max_questions), value: S.session.count,
+                      onchange: (e) => { const v = Number(e.target.value); if (Number.isInteger(v) && v >= 1 && v <= visual.max_questions) { S.session.count = v; save(); drawAction(); } } }))),
+    el("div", { class: "go" },
+      el("button", { type: "button", class: "primary lg", onclick: startTest, disabled: busy || Boolean(why) }, "Test both blends"),
+      el("span", { class: "muted small" }, why || `${S.session.count} question(s) from ${sourceText()}${mock ? " · practice run" : ""}`)));
+}
+
+function setQuestions(questions) { S.session.questions = questions; save(); drawBoard(); drawAction(); }
+function useGiven(text, name) { S.given = { text, name }; setQuestions({ given: name }); }
+async function readFile(file) {
+  if (file.size > 20 * 1024 * 1024) return flash("That file is over 20 MB — pick a smaller one.");
+  useGiven(await file.text(), file.name);
+}
+
+const session = () => Object.assign({}, S.session, { mock: $("mock").checked });
+
+// Both tests, through the plan read back: one POST /blends/test per blend.
+function startTest() {
+  if (busy) return;
+  step(async () => {
+    const planned = await api("POST", "/agent/compare/plan", { session: session() });
+    agentSays(planned.message);
+    const tests = { source: planned.source, at: Date.now() };
+    for (const side of SIDES) {
+      const body = Object.assign({}, planned.tests[side]);
+      if (body.dataset && body.dataset.given) {
+        if (!S.given) throw new Error("the dataset you gave is no longer in this browser — give it again");
+        body.dataset = { text: S.given.text, name: S.given.name };
+      }
+      let reply;
+      try {
+        reply = await api("POST", "/blends/test", body);
+      } catch (error) {
+        if (side === "B" && tests.A) marker(`blend A's test is queued (verification ${tests.A.verification.id}), but B's could not be`);
+        throw new Error(`blend ${side}: ${error.message}`);
+      }
+      tests[side] = { job: reply.job, verification: reply.verification, check: reply.blend };
+      marker(`${side}: test queued · verification ${reply.verification.id}`);
+      loadSources();
+    }
+    S.tests = tests;
+    S.results = { A: null, B: null }; S.logs = { A: [], B: [] }; S.duel = null;
+    linkToBlends();
+    agentSays(plain(words("started")));
+    setStage("testing");
+    poll();
+  });
+}
+
+const finished = (row) => row && (row.status === "done" || row.status === "failed");
+
+async function poll() {
+  clearTimeout(pollTimer);
+  if (!S.tests || !key) return;
+  for (const side of SIDES) {
+    if (finished(S.results[side])) continue;
+    const id = S.tests[side].verification.id;
+    try {
+      S.results[side] = (await api("GET", `/verifications/${id}`)).verification;
+      try { S.logs[side] = (await api("GET", `/verifications/${id}/log?lines=40`)).lines || []; } catch (_) { /* no log yet */ }
+    } catch (error) {
+      if (error.status === 404) { S.tests = null; S.results = { A: null, B: null }; S.duel = null; setStage("drawing"); return; }
+    }
+  }
+  save(); drawBoard();
+  if (SIDES.every((side) => finished(S.results[side]))) {
+    const ids = { a: S.tests.A.verification.id, b: S.tests.B.verification.id };
+    if (S.stage === "testing") {
+      setStage("tested");
+      step(async () => {
+        const reply = await api("POST", "/agent/compare/debrief", Object.assign({ agent: agentChoice(), history: pastTurns() }, ids));
+        S.duel = reply.result;
+        agentSays(reply.message);
+      });
+    } else if (!S.duel) {
+      try { S.duel = await api("POST", "/agent/compare/outcome", ids); } catch (_) { /* shown without it */ }
+      drawBoard();
+    }
+    return;
+  }
+  pollTimer = setTimeout(poll, 3000);
+}
+
+// A tested blend's LoRAs by slot, so a result row is named, not "L2".
+function contestantName(side, slot) {
+  const slots = (S.tests && S.tests[side] && S.tests[side].check && S.tests[side].check.slots) || {};
+  if (slot === "blend") return `Blend ${side}`;
+  return slots[slot] ? slots[slot].name + " alone" : slot + " alone";
+}
+
+function resultCard() {
+  return card("Results", el("span", { class: "muted small" }, `on ${S.tests.source}`),
+    el("div", { class: "duo results-duo" }, ...SIDES.map(resultColumn)));
+}
+
+function resultColumn(side) {
+  const row = S.results[side] || S.tests[side].verification;
+  const status = row.status;
+  const report = row.report;
+  const test = S.tests[side];
+  const head = el("div", { class: "side-head" }, el("span", { class: "badge" }, side),
+    el("span", { class: "grow" }, el("span", { class: "side-name" }, `Blend ${side}`), " ", pill(status)),
+    el("span", { class: "muted small" }, `verification ${row.id} · job ${test.job.id}`));
+  const tested = el("p", { class: "small tested" }, "Tested: ", el("b", {}, test.check.formula || test.check.chromosome));
+  const column = (...body) => el("div", { class: "side-col", style: `--side:${sideVar(side)}` }, head, tested, ...body);
+  if (!report) {
+    const waiting = row.status === "failed" ? el("p", { class: "help error" }, row.error || "The test failed — see its log.")
+      : el("p", { class: "muted" }, row.status === "queued" ? "Queued: the worker takes it after anything ahead of it." : "Running: the blend and each LoRA answer the questions, then they are scored.");
+    return column(waiting, S.logs[side].length ? el("pre", { class: "log" }, S.logs[side].join("\n")) : null);
+  }
+  const rows = [...report.summary].sort((a, b) => (a.key !== "blend") - (b.key !== "blend") || (b.mean ?? -1) - (a.mean ?? -1));
+  return column(meansChart(side, rows),
+    el("div", { class: "scroll" }, el("table", {},
+      el("thead", {}, el("tr", {}, el("th", {}, "Contestant"), el("th", { class: "num" }, "Mean"), el("th", { class: "num" }, "Wins"),
+        el("th", { class: "num" }, "Ties"), el("th", { class: "num" }, "Loses"), el("th", { class: "num" }, "p"))),
+      el("tbody", {}, ...rows.map((one) => el("tr", {},
+        el("td", {}, one.key === "blend" ? el("b", {}, contestantName(side, one.key)) : contestantName(side, one.key)),
+        el("td", { class: "num" }, fmt(one.mean)),
+        el("td", { class: "num" }, one.key === "blend" ? "" : one.wins),
+        el("td", { class: "num" }, one.key === "blend" ? "" : one.ties),
+        el("td", { class: "num" }, one.key === "blend" ? "" : one.losses),
+        el("td", { class: "num" }, one.key === "blend" ? "" : fmt(one.p))))))),
+    el("p", { class: "muted small", style: "margin-top:8px" },
+      `${report.meta.questions} question(s), graded by ${report.meta.evaluator} (${report.meta.judge})`),
+    answersBlock(side, report));
+}
+
+// One row per contestant, as the visual guide draws it: the name above its bar (a LoRA's name is
+// long and its tail is what tells two apart, so it wraps rather than being cut), the bar on a 0-1
+// track, the mean, and for a LoRA how far the blend is from it. No score, no bar, and it says so.
+function meansChart(side, rows) {
+  const blend = (rows.find((one) => one.key === "blend") || {}).mean;
+  const scored = (v) => typeof v === "number" && isFinite(v);
+  return el("div", { class: "means", role: "list", "aria-label": `average score of blend ${side} and each of its LoRAs` },
+    ...rows.map((one) => {
+      const isBlend = one.key === "blend", has = scored(one.mean);
+      const width = has ? Math.max(0, Math.min(1, one.mean)) * 100 : 0;
+      let delta = null;
+      if (!isBlend && has && scored(blend)) {
+        const d = blend - one.mean;
+        delta = el("span", { class: "delta " + (d > 0 ? "up" : d < 0 ? "down" : "") },
+          Math.abs(d) < 5e-4 ? "blend ties it" : `blend ${d > 0 ? "+" : "−"}${fmt(Math.abs(d))}`);
+      }
+      return el("div", { class: "mean-row" + (isBlend ? " blend" : "") + (has ? "" : " none"), role: "listitem",
+          title: `${contestantName(side, one.key)}: ${has ? fmt(one.mean) : "no score"}` },
+        el("div", { class: "who" },
+          isBlend ? null : el("span", { class: "slot" }, one.key),
+          el("span", { class: "name" }, isBlend ? contestantName(side, one.key) : contestantName(side, one.key).replace(/ alone$/, "")),
+          isBlend ? null : el("span", { class: "muted" }, " alone")),
+        el("div", { class: "track" }, has ? el("div", { class: "fill", style: `width:${width}%` + (isBlend ? `;background:${sideVar(side)}` : "") }) : null),
+        el("div", { class: "value" }, has ? fmt(one.mean) : el("span", { class: "muted" }, "no score")),
+        el("div", { class: "vs" }, delta));
+    }));
+}
+
+function answersBlock(side, report) {
+  const keys = ["blend", ...Object.keys(report.answers).filter((k) => k !== "blend").sort()];
+  const count = (report.answers.blend || []).length;
+  return el("details", { class: "answers" }, el("summary", {}, `Every answer, question by question (${count})`),
+    ...Array.from({ length: count }, (_, i) => el("div", { class: "qa" },
+      el("div", { class: "q" }, `${i + 1}. ${(report.answers.blend[i] || {}).question || ""}`),
+      ...keys.map((k) => { const one = (report.answers[k] || [])[i] || {};
+        return el("div", { class: "a" + (k === "blend" ? " blend" : ""), title: one.reason || "" },
+          el("span", { class: "who", title: contestantName(side, k) }, contestantName(side, k)), el("span", { class: "text" }, one.answer || "—"),
+          el("span", { class: "score" }, fmt(one.quality, 2))); }))));
+}
+
+// A against B: computed by the server (compare.head_to_head), drawn here.
+function duelCard(duel) {
+  const verdict = duel.a_is === "better" ? ["A", "Blend A is clearly the better of the two."]
+    : duel.a_is === "worse" ? ["B", "Blend B is clearly the better of the two."]
+    : [null, "Neither is clearly better — with this many questions the difference could be luck."];
+  const scored = duel.a_wins + duel.ties + duel.b_wins;
+  const part = (n) => scored ? `${(100 * n / scored).toFixed(2)}%` : "0";
+  const tile = (cls, k, v, s) => el("div", { class: "tile " + cls }, el("div", { class: "k" }, k), el("div", { class: "v" }, v), s ? el("div", { class: "s" }, s) : null);
+  return card("A against B", el("span", { class: "muted small" }, `${duel.questions} question(s) both answered`),
+    el("div", { class: "tiles" },
+      tile("a", "Blend A", fmt(duel.a_mean), "average score"),
+      tile("b", "Blend B", fmt(duel.b_mean), "average score"),
+      tile("", "A − B", duel.delta === null ? "–" : (duel.delta >= 0 ? "+" : "") + fmt(duel.delta), "per question, on average"),
+      tile("", "p", fmt(duel.p), duel.p < 0.05 ? "unlikely to be luck" : "could be luck")),
+    el("div", { class: "tally", role: "img", "aria-label": `A won ${duel.a_wins}, tied ${duel.ties}, B won ${duel.b_wins}` },
+      duel.a_wins ? el("div", { class: "aw", style: { width: part(duel.a_wins) }, title: `A won ${duel.a_wins}` }, `A ${duel.a_wins}`) : null,
+      duel.ties ? el("div", { class: "tie", style: { width: part(duel.ties) }, title: `${duel.ties} tie(s)` }, `= ${duel.ties}`) : null,
+      duel.b_wins ? el("div", { class: "bw", style: { width: part(duel.b_wins) }, title: `B won ${duel.b_wins}` }, `B ${duel.b_wins}`) : null),
+    el("div", { class: "tally-legend" }, el("span", {}, "questions A scored higher"), el("span", {}, "ties"), el("span", {}, "questions B scored higher")),
+    duelDots(duel),
+    el("p", { class: "verdict-line" }, verdict[0] ? el("b", { style: `color:${sideVar(verdict[0])}` }, verdict[1]) : verdict[1]),
+    duel.same_grader ? null : el("p", { class: "warnline" }, `They were graded differently (A: ${duel.graders[0].evaluator} / ${duel.graders[0].judge}, B: ${duel.graders[1].evaluator} / ${duel.graders[1].judge}), so read this with care.`),
+    duel.only_a || duel.only_b ? el("p", { class: "warnline" }, `${duel.only_a} question(s) only A answered and ${duel.only_b} only B answered are left out.`) : null,
+    el("details", { class: "pairs" }, el("summary", {}, `Every question, A beside B (${duel.rows.length})`),
+      ...duel.rows.map((one, i) => {
+        const a = one.A.quality, b = one.B.quality;
+        const won = (side) => a !== null && b !== null && (side === "A" ? a > b : b > a);
+        const half = (side) => el("div", { class: "one" + (won(side) ? " won" : ""), style: `--side:${sideVar(side)}`, title: one[side].reason || "" },
+          el("div", { class: "who" }, el("span", {}, `Blend ${side}${won(side) ? " ✓" : ""}`), el("span", {}, fmt(one[side].quality, 2))),
+          el("div", { class: "text" }, one[side].answer || "—"));
+        return el("div", { class: "pair" }, el("div", { class: "q" }, `${i + 1}. ${one.question || ""}`),
+          el("div", { class: "ab" }, half("A"), half("B")));
+      })));
+}
+
+// Each question as a line from A's score to B's: which way, and how far.
+function duelDots(duel) {
+  const ns = "http://www.w3.org/2000/svg";
+  const make = (tag, attrs = {}, text) => { const n = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text !== undefined) n.textContent = text; return n; };
+  const rows = duel.rows.filter((one) => one.A.quality !== null && one.B.quality !== null);
+  if (!rows.length) return null;
+  const step = rows.length > 60 ? 6 : rows.length > 30 ? 10 : 16, left = 34, right = 14, width = 640;
+  const height = 22 + rows.length * step + 8;
+  const x = (v) => left + (width - left - right) * v;
+  const svg = make("svg", { class: "dots", viewBox: `0 0 ${width} ${height}`, role: "img",
+                            "aria-label": "each question's score for A and for B" });
+  for (const tick of [0, 0.25, 0.5, 0.75, 1]) {
+    svg.append(make("line", { x1: x(tick), x2: x(tick), y1: 14, y2: height - 4, stroke: "var(--line)" }));
+    svg.append(make("text", { x: x(tick), y: 10, "text-anchor": "middle" }, String(tick)));
+  }
+  rows.forEach((one, i) => {
+    const cy = 22 + i * step + step / 2, a = one.A.quality, b = one.B.quality;
+    const g = make("g", {});
+    g.append(make("line", { x1: x(a), x2: x(b), y1: cy, y2: cy, stroke: a > b ? "var(--side-a)" : a < b ? "var(--side-b)" : "var(--faint)", "stroke-width": 2, opacity: .7 }));
+    g.append(make("circle", { cx: x(a), cy, r: Math.min(5, step / 2.4), fill: "var(--side-a)" }));
+    g.append(make("circle", { cx: x(b), cy, r: Math.min(5, step / 2.4), fill: "var(--side-b)" }));
+    if (step >= 14) g.append(make("text", { x: left - 6, y: cy + 4, "text-anchor": "end" }, String(i + 1)));
+    g.append(make("title", {}, `${i + 1}. ${(one.question || "").slice(0, 120)} — A ${fmt(a, 2)}, B ${fmt(b, 2)}`));
+    svg.append(g);
+  });
+  return el("div", { class: "scroll", style: "margin:10px 0 4px" }, svg);
+}
+
+// --- the left: what to do now ---------------------------------------------------------------
+
+function drawAction() {
+  if (!key || !visual) return $("action").replaceChildren();
+  const instruction = (visual.words.instructions || {})[S.stage] || "";
+  const ready = !whyNot();
+  $("action").replaceChildren(el("div", { class: "ask" }, S.stage === "testing" ? "Testing" : S.stage === "tested" ? "Compared" : "Choosing"),
+    el("div", { class: "small", html: md(instruction) }),
+    el("div", { class: "buttons" },
+      el("button", { type: "button", class: "primary", onclick: startTest, disabled: busy || !ready }, "Test both blends"),
+      el("button", { type: "button", class: "sm ghost", onclick: () => undoLast(), disabled: busy || !undo.length }, "Undo")),
+    el("p", { class: "help" }, words("hint")));
+}
+
+// --- the chat ---------------------------------------------------------------------------------
+
+function agentChoice() {
+  return { provider: $("provider").value, model: $("model").value.trim() || undefined,
+           base_url: $("baseUrlRow").hidden ? undefined : ($("baseUrl").value.trim() || undefined),
+           conversation: S.conversation };
+}
+
+function chatContext() {
+  if (!S.duel) return {};
+  const side = (one) => one && one.report ? { formula: one.report.formula, mean: one.report.blend_mean } : { status: one && one.status };
+  const duel = S.duel.head_to_head;
+  return { result: { A: side(S.duel.A), B: side(S.duel.B),
+                     head_to_head: duel ? { a_wins: duel.a_wins, ties: duel.ties, b_wins: duel.b_wins, p: duel.p, a_is: duel.a_is } : null } };
+}
+
+async function send(text) {
+  userSays(text);
+  let wantsTest = false;
+  await step(async () => {
+    const before = { A: JSON.stringify(blendOf("A")), B: JSON.stringify(blendOf("B")) };
+    const reply = await api("POST", "/agent/compare/chat", {
+      agent: agentChoice(), message: text, stage: S.stage, session: session(), context: chatContext(),
+      history: pastTurns().slice(0, -1) });
+    for (const done of reply.steps || []) toolMarker(done);
+    if (reply.session) {
+      for (const side of SIDES) {
+        if (JSON.stringify(reply.session.blends[side]) !== before[side]) {
+          undo.push({ side, blend: before[side] });
+          if (S.selected && S.selected.side === side) S.selected = null;
+        }
+      }
+      S.session = reply.session;
+      $("mock").checked = S.session.mock; drawChip();
+      if (S.session.questions && S.session.questions.given && !S.given) S.session.questions = null;
+    }
+    if (reply.checks) S.checks = { A: reply.checks.A, B: reply.checks.B };
+    agentSays(reply.message);
+    linkToBlends();
+    save(); drawBoard();
+    wantsTest = (reply.actions || []).some((action) => action.type === "test");
+  });
+  if (wantsTest) startTest();
+}
+
+// --- the model the guide talks through: the guide's own picker -------------------------------
+
+function fillProviders() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem("gep-agent-agent") || "null") || {}; } catch (_) { /* private mode */ }
+  $("provider").replaceChildren(...config.providers.map((p) =>
+    el("option", { value: p.name }, p.label + (p.ready ? "" : ` — needs ${p.key_env}`))));
+  $("provider").value = config.providers.some((p) => p.name === saved.provider) ? saved.provider : config.default.provider;
+  $("model").value = saved.provider === $("provider").value ? (saved.model || "") : (config.default.model || "");
+  $("baseUrl").value = saved.provider === $("provider").value ? (saved.base_url || "") : "";
+  $("mock").checked = Boolean(S.session.mock);
+  providerChanged(false);
+}
+
+function provider() { return config.providers.find((p) => p.name === $("provider").value); }
+
+function providerChanged(clear = true) {
+  const p = provider();
+  if (clear) { $("model").value = ""; $("baseUrl").value = ""; }
+  $("baseUrlRow").hidden = !(p.local && p.kind === "openai");
+  $("baseUrl").placeholder = p.base_url || "";
+  $("model").placeholder = p.model ? p.model : p.kind === "scripted" ? "no model" : "the first model it lists";
+  $("model").disabled = p.kind === "scripted";
+  $("refreshModels").disabled = p.kind === "scripted";
+  rememberAgent();
+  loadModels();
+}
+
+// The same choice the other guides remember, so every guide talks through one model.
+function rememberAgent() {
+  try { localStorage.setItem("gep-agent-agent", JSON.stringify({ provider: $("provider").value, model: $("model").value.trim(), base_url: $("baseUrl").value.trim() })); } catch (_) { /* private mode */ }
+  drawChip();
+}
+
+let modelState = { ok: null, text: "" };
+async function loadModels() {
+  const p = provider();
+  if (p.kind === "scripted") { modelState = { ok: true, text: "The guide uses its built-in wording; no model is asked." }; return drawChip(); }
+  if (!p.ready) { modelState = { ok: false, text: `Set ${p.key_env} in the environment the API server runs in, then restart it. Until then the guide uses its built-in wording.` }; return drawChip(); }
+  modelState = { ok: null, text: "Asking for its models…" }; drawChip();
+  const query = new URLSearchParams({ provider: p.name });
+  if (!$("baseUrlRow").hidden && $("baseUrl").value.trim()) query.set("base_url", $("baseUrl").value.trim());
+  try {
+    const reply = await api("GET", "/agent/models?" + query);
+    $("modelList").replaceChildren(...reply.models.map((m) => el("option", { value: m })));
+    const using = $("model").value.trim() || reply.default || reply.models[0];
+    modelState = { ok: true, using, text: `${reply.models.length} model(s) at ${reply.base_url}.` + (using ? ` Talking to ${using}.` : "") };
+  } catch (error) {
+    modelState = { ok: false, text: error.message + " — the guide falls back to its built-in wording." };
+  }
+  drawChip();
+}
+
+function drawChip() {
+  const p = config && provider();
+  if (!p) return;
+  const model = $("model").value.trim() || (p.kind === "scripted" ? "" : modelState.using || p.model || "auto");
+  $("modelChip").querySelector("span").textContent = p.label.replace(/ \(.*\)$/, "") + (model ? " · " + model : "");
+  $("modelChip").className = "sm ghost model-chip " + (modelState.ok === true ? "up" : modelState.ok === false ? "down" : "");
+  $("modelChip").title = modelState.text;
+  $("providerHelp").textContent = modelState.text;
+  $("providerHelp").className = "help" + (modelState.ok === false ? " error" : "");
+  $("mockTag").hidden = !$("mock").checked;
+}
+
+// --- key, start ---------------------------------------------------------------------------------
+
+function keyGate(message) {
+  clearTimeout(pollTimer);
+  $("action").replaceChildren();
+  $("transcript").replaceChildren(el("div", { class: "gate" },
+    el("h3", {}, "Hi! Let's get you connected"),
+    el("p", { class: "muted" }, "I compare blends of your own LoRAs through this server's API, so I need your API key. Create one on the server with ",
+      el("code", {}, "python -m gep_lora.service.users add <name>"), "."),
+    el("form", { onsubmit: (e) => { e.preventDefault(); useKey($("keyInput").value.trim()); } },
+      el("label", { for: "keyInput" }, "API key"),
+      el("div", { style: "display:flex;gap:8px" },
+        el("input", { id: "keyInput", type: "password", autocomplete: "off", placeholder: "paste it here" }),
+        el("button", { class: "primary", type: "submit" }, "Connect"))),
+    el("p", { class: message ? "help error" : "help" }, message || "It is kept in this browser only, shared with the other pages.")));
+  $("composer").hidden = true;
+  $("changeKey").hidden = true;
+  key = ""; visual = null;
+  drawBoard();
+  setTimeout(() => $("keyInput") && $("keyInput").focus(), 0);
+}
+
+async function useKey(value) {
+  key = value;
+  if (!key) return keyGate("Paste a key first.");
+  try {
+    [config, visual] = await Promise.all([api("GET", "/agent/config"), api("GET", "/agent/compare/config")]);
+  } catch (error) {
+    key = "";
+    return keyGate(error.status === 401 ? "That key is not known to this server." : error.message);
+  }
+  try { helpBlocks = (await api("GET", "/agent/help")).blocks || {}; } catch (_) { helpBlocks = {}; }
+  $("guideHelp").replaceChildren(...[qm("compare_guide", "Your guide")].filter(Boolean));
+  rememberKey(key);
+  $("changeKey").hidden = false;
+  $("composer").hidden = false;
+  const saved = recall(sessionName(), true);
+  if (saved && saved.transcript && saved.transcript.length) {
+    S = Object.assign(fresh(), saved);
+    S.session = Object.assign(fresh().session, S.session || {});
+    // Each side filled out too: a session saved before a field existed has none.
+    const sides = S.session.blends || {};
+    S.session.blends = { A: Object.assign(emptySide(), sides.A || {}), B: Object.assign(emptySide(), sides.B || {}) };
+  } else {
+    S = fresh();
+  }
+  undo = [];
+  fillProviders();
+  drawTranscript(); drawAction(); drawBoard();
+  SIDES.forEach((side) => scheduleCheck(side, true));
+  loadSources();
+  if (S.tests) { if (S.stage === "testing") marker("reconnected — watching the tests again"); poll(); }
+  await openLinked();
+  if (!S.transcript.length) intro();
+}
+
+// The address says which blends are on screen (?a=JOB.N&b=JOB.N, as opened
+// from a job), so a reload, a bookmark or a shared link brings them back.
+function linkToBlends() {
+  const url = new URL(location.href);
+  for (const side of SIDES) {
+    const from = blendOf(side).from, name = side.toLowerCase();
+    if (from) url.searchParams.set(name, `${from.job}.${from.individual}`); else url.searchParams.delete(name);
+  }
+  if (url.href !== location.href) history.replaceState(null, "", url);
+}
+
+async function openLinked() {
+  const query = new URLSearchParams(location.search);
+  for (const side of SIDES) {
+    const wanted = (query.get(side.toLowerCase()) || "").match(/^(\d+)(?:\.(\d+))?$/);
+    if (!wanted) continue;
+    const [job, number] = [Number(wanted[1]), wanted[2] ? Number(wanted[2]) : null];
+    const from = blendOf(side).from;
+    if (from && from.job === job && (number === null || from.individual === number)) continue;
+    try { await openBlend(side, job, number); }
+    catch (error) { agentSays(plain(error.status === 404 ? `There is no job ${job} of yours to open into ${side}.` : `${side}: ${error.message}`)); }
+  }
+  linkToBlends();
+}
+
+function intro() {
+  step(async () => {
+    const reply = await api("POST", "/agent/compare/intro", { agent: agentChoice(), session: session() });
+    agentSays(reply.message);
+  });
+}
+
+function startOver() {
+  clearTimeout(pollTimer);
+  S = fresh();
+  picking = { A: null, B: null };
+  S.session.mock = $("mock").checked;
+  undo = [];
+  linkToBlends();
+  save(); drawTranscript(); drawAction(); drawBoard();
+  SIDES.forEach((side) => scheduleCheck(side, true));
+  intro();
+}
+
+$("composer").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("say").value.trim();
+  if (!text || busy || !config) return;
+  $("say").value = ""; $("say").style.height = "";
+  send(text);
+});
+$("say").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("composer").requestSubmit(); } });
+$("say").addEventListener("input", () => { $("say").style.height = ""; $("say").style.height = Math.min(140, $("say").scrollHeight) + "px"; });
+$("modelChip").addEventListener("click", () => { $("settings").hidden = !$("settings").hidden; });
+$("provider").addEventListener("change", () => providerChanged(true));
+$("model").addEventListener("change", () => { rememberAgent(); loadModels(); });
+$("baseUrl").addEventListener("change", () => { rememberAgent(); loadModels(); });
+$("refreshModels").addEventListener("click", loadModels);
+$("mock").addEventListener("change", () => { S.session.mock = $("mock").checked; save(); drawChip(); drawBoard(); });
+$("restart").addEventListener("click", () => { if (!busy) startOver(); });
+$("changeKey").addEventListener("click", () => keyGate());
+
+// The keyboard, when no field has it: Delete empties the place selected, Ctrl+Z undoes, Esc lets go.
+document.addEventListener("keydown", (e) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "");
+  if (typing || !visual) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undoLast(S.selected ? S.selected.side : null); }
+  else if ((e.key === "Delete" || e.key === "Backspace") && S.selected) { e.preventDefault(); clearPlace(S.selected.side, S.selected.path); }
+  else if (e.key === "Escape") { S.selected = null; flashText = { A: "", B: "" }; drawBoard(); }
+});
+
+const stored = recallKey();
+if (stored) useKey(stored); else keyGate();
+</script>
+</body>
+</html>

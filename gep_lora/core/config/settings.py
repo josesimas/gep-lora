@@ -1,0 +1,716 @@
+"""
+settings.py - The knobs for a complete run, in one place.
+
+gep_lora/core/pipeline/start_run.py reads this module. Keeping the values here rather than at the top of it
+means there is no second copy to drift, and it is what lets a sweep record the
+settings it ran under without listing them by hand -- snapshot() takes every
+upper-case name below, so a knob added here is a knob stored there.
+
+Change a value and re-run; nothing else needs editing.
+"""
+
+# --- the population --------------------------------------------------------
+
+# How many individuals the population holds.
+COUNT = 8
+
+# Seed for the population draw. An int repeats the same population every run;
+# None grows a fresh one each time -- and, since a sweep records what it drew,
+# even that stays repeatable afterwards. Note this is separate from the LoRA
+# blend weights each individual is evaluated under -- those come from
+# WEIGHT_MASTER_SEED below.
+SEED = None
+
+# Reject duplicate chromosomes when building the population.
+UNIQUE = True
+
+# Deepest level an operator may sit at, and the chance an operator is arity 2
+# and keeps the branch growing -- the shape a population is drawn with, recorded
+# alongside the rest so a stored sweep says what shape that was.
+MAX_DEPTH = 4
+BRANCH_PROB = 0.2
+
+# The chance a drawn tree is a single LoRA and nothing else (`L3.w2`) rather
+# than a CAT, SVD or LIN with a tree under it. The root may be any operator;
+# this keeps lone adapters a minority of the draw, since there are only as many
+# of them as there are slots. Its weight is not applied: with no fold above it,
+# a lone adapter runs at full strength.
+ROOT_LEAF_PROB = 0.1
+
+# --- continuing a sweep ----------------------------------------------------
+
+# How many generations gep_lora/core/pipeline/continue_run.py runs when it is not told otherwise. One
+# generation is trees -> runs -> process -> evaluate -> fitness -> elitism ->
+# selection -> mutation -> weight_mutation over the population already in the
+# database.
+#
+# Mind what this costs: process loads the base model once per individual, and
+# every generation is the whole population again -- and it is the same size
+# every generation, since selection culls as many individuals as it appends.
+# SELECTION_COUNT changes the turnover inside the population rather than the
+# size of it.
+GENERATIONS = 5
+
+# --- where things go -------------------------------------------------------
+
+# Where the generated scripts go, and the database itself, relative to this file.
+#
+# This folder must stay exactly one level below the project folder: a generated
+# script finds the LoRA folders by going up one from its own directory, so a
+# deeper path breaks every one of them. Siblings are fine; subfolders are not.
+# (The eval prompts no longer come into it -- TRAINING_SET below is resolved at
+# generation time and stamped into each script as an absolute path.)
+DB_RUN_DIR = "run_db"
+DB_PATH = "run_db/gep.sqlite3"
+
+# Where test_run_with_dataset.py puts the scripts it runs against a dataset the
+# sweep was never scored on. A folder of its own, beside run_db/ rather than
+# inside it: those scripts are the sweep's own, re-pointed at other questions,
+# and finding one in run_db/ later would be finding a script that answers
+# something other than what its name says. Same rule as DB_RUN_DIR -- exactly
+# one level below the project folder, or the LoRA paths inside it break.
+TESTING_RUN_DIR = "run_testing"
+
+# The eval prompts every generated script is judged on, one per line. It lives
+# here rather than in the templates so the eval set can be repointed without
+# editing generated-script code, and so a sweep records which file it was scored
+# against -- the prompts are half of what a fitness number means. A relative
+# path is taken from this file's folder, like DB_RUN_DIR above; an absolute one
+# is used as it stands, so the file need not sit in the project folder at all.
+# generate_runs.py resolves it and stamps the result into each script, so a
+# script no longer has to find this file by walking up from itself.
+TRAINING_SET = "datasets/medical_testing_lora_dataset.json"
+
+# How many records of TRAINING_SET each run is judged on. The first
+# TRAINING_COUNT of them, in file order, or the whole file when it holds fewer
+# -- and None for no cap at all, which is every record.
+#
+# The top N rather than a sample of N, and the same N for everyone: fitness only
+# compares across individuals because they all answered the same questions, so a
+# per-individual draw would make two scores incomparable and a re-run of one
+# individual incomparable with itself. File order is already arbitrary; taking a
+# prefix of it keeps that arbitrariness fixed instead of adding a second source
+# of it.
+#
+# This is the cheapest knob in the file: worth turning down while iterating and
+# back up for a real search, remembering that a short eval set makes a noisier
+# fitness signal. It is not a proportional saving -- a script answers its
+# prompts ANSWER_BATCH at a time in one generate() call, and a call reads the
+# weights once whatever it is answering, so five prompts cost nothing like five
+# times one. Past ANSWER_BATCH it does start costing another call.
+TRAINING_COUNT = 20
+
+# The other two splits of the same dataset, recorded beside the training one.
+#
+# Nothing in the search reads these yet -- fitness is earned on TRAINING_SET
+# alone -- but a sweep saves every split it is given into the database's
+# `datasets` table at the moment it is created, so the questions a later
+# validation or test pass would use are stored with the sweep that will be
+# judged on them rather than left to whatever the files happen to hold by then.
+# Same path rule as TRAINING_SET: relative to this file's folder, absolute used
+# as it stands. None means that split is simply not part of this sweep.
+#
+# Point them at the siblings of whatever TRAINING_SET names, e.g.
+#     VALIDATION_SET = "datasets/medical_validation_lora_dataset.json"
+#     TESTING_SET    = "datasets/medical_testing_lora_dataset.json"
+# and mind that they have to be splits of the same dataset -- a validation set
+# from another task would be recorded as this sweep's, and mean nothing.
+VALIDATION_SET = None
+TESTING_SET = "datasets/medical_validation_lora_dataset.json"
+
+# How good an individual has to have been on the training split before
+# test_run_with_dataset.py will spend a base-model load asking it the testing
+# questions. Mean quality over its most recent execution, strictly above this;
+# --min-quality overrides it for one pass. Turning it down tests more of the
+# population and costs one model load per extra individual; 0 tests everything
+# that ever answered anything.
+TESTING_MIN_QUALITY = 0.5
+
+# How many records of TESTING_SET the testing pass asks: the first N, in file
+# order, or None for every one of them. TRAINING_COUNT's rule for the other
+# split, and kept apart from it -- the testing set is asked once per individual
+# worth testing rather than once a generation, so it can usually afford to be
+# asked whole. --count overrides it for one pass.
+TESTING_COUNT = None
+
+
+
+# --- the adapters being blended --------------------------------------------
+
+# The model every one of the five adapters was trained on, and the model the
+# generated scripts load before attaching anything -- it reaches them through a
+# marker, like the slots below, so there is one copy of the name rather than one
+# per template. Change it only alongside adapters trained on the same base:
+# PEFT loads a LoRA against the model its adapter_config.json names.
+#
+# It is also the identity of the "llm_judge_baseline" evaluator's cached
+# base-model answers: those are stored under this name, so repointing this at
+# another model asks for that model's own baseline rather than reusing the old
+# one's.
+#BASE_MODEL = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
+BASE_MODEL = "unsloth/Qwen3.5-0.8B" #Qwen2.5-0.5B-Instruct-bnb-4bit
+
+# The chat template every prompt is written in -- by the generated scripts, the
+# lora servers and the baseline control alike, so a blend and its control are
+# always asked in the same words. None uses BASE_MODEL's own template, the one
+# shipped in its repo; a name ("qwen-2.5", "llama-3.1", ...) swaps in unsloth's
+# template of that name instead.
+#
+# None is the right answer for any model with a template of its own, and the
+# adapters must have been trained under the same one (create_lora.py
+# --chat-template): an adapter answers in the format it learned, and a base model
+# prompted in a format it was not built for does not behave as itself --
+# Qwen3.5 under "qwen-2.5" loses the empty <think> block its own template writes,
+# and reasons out loud until the length cap. For the Qwen2.5 repos the two are
+# byte-identical.
+#
+# Before this was a setting every template hardcoded "qwen-2.5", so a stored
+# sweep that never recorded it keeps getting "qwen-2.5"
+# (generate_runs.chat_template_name). It is part of what a baseline answer
+# means, so the llm_judge_baseline cache is keyed on it as well as on the model.
+CHAT_TEMPLATE = None
+
+# Where each of the LoRAs the trees refer to lives -- the search space
+# itself, so it belongs with the rest of the knobs rather than in the templates:
+# repoint a slot here and both templates follow, and the sweep records which
+# adapters its fitness numbers were earned on.
+#
+# From one to ten slots, named L1..Ln with no gap (MAX_SLOTS in
+# gep_lora/core/search/generate_population.py). How many there are is how many the search
+# draws from: a sweep with n slots only ever holds L1..Ln and w1..wn, so add
+# "L6": ..., "L7": ... here to widen it. A sweep stored with five keeps five.
+#
+# One independent entry per slot. A relative path is taken from this file's
+# folder; an absolute one is used as it stands. Anything that is neither -- a
+# Hub repo id, say -- is passed through untouched, which is as far as that has
+# ever worked: every rank check reads the adapter's own adapter_config.json off
+# disk. generate_runs.py resolves these once and writes the result into each
+# generated script, so a script carries real paths rather than working them out
+# from where it happens to sit.
+#
+# These five were trained at different ranks (r=16, 16, 8, 4, 32), which the
+# code handles -- nothing assumes they match, because PEFT's cat sums input
+# ranks, svd takes the max, and linear refuses inputs whose ranks differ.
+LORA_SLOTS = {
+    "L1": "loras/Lora001/0.8b_own_template_lora_adapter",
+    "L2": "loras/Lora002/0.8b_own_template_lora_adapter",
+    "L3": "loras/Lora003/0.8b_own_template_lora_adapter",
+    "L4": "loras/Lora004/0.8b_own_template_lora_adapter",
+    "L5": "loras/Lora005/0.8b_own_template_lora_adapter",
+}
+
+
+# --- the generated scripts -------------------------------------------------
+
+# Which template generate_runs.py fills. None means its own default,
+# template_code.py -- the real thing. Set it to "template_code_mocked.py" for a
+# dry run: same trees, same ranks, same BAD verdicts, but no model load, random
+# answers, and scores that arrive with the transcript, so the whole pipeline
+# finishes in seconds on a machine with no GPU and no judge running. Mocked
+# scores are noise; never read one as a result.
+#
+# "template_remote_code.py" is the third: the same script, but the blend is
+# built on a lora_server.py process that already has the base model open, so
+# the import and the model load -- about 54% of what a script costs on this
+# machine -- are paid once per step instead of once per individual. This one
+# line is the whole switch: the process step notices what kind of scripts a
+# sweep holds and starts a pool of servers or does not, and everything else
+# about a sweep (one script per individual, one execution, the transcript on
+# stdout, the phase timings) is identical either way. See LORA_SERVER_* below.
+TEMPLATE = "template_remote_code.py"
+
+# --- the lora servers, for TEMPLATE = "template_remote_code.py" -------------
+#
+# Read only when the scripts a sweep holds are lora_server clients -- a sweep
+# generated from either of the other templates ignores every one of these, so
+# switching back is the same one line switching forward was.
+
+# How many servers the process step starts, each holding its own copy of the
+# base model. It also caps the batch: the k-th script of a batch talks to the
+# k-th server, so a run never has more scripts in flight than there are servers
+# to serve them, whatever PROCESS_RUN_BATCH_SIZE says.
+#
+# The cost is the one a batch always had -- N servers is N copies of the model
+# resident together -- but it is now paid once per driver rather than once per
+# individual: the servers stay up across generations, and only come down early
+# when JUDGE_BACKEND = "unsloth" means the evaluate step wants the card for a
+# judge of its own. Measured on one card (gep_lora/tools/compare_servers.py): 1 -> 2
+# servers gave 1.64x throughput and -16% on the process step; 2 -> 4 gave only
+# 1.29x and -4%, at +23% per individual. A warm server has already removed the
+# CPU-bound import and load that used to overlap well, and what is left is
+# GPU-bound, so past two the servers mostly time-share. Two is the sweet spot.
+LORA_SERVER_COUNT = 2
+
+# Where they listen. Consecutive ports from LORA_SERVER_PORT, one per server,
+# on an interface that should stay local: these speak no authentication and
+# will load any adapter folder they are handed.
+LORA_SERVER_HOST = "127.0.0.1"
+LORA_SERVER_PORT = 8770
+
+# How long to wait for a server to finish loading before giving up on the step,
+# and how long one script waits on one request to it. The first covers a cold
+# model load (a download, on a machine that has never held this model); the
+# second is per build or per batch of answers, so a hung server costs one
+# individual rather than the pass.
+LORA_SERVER_STARTUP_TIMEOUT = 900
+LORA_SERVER_TIMEOUT = 1800
+
+# How many blends one server may build before the pool restarts it between
+# batches. A cold process per individual was a strong guarantee -- every result
+# came from a model that had never seen another blend -- and a warm server is a
+# weaker one: adapters are attached and deleted on a model that stays up, and
+# what a server built before this individual is, in principle, part of what it
+# built for it. This bounds that: the model load is paid again once every N
+# individuals, which keeps most of the saving and puts a number on the drift.
+#
+# 0 never recycles, which is the fastest and the least defensible. Whichever it
+# is set to, every script prints which server built its blend and how many
+# blends that server had built before, so the stdout of a stored execution says
+# where in a server's life it happened.
+LORA_SERVER_RECYCLE_AFTER = 0
+
+# --- the blend weights -----------------------------------------------------
+
+# Where the per-individual weight seeds come from. Each individual's script is
+# stamped with a seed derived from this one and its own number, so it draws the
+# same w1..w10 every time it runs and re-running a stored sweep rebuilds the same
+# blends. An int makes a whole sweep reproducible from the start; None draws a
+# master seed at run time and stores it, which is just as repeatable after the
+# fact -- the value used is written to the run's settings either way.
+WEIGHT_MASTER_SEED = None
+
+# --- selection -------------------------------------------------------------
+
+# Where the roulette wheel's spins come from. Each application of the selection
+# step derives its own generator from this seed and the size of the population
+# it is spinning over, the way each individual derives its weight seed from
+# WEIGHT_MASTER_SEED and its own number: one sweep, one recorded seed, and every
+# draw in it repeatable -- but a second generation still draws its own parents
+# rather than the first one's again. An int makes a sweep reproducible from the
+# start; None draws a master seed at run time and stores it.
+SELECTION_MASTER_SEED = None
+
+# How many copies a round of selection appends. It also draws one newcomer and
+# culls that many again -- n+1 in, n+1 out -- so the population stays the size
+# COUNT drew it at and this sets the turnover instead: at 2, three individuals
+# in and three out a generation. None is the exception, asking for as many
+# copies as the population holds, which is one more than the cull can take, so
+# it is the only value that still grows the population.
+SELECTION_COUNT = 2
+
+
+# --- mutation --------------------------------------------------------------
+
+# The chance each symbol of a chromosome is replaced by another of its own kind
+# -- per symbol, not per chromosome, so an eleven-symbol individual at 0.1
+# expects about one change and may well come through untouched. A symbol only
+# ever becomes one of its own class (CAT/SVD/LIN, L1-Ln, w1-wn, n the slots LORA_SLOTS names) and the root is
+# never touched, which is what keeps every mutated chromosome readable; 0.0
+# turns mutation off without removing the step.
+MUTATION_RATE = 0.1
+
+# Where the mutation dice come from, on the same terms as the two seeds above:
+# an int makes a sweep reproducible from the start, None draws one at run time
+# and records it.
+MUTATION_MASTER_SEED = None
+
+# --- weight mutation -------------------------------------------------------
+
+# The share of the population's weights (the w1-wn symbols, one per blended
+# adapter) moved each round -- a count over all of them, not a chance per
+# weight. Every non-elite individual's weights go into one pool and
+# round(rate * pool) of them are drawn and swapped for a different w, so ten
+# weights at 0.1 is exactly one change. The elite's weights are never in the
+# pool; 0.0 turns the step off without removing it.
+WEIGHT_MUTATION_RATE = 0.1
+
+# Where that draw comes from, on the same terms as the seeds above.
+WEIGHT_MUTATION_MASTER_SEED = None
+
+# --- running the generated scripts -----------------------------------------
+
+# How many generated scripts the process step keeps in flight at once. The
+# scripts are launched in batches of this size and a batch is waited out before
+# the next one starts, so this is a fixed ceiling on concurrency rather than a
+# queue that refills: a batch takes as long as its slowest member.
+#
+# 1 is the old behaviour, one script at a time. Anything higher trades memory
+# for wall clock, and the trade is steep for a real run: every script loads the
+# base model into its own process, so a batch of N is N copies of the model
+# resident at the same time. Set this to what the GPU can actually hold -- an
+# individual that runs out of memory is recorded as a failed execution like any
+# other, so an over-large batch does not stop a sweep, it quietly fills it with
+# failures. Mocked runs (TEMPLATE = "template_code_mocked.py") load nothing and
+# can go much higher.
+#
+# The scripts in a batch share the run folder as their working directory, so
+# they also share the caches unsloth drops there.
+PROCESS_RUN_BATCH_SIZE = 4
+
+# How often a running script says where it has got to, in seconds. A generated
+# script prints nothing at all while it loads the base model and then one
+# question-and-answer pair per eval prompt, so left to itself the console shows
+# a long hang and then a wall of transcript. The process step reads that output
+# as it arrives and reports a line for that script every so often instead: the
+# prompt it is on, or that it is still loading.
+#
+# This is the cadence, not the detail. Milestones -- the model coming ready, the
+# last prompt starting -- are one line each and are always said; the running
+# count waits for this many seconds to have passed since that script last said
+# anything, so a fifty-prompt run speaks a handful of times rather than fifty.
+# Turn it down to watch a run closely, up for a quieter log, and to 0 for the
+# milestones alone. The transcript itself is never echoed -- it goes to the
+# database, and store.py --show reads it back.
+PROCESS_RUN_PROGRESS_SECONDS = 5
+
+
+# --- how an answer is scored -----------------------------------------------
+
+# Which evaluator the evaluate step uses. One name, out of the registry in the
+# evaluators package -- one module per evaluator, plus gep_lora/core/evaluators/common.py:
+#
+#   "llm_judge"            a judge model grades the answer on its own merits.
+#                          Needs an endpoint. The original behaviour, and the
+#                          default a sweep created before this setting existed
+#                          is read back under.
+#   "llm_judge_reference"  the same judge, shown the answer the dataset carries
+#                          for that question as well. Needs an endpoint and a
+#                          dataset with assistant turns. This is the one that
+#                          can see *style*: a judge grading on merit alone
+#                          happily rewards a helpful prose answer from a blend
+#                          that was supposed to rhyme.
+#   "llm_judge_answers"    the same two answers as "llm_judge_reference" --
+#                          the dataset's and the blend's -- and *not* the
+#                          question. Needs an endpoint and a dataset with
+#                          assistant turns. A judge that can see the question
+#                          quietly grades merit as well as manner; with only
+#                          the two answers in front of it the score is
+#                          agreement with the reference and nothing else.
+#   "llm_judge_baseline"   the same judge, shown what the *base model* replied
+#                          to the same question as well, and asked how much the
+#                          blend improved on it. Needs an endpoint, and one run
+#                          of the base model over the eval set -- cached in the
+#                          database the first time and read from there ever
+#                          after. This is the one that scores what this search
+#                          is actually for: 0.5 means the blend changed nothing
+#                          worth having, above it means it helped, below it
+#                          means it did harm.
+#   "similarity"           token or character overlap with the dataset's answer.
+#                          No endpoint, deterministic, free -- and a measure of
+#                          agreement with one particular answer rather than of
+#                          quality.
+#   "heuristic"            local checks: length, repetition, a pattern the
+#                          answer must or must not match. No endpoint. Measures
+#                          whether an answer is malformed, not whether it is
+#                          good.
+#   "panel"                several judge models, aggregated. Less noise per
+#                          score, N times the cost.
+#   "composite"            several of the evaluators above, their scores
+#                          combined -- mean, median, min, max, geometric,
+#                          harmonic, trimmed mean (COMPOSITE_*).
+#
+# Like every setting here, this is frozen into a sweep when it starts: changing
+# it does nothing to a sweep already running, which is what keeps every fitness
+# number in one sweep comparable with the others. `python start_run.py --evaluators`
+# lists what is registered.
+EVALUATOR = "llm_judge_answers"
+
+
+# --- the judge model, for the evaluators that ask one -----------------------
+#
+# Read by "llm_judge", "llm_judge_reference", "llm_judge_answers",
+# "llm_judge_baseline", and by
+# "panel" for everything except which models sit on it. The API key is deliberately *not* here: a sweep
+# writes its settings into the database, so the key is read from the
+# JUDGE_API_KEY environment variable by gep_lora/core/evaluators/common.py instead.
+
+# How the judge is reached. Two transports, one instrument: the rubrics, the
+# retries, the abandon rule and the way a score is read out of the reply are
+# shared, so which one a sweep used changes where the tokens came from and
+# nothing else about the number.
+#
+#   "endpoint"  POST to an OpenAI-compatible /v1/chat/completions. Needs a
+#               server up -- LMStudio, vLLM, OpenAI, OpenRouter -- at
+#               JUDGE_BASE_URL, and nothing of this machine's GPU.
+#   "unsloth"   load JUDGE_MODEL in the evaluate step's own process, exactly as
+#               the generated scripts load the model they blend, and generate
+#               the grading there. Needs no server at all, so a whole sweep runs
+#               on this repo and a GPU -- and needs the venv one level up, the
+#               same interpreter the process step already demands.
+#
+# What the local backend costs: the judge is loaded once per evaluate step, on
+# the first answer it grades rather than while preparing (llm_judge_baseline
+# runs the base model while preparing, and the two should not be on the card at
+# once), and released the moment the step is done -- gep_lora/core/pipeline/main.py goes straight into
+# the next generation, whose scripts each want the VRAM back.
+JUDGE_BACKEND = "endpoint"
+
+# Where the judge lives, for JUDGE_BACKEND = "endpoint". The default is the
+# local LMStudio instance; its API is OpenAI-compatible, so a cloud endpoint is
+# a drop-in replacement:
+#   OpenAI      https://api.openai.com/v1
+#   OpenRouter  https://openrouter.ai/api/v1
+#   vLLM        http://<host>:8000/v1
+# Claude is not OpenAI-compatible; using a Claude model as the judge needs a
+# separate backend through the anthropic SDK. Ignored by the unsloth backend,
+# which has no endpoint to point at.
+JUDGE_BASE_URL = "http://192.168.1.61:1234/v1"
+
+# Which model does the grading, and what is stored on every exchange it grades.
+# On the endpoint backend, None asks the endpoint what it has loaded, which is
+# what you want with LMStudio; name it explicitly for a cloud model. On the
+# unsloth backend it is a Hub repo id or a folder and it has to be named -- a
+# machine cannot be asked what it has loaded, and falling back to BASE_MODEL
+# would leave the model under test grading its own descendants. An
+# unsloth-quantised instruct model loads fastest, e.g.
+# "unsloth/qwen2.5-7b-instruct-unsloth-bnb-4bit".
+JUDGE_MODEL = None
+
+# Grading should be repeatable, so keep the temperature at zero.
+JUDGE_TEMPERATURE = 0.0
+
+# The judge emits a short JSON object, but reasoning models spend tokens
+# thinking first and return an empty message if they run out mid-thought, so
+# this needs far more headroom than the answer itself requires.
+JUDGE_MAX_TOKENS = 2000
+
+# Whether a reasoning judge thinks before it grades. None leaves it to the
+# model; False asks it not to, which on a reasoning model is most of the
+# grading time (251 tokens -> 4 for one short answer on LM Studio); True asks
+# it to. On an endpoint this is `reasoning_effort` ("none" / "medium") -- the
+# one control LM Studio honours -- dropped and retried without if the endpoint
+# refuses it; on the unsloth backend it is the chat template's enable_thinking.
+JUDGE_THINKING = None
+
+# Seconds to wait for one grading call, how many times to retry a call that
+# fails for a transient reason (connection dropped, 5xx, rate limit), and how
+# long to wait between tries.
+JUDGE_TIMEOUT = 300
+JUDGE_RETRIES = 2
+JUDGE_RETRY_WAIT = 3
+
+# Ask for a JSON object back. None for an endpoint that rejects the parameter --
+# the prompt asks for JSON anyway, and a 400 falls back to that by itself.
+# Endpoint backend only: a local judge is asked for JSON by the rubric, and
+# parse_reply() recovers a score from prose either way.
+JUDGE_RESPONSE_FORMAT = {"type": "json_object"}
+
+
+# --- the local judge, for JUDGE_BACKEND = "unsloth" -------------------------
+#
+# Only these three are the local backend's own. Everything else about grading --
+# which model (JUDGE_MODEL), how hot (JUDGE_TEMPERATURE), how many tokens it may
+# spend (JUDGE_MAX_TOKENS), how many tries (JUDGE_RETRIES) and when to give up
+# on an individual (JUDGE_ABANDON_FRACTION) -- is read the same way whichever
+# backend is in use. JUDGE_BASE_URL, JUDGE_TIMEOUT, JUDGE_RESPONSE_FORMAT and
+# $JUDGE_API_KEY are the endpoint's, and are ignored here.
+
+# The context window the judge is loaded with. It has to hold the rubric, the
+# question and the answer, and for "llm_judge_reference" and
+# "llm_judge_baseline" a second answer beside it, plus JUDGE_MAX_TOKENS of
+# reply. A prompt over this is that one answer's failure, not the step's.
+JUDGE_LOCAL_MAX_SEQ_LENGTH = 4096
+
+# Load the judge quantised. True is what makes a second model fit beside
+# everything else this pipeline wants from the card; False for a judge whose
+# grading you want at full precision, and the VRAM to spare.
+JUDGE_LOCAL_LOAD_IN_4BIT = True
+
+# Which chat template to format the rubric and the answer under. None uses the
+# model's own, which is what a stock instruct model ships and what it was
+# trained to answer under. Name one unsloth knows ("qwen-2.5", "llama-3.1",
+# ...) only for a model whose tokeniser carries none, or carries a wrong one.
+JUDGE_LOCAL_CHAT_TEMPLATE = None
+
+# When to stop grading an individual that is going nowhere. A judge call is the
+# expensive part of a sweep, and an individual whose *first* graded answers all
+# come back 0.0 is one the search has already decided against: the rest of its
+# answers cost a call each to confirm a fitness of zero. This is the fraction of
+# an individual's answers that has to be graded, and to be unanimously zero,
+# before the evaluate step gives up on it -- 0.1 is "the first 10%", rounded up,
+# and never fewer than one answer. The abandoned answers are stored as 0.0 with
+# a reason saying so, so the individual's fitness really is the mean of its own
+# scores, and a re-run does not ask about them again.
+#
+# Only the evaluators that ask a model (llm_judge, llm_judge_reference,
+# llm_judge_answers, llm_judge_baseline, panel) abandon anything, whichever
+# backend they ask it
+# through -- a local *scorer* like "similarity" costs nothing to finish, and
+# cutting it short would only lose detail.
+#
+# Mind how sharp this is on a small eval set: with TRAINING_COUNT = 10 the first
+# 10% is a single answer, so one zero condemns the individual. 0 or None grades
+# every answer, whatever the early ones say.
+JUDGE_ABANDON_FRACTION = 0.1
+
+# The three judging rubrics used to live here. Each is now a constant in the
+# evaluator that sends it, beside the code that sends it:
+#
+#   JUDGE_SYSTEM_PROMPT            gep_lora/core/evaluators/llm_judge.py
+#   JUDGE_REFERENCE_SYSTEM_PROMPT  gep_lora/core/evaluators/llm_judge_reference.py
+#   JUDGE_BASELINE_SYSTEM_PROMPT   gep_lora/core/evaluators/llm_judge_baseline.py
+#
+# JUDGE_ANSWERS_SYSTEM_PROMPT (gep_lora/core/evaluators/llm_judge_answers.py) was never a
+# setting at all -- that evaluator arrived after the move, so it has no stored
+# value in any sweep to fall back to.
+#
+# "panel" reads the first two as well, and keeps its own copy of each, so its
+# rubrics can be tuned for a panel without moving what the single-judge
+# evaluators select on.
+#
+# They are prompts rather than knobs: one evaluator's own text, which nothing
+# else reads. What that costs is that they are no longer snapshotted into a
+# sweep, so a sweep no longer records the rubric it was judged under. Every
+# reader therefore still lets a sweep's *stored* value win, and a sweep created
+# while these were settings holds its own copies -- so an old sweep goes on
+# being graded by the rubric it actually ran under.
+
+# --- the base-model answers "llm_judge_baseline" grades against -------------
+#
+# Producing them costs one base-model load and one generate() per eval prompt,
+# once. They are then cached in the database under BASE_MODEL and the question,
+# outside any one sweep, so every later sweep on the same base model and the
+# same prompts reads them and loads nothing.
+
+# Which template the one baseline script is filled from. None picks it from the
+# sweep's own TEMPLATE: template_baseline.py for a real sweep, and
+# template_baseline_mocked.py for one generated from template_code_mocked.py,
+# so a mocked sweep still needs no GPU. Mocked baselines are cached apart from
+# real ones -- under "mock:<model>" -- so a dry run can never leave made-up base
+# answers where a real sweep would find them.
+BASELINE_TEMPLATE = None
+
+# Seconds to allow the baseline script. It answers every eval prompt in one
+# process, so give it roughly what one individual gets, times the prompts.
+BASELINE_TIMEOUT = 1800
+
+
+# --- the "jev_judge_reference" evaluator ------------------------------------
+#
+# llm_judge_reference's question -- does the answer match the dataset's own
+# answer in manner and substance -- graded by Jev (typesafe.ai's "System One"
+# model) instead of an LLM. Jev is not read from JUDGE_BACKEND/JUDGE_BASE_URL:
+# it is a different service with a different request shape (a typed decision,
+# not a chat completion), so it gets its own settings. The API key is
+# deliberately not one of them, for the same reason JUDGE_API_KEY isn't: it is
+# read from the TYPESAFE_API_KEY environment variable by
+# gep_lora/core/evaluators/jev_judge_reference.py instead.
+
+# The TypeSafe evaluation endpoint's host. None uses the public API.
+JEV_BASE_URL = None
+
+# Which Jev release grades. "jev-latest" tracks TypeSafe's current stable
+# release; a versioned id (e.g. "jev-1.13.0") pins a sweep to one build.
+JEV_MODEL = "jev-latest"
+
+# Seconds to wait for one grading call, how many times to retry a call that
+# fails for a transient reason (dropped connection, rate limit, the service
+# overloaded), and how long to wait between tries. Jev is small and fast next
+# to a judge model -- TypeSafe's own numbers are on the order of 100ms a call --
+# so this is far shorter than JUDGE_TIMEOUT.
+JEV_TIMEOUT = 30
+JEV_RETRIES = 2
+JEV_RETRY_WAIT = 3
+
+
+# --- the "similarity" evaluator --------------------------------------------
+
+# How an answer is compared with the dataset's answer:
+#   "token_f1"     bag-of-words F1, repeats counted. Balanced: an answer that
+#                  is all reference words plus padding loses precision, one
+#                  that covers half of them loses recall.
+#   "containment"  how much of the reference's vocabulary turns up at all.
+#                  Forgiving about length and about everything else added.
+#   "sequence"     character-level overlap (difflib), so word order and
+#                  phrasing count. The strictest of the three.
+SIMILARITY_METRIC = "token_f1"
+
+# Whether case counts. Off by default, since a lowercase answer to an uppercase
+# reference is usually the same answer -- turn it on for an adapter whose whole
+# job is a matter of case, or use HEURISTIC_REQUIRE for that instead.
+SIMILARITY_CASE_SENSITIVE = False
+
+
+# --- the "heuristic" evaluator ---------------------------------------------
+
+# The length band an answer is expected to fall in, in words. Under the floor
+# scores proportionally; over the ceiling falls away from it. None for no
+# ceiling.
+HEURISTIC_MIN_WORDS = 8
+HEURISTIC_MAX_WORDS = 400
+
+# A pattern the answer must contain, and one it must not, or None for neither.
+# Each is a Python regular expression, searched with re.MULTILINE, and each
+# counts as one of the equally weighted checks that make up the score. This is
+# where a task whose rule is genuinely checkable gets checked -- r"^[^a-z]*$"
+# for an all-uppercase adapter, say.
+HEURISTIC_REQUIRE = None
+HEURISTIC_FORBID = None
+
+
+# --- the "panel" evaluator --------------------------------------------------
+
+# The models on the panel, by id, all served by one endpoint. An empty list asks
+# the endpoint what it has loaded and sits a panel of one on it -- which is
+# "llm_judge" with extra steps, so name at least two to get the point of this.
+PANEL_MODELS = []
+
+# Where the panel is served, or None for JUDGE_BASE_URL. Endpoint backend only:
+# under JUDGE_BACKEND = "unsloth" the members are loaded here, all of them
+# resident at once for as long as the step lasts, the way
+# PROCESS_RUN_BATCH_SIZE holds N base models -- so keep the list short and the
+# members small. Everything else about
+# a member -- temperature, token budget, timeouts, the rubric -- comes from the
+# JUDGE_* settings above, so a panel is several models grading identically
+# rather than several differently configured judges.
+PANEL_BASE_URL = None
+
+# How the members' scores become one: "mean", "median", "min" or "max". Median
+# ignores a single outlying judge; min is the pessimistic reading, and selects
+# for answers no member objected to.
+PANEL_AGGREGATE = "mean"
+
+# Whether the panel grades against the dataset's own answer -- the
+# JUDGE_REFERENCE_SYSTEM_PROMPT rubric, panel.py's own copy of it -- rather than
+# on merit alone. Needs a dataset with assistant turns, exactly like
+# "llm_judge_reference".
+PANEL_USE_REFERENCE = False
+
+
+# --- the "composite" evaluator ----------------------------------------------
+
+# The evaluators combined, in the order they are prepared and asked: a name
+# (weight 1), ["name", weight] or {"name": "...", "weight": ...}. Each member
+# reads the same settings it would as EVALUATOR -- JUDGE_*, HEURISTIC_* and the
+# rest -- so it grades exactly as it would alone. A name may appear once, and
+# "composite" not at all. Empty is refused when a composite sweep is scored.
+COMPOSITE_EVALUATORS = ["llm_judge_reference", "llm_judge_baseline"]
+
+# How the members' scores become one:
+#   "mean"          weighted mean
+#   "median"        weighted median -- ignores one member out on its own
+#   "min" / "max"   the worst / best member; weights ignored
+#   "geometric"     weighted geometric mean -- a low member costs much more
+#                   than in the mean, and a 0 from anyone is 0
+#   "harmonic"      weighted harmonic mean -- harsher on imbalance still
+#   "trimmed_mean"  drop the highest and lowest, mean of the rest (3+ members)
+# On a 0..1 scale min <= harmonic <= geometric <= mean <= max always, so moving
+# along that list is choosing how much one bad member should cost.
+COMPOSITE_AGGREGATE = "mean"
+
+# A veto: any member scoring below this makes the answer 0.0, whatever the rest
+# said -- how a checkable rule (heuristic, say) becomes a gate rather than one
+# vote. None for no veto.
+COMPOSITE_FLOOR = None
+
+# A member whose score() fails: "fail" fails the whole exchange, since a mean
+# over whichever members answered is a different number from the mean over all
+# of them; "skip" combines the members that did answer, as panel does.
+COMPOSITE_ON_FAILURE = "fail"
+
+
+
+def snapshot():
+    """Every setting above as {name: value}, for recording what a run used."""
+    return {name: value for name, value in sorted(globals().items())
+            if name.isupper() and not name.startswith("_")}

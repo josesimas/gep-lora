@@ -72,7 +72,7 @@ A combined node is itself a named adapter, so it feeds its parent exactly like a
 leaf does. Its children's weights are already folded into it, so **it enters its
 own parent at weight 1.0**.
 
-This is the same idea as [combination.py](tools/combination.py), which stacks two
+This is the same idea as [combination.py](gep_lora/tools/combination.py), which stacks two
 adapters with a hardcoded `combination_type="cat"`. Here the tree decides both
 the shape and the weights.
 
@@ -136,7 +136,7 @@ On this base model, measured on an A6000:
 
 360 MB a layer across 28 layers — a single `SVD` node used to add **~10 GB of
 resident VRAM** to hold about 18 MB of weights, seven times the model it
-attaches to. [template_code.py](templates/template_code.py) closes it in `combine()`:
+attaches to. [template_code.py](gep_lora/core/templates/template_code.py) closes it in `combine()`:
 `svd_full_matrices=False` asks for the thin SVD (the first `new_rank` singular
 vectors are identical either way, and the full n × n `V` is only a bigger buffer
 to compute and throw away), and `_compact()` then clones every weight still
@@ -165,7 +165,7 @@ about VRAM; the note where `_compact()` would go says so.
 
 Run everything from `project/`.
 
-### 0. `start_run.py` — the whole pipeline
+### 0. `gep_lora/core/pipeline/start_run.py` — the whole pipeline
 
 ```bash
 python start_run.py
@@ -177,7 +177,7 @@ before it.
 
 **It stops after `fitness`**, and the three steps after it are the reason:
 `elitism`, `selection` and `mutation` do not describe this generation, they
-build the *next* one, and `start_run.py` on its own is a run of one generation with
+build the *next* one, and `gep_lora/core/pipeline/start_run.py` on its own is a run of one generation with
 no next one. Stopping there leaves the sweep holding the individuals that were
 actually scored, each still described by the script that earned its transcript
 — which is what `store.py --export`, the HTML report and
@@ -188,7 +188,7 @@ python start_run.py --next-generation
 ```
 
 runs them anyway, leaving a population bred and varied for another generation.
-That is what `main.py` passes, and what you want before carrying a sweep on
+That is what `gep_lora/core/pipeline/main.py` passes, and what you want before carrying a sweep on
 by hand. Naming steps explicitly always runs exactly those: `python start_run.py
 selection` selects, flag or no flag.
 
@@ -310,18 +310,18 @@ Every record is stored, uncapped. `TRAINING_COUNT` says how many of them an
 *individual* is judged on, which is a fact about the sweep and already in the
 settings table, not a fact about the dataset.
 
-`python -m storage.store --show` prints a line per split, and `--export` writes each one
+`python -m gep_lora.core.storage.store --show` prints a line per split, and `--export` writes each one
 back out as `dataset_<split>.txt` — the lines as they were read, so the export
 can be diffed against the file on disk today to see whether the dataset has
 moved under the sweep.
 
 **A split the sweep was never given.** A validation or testing set decided on
 after the sweep started has nowhere to go — `save_all()` runs once, as the sweep
-is created, and `continue_run.py` resumes a sweep that already recorded its
+is created, and `gep_lora/core/pipeline/continue_run.py` resumes a sweep that already recorded its
 dataset. The same module is that act performed afterwards, by hand:
 
 ```bash
-python -m storage.add_dataset datasets/medical_validation_lora_dataset.json --split validation
+python -m gep_lora.core.storage.add_dataset datasets/medical_validation_lora_dataset.json --split validation
 ```
 
 ```
@@ -345,7 +345,7 @@ says so. Those rows are what that sweep was built on, and a dataset changing
 under a finished sweep is the thing the table exists to prevent; adding the
 split that was missing is a different act from rewriting the one that was there.
 
-**Adding a step.** Append a `Step(name, callable, description)` to `start_run.py`'s
+**Adding a step.** Append a `Step(name, callable, description)` to `gep_lora/core/pipeline/start_run.py`'s
 `STEPS`. The callable takes the `Context` — the connection, the run id, the
 settings that sweep was created with, the run folder and the parsed options:
 
@@ -354,7 +354,7 @@ Step("select", step_select,
      "pick the survivors of this sweep -> individuals.selected"),
 ```
 
-### 1. `search/generate_population.py` → the `individuals` rows
+### 1. `gep_lora/core/search/generate_population.py` → the `individuals` rows
 
 The root module: it owns the alphabet, the `Node` type, and the
 `encode`/`decode` pair every other module reads trees with — there is no second
@@ -378,7 +378,7 @@ before being stored, so nothing lands in the database that cannot be read back.
 A population of 100 drawn with `SEED = 42` runs 5–32 symbols per individual
 (mean 9.5) at tree depths 2–5.
 
-### 2. `search/draw_trees.py` → `individuals.tree`
+### 2. `gep_lora/core/search/draw_trees.py` → `individuals.tree`
 
 Draws each chromosome in the layout `plan.txt` uses — the expression, a blank
 line, then one row per tree level — and the `trees` step stores that drawing on
@@ -389,7 +389,7 @@ Trailing symbols that the tree does not consume are reported as
 has two such symbols. A chromosome that cannot be drawn at all is stored with
 its complaint under a `!!` marker rather than being skipped.
 
-### 3. `blends/generate_runs.py` + `templates/template_code.py` → `individuals.script_source`
+### 3. `gep_lora/core/blends/generate_runs.py` + `gep_lora/core/templates/template_code.py` → `individuals.script_source`
 
 Turns every individual into a self-contained runnable script by filling in
 `template_code.py`. Which template gets filled is `TEMPLATE` in `settings.py`.
@@ -405,7 +405,7 @@ number  state  rank  chromosome
 73      BAD    48    CAT.L1.LIN.w5.CAT.L3.L5.L1.w2.w4.w5
 ```
 
-`python -m storage.store --show 0` prints that table for a stored sweep.
+`python -m gep_lora.core.storage.store --show 0` prints that table for a stored sweep.
 
 Each generated script carries its tree and build plan in its docstring, then:
 loads the base model once, attaches each leaf adapter under its own name, folds
@@ -466,7 +466,7 @@ To change what every generated script looks like, edit `template_code.py` and
 re-run `python start_run.py runs`. Only add code to the generator itself when the new
 part varies per individual.
 
-#### `templates/template_code_mocked.py` — the dry run
+#### `gep_lora/core/templates/template_code_mocked.py` — the dry run
 
 Which template gets filled is `TEMPLATE` in `settings.py`, so the same generator
 produces a different kind of script from the same population:
@@ -507,9 +507,9 @@ all.
 `MOCK_ANSWER_DELAY` buy back some fake slowness — useful for exercising
 `--timeout`.
 
-### 4. `blends/process_run.py` → `executions`, `exchanges`
+### 4. `gep_lora/core/blends/process_run.py` → `executions`, `exchanges`
 
-The `runs` step writes the scripts; this one runs them. `start_run.py` hands each
+The `runs` step writes the scripts; this one runs them. `gep_lora/core/pipeline/start_run.py` hands each
 script to `process_run.launch()` and files what it said back into the database.
 
 ```bash
@@ -552,14 +552,14 @@ execution is that script's own wall clock, so within a batch they overlap and no
 longer add up to the time the step took. The scripts in a batch share the run
 folder as their working directory, and so share the caches unsloth drops there.
 
-### Paying for the model load once — `blends/lora_server.py`
+### Paying for the model load once — `gep_lora/core/blends/lora_server.py`
 
 "One model load per individual" is a fixed price, and on this machine it is most
 of the bill: `import` at 13.3s plus `model_load` at 18.6s is 31.9s, about **54%**
 of an average script, and no cheaper tree gets out of it.
 
 `TEMPLATE = "template_remote_code.py"` in `settings.py` moves it. The scripts
-become clients of a [`blends/lora_server.py`](blends/lora_server.py) process
+become clients of a [`gep_lora/core/blends/lora_server.py`](gep_lora/core/blends/lora_server.py) process
 that already holds the base model open: the client sends the build plan its tree
 describes, the server attaches and folds the adapters, and then the client asks
 its eval prompts through the same HTTP connection. That single line is the whole
@@ -567,7 +567,7 @@ switch, and switching back is the same line.
 
 ```bash
 # by hand, one server, and one generated script against it
-python -m blends.lora_server --base-model unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit --port 8770
+python -m gep_lora.core.blends.lora_server --base-model unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit --port 8770
 GEP_LORA_SERVER=http://127.0.0.1:8770 python run_db/run_001.py
 ```
 
@@ -583,9 +583,9 @@ transcript when it is killed, still turning an exit code into a verdict. The
 server sits *behind* the scripts rather than in place of them, so `executions`,
 `exchanges`, `phase_timings`, the mocked path and the testing pass all work
 untouched. `model_load` simply stops appearing among the phases —
-`python -m metrics.report` is where you watch it go.
+`python -m gep_lora.core.metrics.report` is where you watch it go.
 
-[`blends/server_pool.py`](blends/server_pool.py) is the lifecycle. It starts
+[`gep_lora/core/blends/server_pool.py`](gep_lora/core/blends/server_pool.py) is the lifecycle. It starts
 `LORA_SERVER_COUNT` servers on consecutive ports at the top of the `process`
 step and stops them at the end, and it does so **only when the sweep's own
 scripts are clients** — a test on `script_source`, the same shape as the
@@ -618,7 +618,7 @@ header per server life, so a recycled server does not overwrite the log of the
 one whose last build is why you are reading it.
 
 **The pool lives as long as the driver, not as long as the step.** It hangs off
-the `Context`, which `continue_run.py` builds once and reuses for every
+the `Context`, which `gep_lora/core/pipeline/continue_run.py` builds once and reuses for every
 generation it turns, so generation 2 finds generation 1's servers still up and
 loads nothing:
 
@@ -633,8 +633,8 @@ interpreter, and a pool left standing through it would be N base models on the
 card while a judge looks for room for one more. On that backend, and only on it,
 the pool comes down at the end of each process step and says so.
 
-A whole `main.py` search pays the startup **twice** — the first generation runs
-through `start_run.py` and the rest through `continue_run.py`, and those are two
+A whole `gep_lora/core/pipeline/main.py` search pays the startup **twice** — the first generation runs
+through `gep_lora/core/pipeline/start_run.py` and the rest through `gep_lora/core/pipeline/continue_run.py`, and those are two
 Contexts. That is where it stops: closing the last gap would mean a pool
 outliving the driver that made it, which is a worse thing to own than one extra
 model load.
@@ -701,7 +701,7 @@ findable after the fact.
 
 **Two servers pay; four barely do.** A warm server removes the CPU-bound import
 and load that used to overlap well under concurrency, and what is left is
-GPU-bound on one card. Measured with `python -m tools.compare_servers` on paired
+GPU-bound on one card. Measured with `python -m gep_lora.tools.compare_servers` on paired
 sweeps differing only in `LORA_SERVER_COUNT`: 1 → 2 servers gave 1.64×
 throughput on the passes with no straggler, −16% on the `process` step and +6%
 per individual; 2 → 4 gave 1.29×, −4% and +23% per individual. Past two the
@@ -749,7 +749,7 @@ The transcript itself is never echoed — it goes to the database, and
 `store.py --show` reads it back. What is on screen is where things are, not what
 was said.
 
-The step banner carries the generation while `continue_run.py` is working
+The step banner carries the generation while `gep_lora/core/pipeline/continue_run.py` is working
 through them (`[3/8] gen 2/5 process -- ...`), and so does each batch line,
 because the generation header scrolls away during the part that takes the hours.
 It is display only: no step behaves differently in one generation than another,
@@ -844,7 +844,7 @@ Children are launched with `sys.executable`, so they inherit whichever
 interpreter you started this with — run it with the venv's python (see the PATH
 gotcha below) or every child will fail on `import unsloth`.
 
-### 5. `evaluators/` → `exchanges.quality`
+### 5. `gep_lora/core/evaluators/` → `exchanges.quality`
 
 Scores every answer. Only the most recent execution of each individual is
 scored; older ones keep the scores they were given.
@@ -853,8 +853,8 @@ scored; older ones keep the scores they were given.
 python start_run.py evaluate
 ```
 
-**How an answer is scored is a setting.** `evaluators/` is a registry —
-**one module per evaluator**, plus `evaluators/common.py` for what they share —
+**How an answer is scored is a setting.** `gep_lora/core/evaluators/` is a registry —
+**one module per evaluator**, plus `gep_lora/core/evaluators/common.py` for what they share —
 and `EVALUATOR` in `settings.py` names the one a sweep uses:
 
 ```bash
@@ -916,11 +916,11 @@ of them on its own merits. Every knob is in `settings.py`:
 | `JUDGE_LOCAL_LOAD_IN_4BIT` | `True` | load a local judge quantised |
 | `JUDGE_LOCAL_CHAT_TEMPLATE` | `None` — the model's own | an unsloth template name, for a model that ships none |
 | `JUDGE_ABANDON_FRACTION` | `0.1` | give up on an individual whose first 10% of graded answers all score 0 |
-| `start_run.py --force` | off | re-score answers that already have a quality |
+| `gep_lora/core/pipeline/start_run.py --force` | off | re-score answers that already have a quality |
 
 The API key is the one judge setting that is *not* in `settings.py`: a sweep
 writes its settings into the database, so the key is read from the
-`JUDGE_API_KEY` environment variable by `evaluators/common.py` instead.
+`JUDGE_API_KEY` environment variable by `gep_lora/core/evaluators/common.py` instead.
 
 `JUDGE_SYSTEM_PROMPT` **is** the fitness criterion: it grades relevance,
 usefulness, specificity, coherence and appropriateness, with anchors at 1.0 /
@@ -928,8 +928,8 @@ usefulness, specificity, coherence and appropriateness, with anchors at 1.0 /
 whatever it rewards.
 
 It is **not a setting**. It is a constant in
-[`evaluators/llm_judge.py`](evaluators/llm_judge.py), beside the code that
-sends it, and `evaluators/panel.py` keeps its own copy — so tuning a panel's
+[`gep_lora/core/evaluators/llm_judge.py`](gep_lora/core/evaluators/llm_judge.py), beside the code that
+sends it, and `gep_lora/core/evaluators/panel.py` keeps its own copy — so tuning a panel's
 rubric does not move what the single judge selects on. The two start out
 identical, which is what makes a difference between them worth reading.
 
@@ -1000,7 +1000,7 @@ of control answers; loading the judge before that would put two models on the
 card for no reason.
 
 *It is released the moment the step is done* — the evaluate step and the testing
-pass both wrap their work so it happens however the step ends. `main.py` runs a
+pass both wrap their work so it happens however the step ends. `gep_lora/core/pipeline/main.py` runs a
 whole search in one interpreter, so the next generation spawns scripts that each
 load the base model, and a judge still resident here would be VRAM taken from
 every one of them.
@@ -1018,7 +1018,7 @@ greedy decoding returns the same reply, so the retry would only spend another
 has loaded the way an endpoint can be asked, and falling back to `BASE_MODEL`
 would leave the model under test grading its own descendants.
 
-[`evaluators/local_model.py`](evaluators/local_model.py) is the whole of it —
+[`gep_lora/core/evaluators/local_model.py`](gep_lora/core/evaluators/local_model.py) is the whole of it —
 the second module in that package that is not an evaluator, beside `common.py`.
 
 #### `llm_judge_reference` — grading against the dataset's own answer
@@ -1036,8 +1036,8 @@ rubric is `JUDGE_REFERENCE_SYSTEM_PROMPT`, which weighs manner first, then
 substance and coherence, and explicitly does not reward copying — a blend that
 reproduced the reference word for word would have learned that one answer and
 nothing else. Like the other two rubrics it is a constant in the evaluator that
-sends it, [`evaluators/llm_judge_reference.py`](evaluators/llm_judge_reference.py),
-not a setting; `evaluators/panel.py` keeps its own copy. An item with *no*
+sends it, [`gep_lora/core/evaluators/llm_judge_reference.py`](gep_lora/core/evaluators/llm_judge_reference.py),
+not a setting; `gep_lora/core/evaluators/panel.py` keeps its own copy. An item with *no*
 reference falls through to `llm_judge.score()` and is graded on merit instead.
 Everything else — endpoint, model, timeouts — comes from the same `JUDGE_*`
 settings.
@@ -1063,7 +1063,7 @@ The five levels are `llm_judge_reference`'s own rubric anchors (`useless` /
 `0.7`. The `quality` recorded is the probability-weighted mean of those
 anchors, not Jev's own `score` field, whose indexing the API does not pin
 down — see
-[`evaluators/jev_judge_reference.py`](evaluators/jev_judge_reference.py). An
+[`gep_lora/core/evaluators/jev_judge_reference.py`](gep_lora/core/evaluators/jev_judge_reference.py). An
 item with no reference **fails that exchange**, the way `llm_judge_answers`
 does, rather than falling back to a merit-only judge: there is no
 merit-only Jev evaluator to fall back to.
@@ -1108,7 +1108,7 @@ falling back to merit grading the way `llm_judge_reference` does: the fallback
 would send the question — the one thing this evaluator exists not to do — and
 score a different quantity from the answers around it. Its rubric is
 `JUDGE_ANSWERS_SYSTEM_PROMPT` in
-[`evaluators/llm_judge_answers.py`](evaluators/llm_judge_answers.py), and it
+[`gep_lora/core/evaluators/llm_judge_answers.py`](gep_lora/core/evaluators/llm_judge_answers.py), and it
 opens by telling the judge the question is withheld deliberately, because a
 judge that has not been told looks for it and complains instead of grading.
 Like `llm_judge_reference`'s, it does not reward copying the reference: a blend
@@ -1140,7 +1140,7 @@ model with extra steps; above it the blend earned its keep, below it the blend
 did harm. Merit-only grading cannot say any of that — a blend that ruins nothing
 scores well on merit because the base model was already competent, and the search
 has nothing to climb. The rubric is `JUDGE_BASELINE_SYSTEM_PROMPT`, a constant
-in [`evaluators/llm_judge_baseline.py`](evaluators/llm_judge_baseline.py) rather
+in [`gep_lora/core/evaluators/llm_judge_baseline.py`](gep_lora/core/evaluators/llm_judge_baseline.py) rather
 than a setting — and the one rubric of the three that `panel` does not also keep
 a copy of, since nothing else grades this way. Everything else — endpoint,
 model, timeouts, retries — comes from the same `JUDGE_*` settings as
@@ -1348,8 +1348,8 @@ message if it runs out mid-thought.
 #### Adding one of your own
 
 An evaluator is a name, a description and two functions. **One file per
-evaluator**, in `evaluators/`, ending in the call that registers it — say
-`evaluators/mine.py`:
+evaluator**, in `gep_lora/core/evaluators/`, ending in the call that registers it — say
+`gep_lora/core/evaluators/mine.py`:
 
 ```python
 from evaluators import common
@@ -1363,7 +1363,7 @@ def score(item, prepared):                  # once per answer -> (quality, reaso
 common.register(common.Evaluator("mine", "what it does", prepare, score))
 ```
 
-Then add one line to `evaluators/__init__.py` — `from evaluators import mine` —
+Then add one line to `gep_lora/core/evaluators/__init__.py` — `from evaluators import mine` —
 because importing the module is what runs its `register()`. Nothing else in the
 pipeline changes: every step reaches an evaluator through `get(EVALUATOR)`.
 
@@ -1380,7 +1380,7 @@ Its `label` is what lands in `exchanges.judge_model`. `context` is the step's ow
 ignore it otherwise. Knobs go in `settings.py` under a prefix of their own and
 reach `score()` as `prepared.conf`, which is the sweep's *stored* settings, never
 `settings.py` as it stands now. Anything a second evaluator would also want
-belongs in `evaluators/common.py`. An evaluator that asks a model should ask it
+belongs in `gep_lora/core/evaluators/common.py`. An evaluator that asks a model should ask it
 through `common.ask_judge()` and build its block with `common.judge_settings()`,
 which is what makes it work on both backends for free, and should be registered
 with `needs_judge=True` so the abandon rule applies to it. `jev_judge_reference`
@@ -1390,7 +1390,7 @@ do the same for an evaluator that asks a judge of its own rather than one named
 by `JUDGE_BACKEND`/`JUDGE_MODEL`, so `wants_the_card()` and `--evaluators`
 don't claim it runs through an endpoint or local model it never touches.
 
-### 6. `search/calculate_fitness.py` → `individuals.fitness`, `fitness_history`
+### 6. `gep_lora/core/search/calculate_fitness.py` → `individuals.fitness`, `fitness_history`
 
 The evaluate step scores answers, not chromosomes. Selection needs the opposite — one
 comparable number per individual — so this step folds each transcript into its
@@ -1456,7 +1456,7 @@ before the sweep is done, so a history read through a join back to
 
 **Nothing counts generations for you**, because until now nothing needed to: a
 sweep is a population that keeps being rewritten in place, and neither
-`start_run.py` nor `continue_run.py` stores a generation number. The count is
+`gep_lora/core/pipeline/start_run.py` nor `gep_lora/core/pipeline/continue_run.py` stores a generation number. The count is
 derived in `store.fitness_generation()` from the one thing that dates a round
 — the **highest individual number** the population holds, which selection
 always leaves higher than it found it. Numbers are handed out from the top and
@@ -1493,7 +1493,7 @@ recorded generation 4 in fitness_history at 2026-08-28T11:12:06
     4     2026-08-28T11:12:06  12     0.834   0.478   CAT.SVD.L3.L1.SVD.w2.w3.L2.L4.w2.w3
 ```
 
-`python -m storage.store --show` prints the same table for a stored sweep (with
+`python -m gep_lora.core.storage.store --show` prints the same table for a stored sweep (with
 `worst` as well), and `--export` writes it out as `fitness_history.txt`
 alongside the per-individual rows — the one exported file that is not a view of
 the population as it stands now. Note that a rising `mean` with a flat `best`
@@ -1508,7 +1508,7 @@ SELECT generation, recorded_at, population, MAX(fitness) AS best, AVG(fitness) A
   FROM fitness_history WHERE run_id = 3 GROUP BY generation ORDER BY generation;
 ```
 
-### 7. `search/elitism.py` → `individuals.is_best`
+### 7. `gep_lora/core/search/elitism.py` → `individuals.is_best`
 
 Names the one individual this generation carries forward:
 
@@ -1551,7 +1551,7 @@ transcripts again here would be a second, quietly different definition of
 "best": when the fitness rule changes it changes in `calculate_fitness.py`, and
 this step follows it without knowing that it did.
 
-### 8. `search/selection.py` → copies in, the weakest out, one stranger
+### 8. `gep_lora/core/search/selection.py` → copies in, the weakest out, one stranger
 
 Fitness-proportionate selection, the classic roulette wheel:
 
@@ -1685,7 +1685,7 @@ relevant step clears up, and neither of which is a reason to hold the copy back:
 **Because it appends more than it removes, the step is not idempotent.**
 Running it twice runs two rounds, and the second culls what the first left.
 That is what a second generation *is*, so it is deliberate — but `python
-start_run.py selection` is something you do on purpose, not something you repeat to
+gep_lora/core/pipeline/start_run.py selection` is something you do on purpose, not something you repeat to
 be sure it took.
 
 An individual whose fitness is `0.0` has a slice of width zero and can never be
@@ -1706,7 +1706,7 @@ population it is spinning over — the same idiom as `WEIGHT_MASTER_SEED` and an
 individual's number. One recorded seed, every draw repeatable, and a second
 round still draws its own parents rather than the first round's again.
 
-### 9. `search/mutation.py` → `individuals.chromosome`, `individuals.has_changed`
+### 9. `gep_lora/core/search/mutation.py` → `individuals.chromosome`, `individuals.has_changed`
 
 Selection makes copies; mutation is what makes them worth having.
 
@@ -1799,7 +1799,7 @@ and put the stale score back.
 | `settings.py` | `MUTATION_RATE` | `0.1` | chance per symbol; `0.0` turns mutation off without removing the step |
 | `settings.py` | `MUTATION_MASTER_SEED` | `None` | where the dice come from; `None` draws one and records it |
 
-### 9a. `search/weight_mutation.py` → the weights alone
+### 9a. `gep_lora/core/search/weight_mutation.py` → the weights alone
 
 ```bash
 python start_run.py weight_mutation
@@ -1837,10 +1837,10 @@ mutation moved would have `process` skip a chromosome that has never run.
 | `settings.py` | `WEIGHT_MUTATION_RATE` | `0.1` | share of all non-elite weights moved per round; `0.0` turns it off |
 | `settings.py` | `WEIGHT_MUTATION_MASTER_SEED` | `None` | where the draw comes from; `None` draws one and records it |
 
-### 10. `continue_run.py` → generation after generation
+### 10. `gep_lora/core/pipeline/continue_run.py` → generation after generation
 
-`start_run.py` runs a sweep from a fresh population through **one** generation.
-`continue_run.py` carries that sweep on:
+`gep_lora/core/pipeline/start_run.py` runs a sweep from a fresh population through **one** generation.
+`gep_lora/core/pipeline/continue_run.py` carries that sweep on:
 
 ```bash
 python continue_run.py
@@ -1914,7 +1914,7 @@ python continue_run.py --db run_real/gep.sqlite3 --run 3 --generations 5
 | `--set NAME=VALUE` | none | change one of the sweep's stored settings, e.g. `--set SELECTION_COUNT=3` |
 
 `--limit`, `--include-blocked`, `--include-unchanged`, `--keep-scripts`,
-`--timeout` and `--force` are there too, and mean what they mean in `start_run.py`
+`--timeout` and `--force` are there too, and mean what they mean in `gep_lora/core/pipeline/start_run.py`
 — the steps read them off the options either way.
 
 #### Watch the size
@@ -1954,9 +1954,9 @@ the earlier generations did stays in the database.
 The `_run` suffix is not decoration — `continue` is a Python keyword, so a
 `continue.py` could be run but never imported.
 
-### 11. `main.py` → the whole search, one command
+### 11. `gep_lora/core/pipeline/main.py` → the whole search, one command
 
-`start_run.py` and `continue_run.py`, in that order, against the same sweep:
+`gep_lora/core/pipeline/start_run.py` and `gep_lora/core/pipeline/continue_run.py`, in that order, against the same sweep:
 
 ```bash
 python main.py
@@ -1966,13 +1966,13 @@ which is
 
 ```bash
 python start_run.py
-python continue_run.py --run <the sweep start_run.py just made>
+python continue_run.py --run <the sweep gep_lora/core/pipeline/start_run.py just made>
 ```
 
-so a full run is **1 + `GENERATIONS`** generations — `start_run.py`'s own turn of the
-crank, then the ones `continue_run.py` adds. `--generations` controls the second
-half; there is no way to have fewer than the one `start_run.py` runs, because drawing
-a population and leaving it unjudged would not be a generation. (Use `start_run.py`
+so a full run is **1 + `GENERATIONS`** generations — `gep_lora/core/pipeline/start_run.py`'s own turn of the
+crank, then the ones `gep_lora/core/pipeline/continue_run.py` adds. `--generations` controls the second
+half; there is no way to have fewer than the one `gep_lora/core/pipeline/start_run.py` runs, because drawing
+a population and leaving it unjudged would not be a generation. (Use `gep_lora/core/pipeline/start_run.py`
 on its own for that.)
 
 ```bash
@@ -1985,20 +1985,20 @@ It calls the two drivers **as libraries, in this interpreter**. That matters:
 `process` launches every generated script with `sys.executable`, so a subprocess
 would be one more chance to run the search under the wrong Python. Whatever you
 start this with is what the whole sweep uses — so it still wants the venv's
-python, for the same reason `start_run.py` does.
+python, for the same reason `gep_lora/core/pipeline/start_run.py` does.
 
-The sweep is handed on **by id, not by "the latest one"**: `start_run.py`'s new sweep
+The sweep is handed on **by id, not by "the latest one"**: `gep_lora/core/pipeline/start_run.py`'s new sweep
 is looked up once it exists and named explicitly, so a database that gains a
 sweep from somewhere else in between cannot be picked up by mistake. Running
-`main.py` twice into one database leaves two sweeps side by side, each
+`gep_lora/core/pipeline/main.py` twice into one database leaves two sweeps side by side, each
 continued only by its own half of the run.
 
-Options go to whichever driver understands them — `--label` to `start_run.py`,
-`--generations` and `--set` to `continue_run.py`, and `--db`, `--run-dir`,
+Options go to whichever driver understands them — `--label` to `gep_lora/core/pipeline/start_run.py`,
+`--generations` and `--set` to `gep_lora/core/pipeline/continue_run.py`, and `--db`, `--run-dir`,
 `--limit`, `--include-blocked`, `--include-unchanged`, `--keep-scripts`,
 `--timeout` and `--force` to both, meaning there what they mean there.
 
-A failing half stops the run: if `start_run.py` cannot produce a sweep there is
+A failing half stops the run: if `gep_lora/core/pipeline/start_run.py` cannot produce a sweep there is
 nothing to continue, and its exit code comes straight back out.
 
 #### And then the testing pass
@@ -2045,7 +2045,7 @@ python main.py --db <sweep.sqlite3> --run 1 --evaluate [--force] [--set JUDGE_BA
 **Any sweep can be carried on from wherever it stopped** -- a Ctrl+C, a crash, a
 cancelled API job, a machine switched off. `--resume` reads how far it got out
 of the database (`where_it_stopped()`), finishes the generation it stopped in,
-runs the generations it has left through `continue_run.py`, and then the testing
+runs the generations it has left through `gep_lora/core/pipeline/continue_run.py`, and then the testing
 pass. Two records say how far, and both are written as the search goes, so a
 kill at any moment leaves them true:
 
@@ -2105,7 +2105,7 @@ dataset, and no individuals. Everything a search needs, and none of the search.
 `dbtemplates/test_new_run.sqlite3` is one of those — 49 settings and a 60-record
 `training` split, waiting for a population.
 
-Handed one of those, `main.py` **runs it** rather than starting a second sweep
+Handed one of those, `gep_lora/core/pipeline/main.py` **runs it** rather than starting a second sweep
 beside it. `--db <a prepared database>` means "run this"; the alternative would be
 a stranger's sweep turning up in somebody's experiment file. `--run 0` (or
 `--run N`) says the same thing out loud and takes any sweep by id.
@@ -2113,7 +2113,7 @@ a stranger's sweep turning up in somebody's experiment file. `--run 0` (or
 The rule is **the latest sweep having no individuals**. Anything else is a
 database to start a new sweep in, exactly as before — one that does not exist
 yet, one holding no sweeps, one whose latest sweep has a population — so
-`main.py --db run_real/gep.sqlite3` goes on meaning what it meant. `--label`
+`gep_lora/core/pipeline/main.py --db run_real/gep.sqlite3` goes on meaning what it meant. `--label`
 suppresses it too, since only a sweep being created can be given one.
 
 From there the database is the only thing the run reads itself out of:
@@ -2132,7 +2132,7 @@ machine's `settings.py` happens to say.
 
 ```
 ======================================================================
-full run: start_run.py, then continue_run.py for 5 more generation(s)
+full run: gep_lora/core/pipeline/start_run.py, then gep_lora/core/pipeline/continue_run.py for 5 more generation(s)
 ======================================================================
 
 run 1 in dbtemplates/test_new_run.sqlite3 is prepared -- settings and a dataset, no individuals -- so this runs it
@@ -2172,7 +2172,7 @@ scripts, the transcripts and the questions are all in the database.
 
 Two things are refused rather than guessed past. **A sweep that already holds
 individuals**: `population` appends, so joining a started search would draw a
-second population beside the first — the message points at `main.py
+second population beside the first — the message points at `gep_lora/core/pipeline/main.py
 --resume`, which carries one of those on from wherever it got to. Only `--run` can reach that
 refusal, since a sweep with a population is never adopted on its own. And
 **`--run` together with `--label`**, which names a sweep as it is created; that
@@ -2192,7 +2192,7 @@ their own:
 ```bash
 python start_run.py --db <prepared> --run 1 --from-db
 python continue_run.py --db <prepared> --run 1 --from-db
-python -m testing.test_run_with_dataset --db <prepared> --run 1 --from-db
+python -m gep_lora.core.testing.test_run_with_dataset --db <prepared> --run 1 --from-db
 ```
 
 It needs a sweep (`--run`), because a *new* sweep is the moment those rows are
@@ -2200,8 +2200,8 @@ read out of the files and stored — there is nothing to read back yet.
 `test_run_with_dataset.py` takes no dataset argument alongside it, and records
 nothing: the rows it reads already are the stored split.
 
-[`db_datasets.py`](storage/db_datasets.py) is the mechanism, and the counterpart of
-[`add_dataset.py`](storage/add_dataset.py): that one is the only way
+[`db_datasets.py`](gep_lora/core/storage/db_datasets.py) is the mechanism, and the counterpart of
+[`add_dataset.py`](gep_lora/core/storage/add_dataset.py): that one is the only way
 *into* the `datasets` table, this is the way back *out*.
 `repoint(conn, run_id, conf)` writes each split the sweep holds into the run
 folder above — `training.jsonl`, with `.jsonl` or `.txt` chosen from the records
@@ -2231,7 +2231,7 @@ Three things about that are deliberate:
   refused outright, before a population is drawn — that is a sweep from before
   the `datasets` table existed, and `add_dataset.py` is how it gets some.
 
-### 12. `tools/test.py` → `run/test_*`
+### 12. `gep_lora/tools/test.py` → `run/test_*`
 
 Try one chromosome by hand without starting a sweep. Set the variable at the top
 of the file and run it:
@@ -2241,13 +2241,13 @@ CHROMOSOME = "CAT.L1.L2.w5.w2.w2.w1"
 ```
 
 ```bash
-python -m tools.test
+python -m gep_lora.tools.test
 ```
 
 Or pass one straight in:
 
 ```bash
-python -m tools.test CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
+python -m gep_lora.tools.test CAT.SVD.LIN.L1.L2.L3.L1.w3.w3.w2.w1
 ```
 
 It prints the tree, the build plan and a verdict, then writes
@@ -2290,11 +2290,11 @@ Bad input is reported rather than half-processed:
 | a `LIN` above a `CAT` | `verdict: BLOCKED`, naming the node and both ranks |
 | `CAT.L1.L2.w5.w2.w2.w1` | builds the tree, reports the 2 unused trailing symbols |
 
-### 13. `storage/store.py` → the sweep database
+### 13. `gep_lora/core/storage/store.py` → the sweep database
 
 The schema, and the only module that imports `sqlite3`. Everything above is a
 library of pure functions — `build_population`, `draw`, `plan`/`render`,
-`launch`, `score` — and `start_run.py` is what calls them and puts the results here.
+`launch`, `score` — and `gep_lora/core/pipeline/start_run.py` is what calls them and puts the results here.
 
 ```
 runs          one sweep: when, which template, which interpreter, which commit
@@ -2322,11 +2322,11 @@ baselines     what the base model itself answered, per model and question --
 the scores they were given.
 
 ```bash
-python -m storage.store --list
+python -m gep_lora.core.storage.store --list
 ```
 
 ```bash
-python -m storage.store --show 0
+python -m gep_lora.core.storage.store --show 0
 ```
 
 `--show` takes a run id, or `0` for the most recent, and prints the settings the
@@ -2342,7 +2342,7 @@ SELECT number, chromosome, quality, weights
 ```
 
 ```bash
-python -m storage.store --export 0 --into export
+python -m gep_lora.core.storage.store --export 0 --into export
 ```
 
 Writes a stored sweep back out as a folder of text files — `population.txt`,
@@ -2422,7 +2422,7 @@ python start_run.py runs
 Only the scripts that actually ran are removed. Ones skipped as `BAD`, or left
 out by `--limit`, are still waiting and stay where they are.
 
-### 14. `testing/test_run_with_dataset.py` → `test_results`
+### 14. `gep_lora/core/testing/test_run_with_dataset.py` → `test_results`
 
 Everything above happens on the training split. Every fitness number, every
 election, every roulette slice is earned on those questions, so an individual
@@ -2431,7 +2431,7 @@ being unseen the moment the first generation was scored on it. This asks the
 other question: does the blend hold up on questions it was never picked for?
 
 ```bash
-python -m testing.test_run_with_dataset datasets/medical_testing_lora_dataset.json
+python -m gep_lora.core.testing.test_run_with_dataset datasets/medical_testing_lora_dataset.json
 ```
 
 ```
@@ -2541,17 +2541,17 @@ answer with a training question's reference.
 load:
 
 ```bash
-python -m testing.test_run_with_dataset testing.json --no-score      # answers only
-python -m testing.test_run_with_dataset testing.json --score-only    # grade them later
-python -m testing.test_run_with_dataset testing.json --score-only --force --evaluator similarity
-python -m testing.test_run_with_dataset testing.json --resume        # carry an interrupted pass on
+python -m gep_lora.core.testing.test_run_with_dataset testing.json --no-score      # answers only
+python -m gep_lora.core.testing.test_run_with_dataset testing.json --score-only    # grade them later
+python -m gep_lora.core.testing.test_run_with_dataset testing.json --score-only --force --evaluator similarity
+python -m gep_lora.core.testing.test_run_with_dataset testing.json --resume        # carry an interrupted pass on
 ```
 
 `--resume` is for a pass that was stopped part way: `test_results` is appended
 to, so running it again whole would store a second row for every individual it
 had already reached. With it, an individual already tested cleanly on that
 dataset, as the chromosome its script builds now, is left alone; the rest run,
-and the scoring grades every row still ungraded. `main.py --resume` passes it.
+and the scoring grades every row still ungraded. `gep_lora/core/pipeline/main.py --resume` passes it.
 
 Scoring is resumable the way the evaluate step is — an answer that already has a
 quality is left alone unless `--force` — so an interrupted judge, a judge that
@@ -2593,11 +2593,11 @@ longer describes. The pass runs the script, records the chromosome the *script*
 builds, and says how many rows that applies to. Run `trees runs process
 evaluate` again first if you want the current population tested.
 
-`python -m storage.store --show` lists the passes a sweep has been through.
+`python -m gep_lora.core.storage.store --show` lists the passes a sweep has been through.
 
 ---
 
-### 14a. `testing/evaluate_chromosome_against_loras.py` → is the blend better than one LoRA?
+### 14a. `gep_lora/core/testing/evaluate_chromosome_against_loras.py` → is the blend better than one LoRA?
 
 A sweep only ever scores a blend against the bare base model or against the
 dataset's own answers, so it cannot say whether a single adapter would have
@@ -2606,8 +2606,8 @@ in its `LORA_SLOTS`, with each adapter attached **alone, at full strength**, on
 the same questions:
 
 ```bash
-python -m testing.evaluate_chromosome_against_loras --db api_jobs/user1/job6/job.sqlite3
-python -m testing.evaluate_chromosome_against_loras --db run_db/gep.sqlite3     --evaluator llm_judge_reference --judge-model qwen3-32b --count 20
+python -m gep_lora.core.testing.evaluate_chromosome_against_loras --db api_jobs/user1/job6/job.sqlite3
+python -m gep_lora.core.testing.evaluate_chromosome_against_loras --db run_db/gep.sqlite3     --evaluator llm_judge_reference --judge-model qwen3-32b --count 20
 ```
 
 - **What it runs:** the best individual (`is_best`, else the highest fitness;
@@ -2636,7 +2636,7 @@ python -m testing.evaluate_chromosome_against_loras --db run_db/gep.sqlite3     
 
 ---
 
-### 15. `reporting/generate_html_db_stats.py` → an HTML page beside the database
+### 15. `gep_lora/core/reporting/generate_html_db_stats.py` → an HTML page beside the database
 
 `store.py --show` prints a sweep. This writes the same sweep out as one
 self-contained HTML file, with the things a column of numbers cannot draw: the
@@ -2644,8 +2644,8 @@ best blend as a tree, fitness generation by generation, the population's spread,
 what the judge actually gave.
 
 ```bash
-python -m reporting.generate_html_db_stats run_db/gep.sqlite3
-python -m reporting.generate_html_db_stats run_db/gep.sqlite3 --run 2 --open
+python -m gep_lora.core.reporting.generate_html_db_stats run_db/gep.sqlite3
+python -m gep_lora.core.reporting.generate_html_db_stats run_db/gep.sqlite3 --run 2 --open
 ```
 
 The page lands **beside the database** — `gep_run1_stats.html` next to
@@ -2661,7 +2661,7 @@ and every setting the sweep was created with.
 
 ### The cost section
 
-The same rows `python -m metrics.report` prints, drawn. Six tiles first --
+The same rows `python -m gep_lora.core.metrics.report` prints, drawn. Six tiles first --
 total time, the costliest step, what one individual and one answer came to, the
 biggest single phase, and how much script time the sweep spent -- then:
 
@@ -2772,15 +2772,15 @@ script it is and link to that individual — which is the truer statement anyway
 
 ## The async API
 
-`async_api/` puts the search behind a web service: a user submits a job (settings
+`gep_lora/service/` and `gep_lora/apps/web/` put the search behind a web service: a user submits a job (settings
 and datasets), a background worker runs it, the user reads the results, puts an
 individual live and streams answers from it. Standard library only, like
 `lora_server.py`.
 
 ```bash
-python -m async_api.users add alice          # prints alice's API key, once
-python -m async_api.server                   # http://127.0.0.1:8780
-python -m async_api.worker                   # the background half
+python -m gep_lora.service.users add alice          # prints alice's API key, once
+python -m gep_lora.apps.web.server                   # http://127.0.0.1:8780
+python -m gep_lora.service.worker                   # the background half
 ```
 
 Then open **http://127.0.0.1:8780/** -- it lands on the guide. The server has
@@ -2796,7 +2796,7 @@ five pages, and every one of them carries the same top bar, in this order:
 | **Console** *(advanced)* | `/console.html` | every endpoint, by hand |
 
 A page's address ends in `.html` and an endpoint's never does (`GET /runs` is the
-JSON the Runs page reads). The bar is `async_api/nav.js`, the one file to edit
+JSON the Runs page reads). The bar is `gep_lora/apps/web/static/nav.js`, the one file to edit
 to add a page or a link; the current page is highlighted, the API key is asked
 for once and shared by all of them, and a search open in the guide or the console
 (`?job=N`) goes with you when you switch between those two. The old addresses
@@ -2810,23 +2810,23 @@ testing questions come from a shared file, a file you upload, or pasted lines),
 watch it run, download its database, read its population,
 fitness chart, transcripts and log, **verify a blend against the LoRAs it is made
 of** (see below), set an individual live, stream answers in either
-format, unset and delete. It is `async_api/console.html`, one file with no dependencies
+format, unset and delete. It is `gep_lora/apps/web/static/console.html`, one file with no dependencies
 but the shared bar.
 
-Start the worker with the venv's python, as you would `main.py` -- it runs
-`main.py` under its own interpreter. Start the server with it too if a real
+Start the worker with the venv's python, as you would `gep_lora/core/pipeline/main.py` -- it runs
+`gep_lora/core/pipeline/main.py` under its own interpreter. Start the server with it too if a real
 (non-mocked) sweep is going to go live, since inference loads the model in the
-server's process. Knobs are in `async_api/settings.py` (not `config/settings.py`,
+server's process. Knobs are in `gep_lora/service/settings.py` (not `gep_lora/core/config/settings.py`,
 whose `snapshot()` would freeze them into every sweep), each overridable as
 `GEP_API_<NAME>` in the environment.
 
 **A job is a prepared database.** `POST /jobs` writes exactly what
 `python main.py --db <it>` already adopts: a run row, its settings and its
 dataset, no individuals, in `api_jobs/user<N>/job<M>/job.sqlite3`. The settings
-are `config/settings.py` plus the submission's overrides, checked and seeded by
+are `gep_lora/core/config/settings.py` plus the submission's overrides, checked and seeded by
 `start_run.freeze()` -- the same function `new_sweep()` uses. The worker takes
 jobs in arrival order (registry ids) and runs
-`main.py --db <job.sqlite3> --run <id>` as a subprocess, so a cancel can stop the
+`gep_lora/core/pipeline/main.py --db <job.sqlite3> --run <id>` as a subprocess, so a cancel can stop the
 search and its lora servers, and the console goes to `job.log`. Everything the
 run writes stays in `job_run1/` beside the database.
 
@@ -2880,24 +2880,24 @@ are refused with a 400 before anything is queued.
 ### Stopping, resuming, and grading later
 
 **Every job can be stopped and carried on.** Cancelling a running job *stops*
-it: the worker kills `main.py` and marks the job `stopped` rather than
+it: the worker kills `gep_lora/core/pipeline/main.py` and marks the job `stopped` rather than
 `cancelled`, because what it did is in its database and
-[`main.py --resume`](#stopping-and-carrying-on----resume-and---evaluate) carries
+[`gep_lora/core/pipeline/main.py --resume`](#stopping-and-carrying-on----resume-and---evaluate) carries
 it on from exactly there. `POST /jobs/{id}/resume` puts a `stopped`, `cancelled`
 or `failed` job back in the queue with `task: "resume"`; the worker then runs
-`main.py --db <job.sqlite3> --run <id> --resume`, appending to the same
+`gep_lora/core/pipeline/main.py --db <job.sqlite3> --run <id> --resume`, appending to the same
 `job.log`. A job cancelled before it ever started is resumed from the top; a
 job left running by a worker that died is marked `failed` when the next worker
 starts, and is resumable like any other.
 
 **Its answers can be graded later.** `POST /jobs/{id}/evaluate` puts a job that
 has stopped with answers in it (`done`, or resumable) back in the queue with
-`task: "evaluate"`, and the worker runs `main.py --evaluate` over it --
+`task: "evaluate"`, and the worker runs `gep_lora/core/pipeline/main.py --evaluate` over it --
 `--force` to grade every answer again, and `--set` for a judge that has moved.
 The rubric stays the sweep's own `EVALUATOR`. Grading does not move a search,
 so the job ends where its search is: `done` if every generation was scored,
 `stopped` (and resumable) if not, with any failure of the grading in `error`.
-`async_api/evaluate.py` owns the API's half, the way `verify.py` does for
+`gep_lora/service/evaluate.py` owns the API's half, the way `verify.py` does for
 verifications.
 
 A requeued job keeps its id, and with it its place in the queue. Cancelling a
@@ -2908,10 +2908,10 @@ search is.
 
 **Its blends can be tested on their own.** `POST /jobs/{id}/test` puts a
 *finished* job back in the queue with `task: "test"`, and the worker runs the
-testing pass alone -- `python -m testing.test_run_with_dataset --from-db --db
+testing pass alone -- `python -m gep_lora.core.testing.test_run_with_dataset --from-db --db
 <job.sqlite3> --run <id> --min-quality=-1.0 --resume` -- rather than through
-`main.py`, which would only hand it on. Two things set it apart from the pass
-`main.py` runs at the end of a search: it tests **every blend that ran**, not
+`gep_lora/core/pipeline/main.py`, which would only hand it on. Two things set it apart from the pass
+`gep_lora/core/pipeline/main.py` runs at the end of a search: it tests **every blend that ran**, not
 only those above `TESTING_MIN_QUALITY` (`min_quality` narrows it back down),
 because it exists so a person can *choose* a blend and one with no testing
 score cannot be weighed up; and it always resumes, so a blend already tested
@@ -2919,7 +2919,7 @@ cleanly on the split keeps its row and only the rest run. Like an evaluation
 it does not move the search, so the job ends `done` again, with a failure of
 the pass in `error`. A job that is not `done` is a 409 -- a half-finished
 search's blends are not what it found -- and one with no testing split a 400.
-`async_api/testpass.py` owns the API's half.
+`gep_lora/service/testpass.py` owns the API's half.
 
 On the page, the job's actions carry **Stop** (a running job) or **Cancel** (a
 queued one), **Resume**, and **Evaluate…**, which opens a small form: the
@@ -2934,14 +2934,14 @@ of those adapters used on its own. So the page's **Verification** section runs
 that comparison for any blend of a finished job -- the blend, and each LoRA its
 chromosome names, attached alone at full strength, on the same questions, all
 graded by one judge. It is
-[`testing/evaluate_chromosome_against_loras.py`](#14a-testingevaluate_chromosome_against_loraspy--is-the-blend-better-than-one-lora),
+[`gep_lora/core/testing/evaluate_chromosome_against_loras.py`](#14a-testingevaluate_chromosome_against_loraspy--is-the-blend-better-than-one-lora),
 queued.
 
 **It is work, not a request.** Every contestant costs a base-model load, so a
 verification goes into the registry's own `verifications` table and the *same*
 worker takes it -- after any queued job, since a job is a search that has not
 started and a verification is a question about one that has finished. One card,
-one queue. `async_api/verify.py` owns only the API's half: what the form may
+one queue. `gep_lora/service/verify.py` owns only the API's half: what the form may
 offer, what a request may ask, the command line, and the report read back.
 
 On the page, pick a blend (the elite is selected first), what to compare it
@@ -2993,11 +2993,11 @@ holding a `jobs.sqlite3` and no `api.sqlite` copies it across once, through
 sqlite's backup, and renames the old file `jobs.sqlite3.merged`. The LoRA rows
 came back with `catalog scan`, since their folders are their truth.)
 
-**The catalogue** is its `loras` table ([`adapters/catalog.py`](adapters/catalog.py)),
+**The catalogue** is its `loras` table ([`gep_lora/core/adapters/catalog.py`](gep_lora/core/adapters/catalog.py)),
 one row per adapter folder: base model, rank, alpha, target modules, chat
 template, where its data came from, steps, final loss, and a status (`queued`,
 `training`, `ready`, `failed`, `cancelled`, `missing`). The folder is the truth
-and the row an index -- `python -m adapters.catalog scan` rebuilds it from
+and the row an index -- `python -m gep_lora.core.adapters.catalog scan` rebuilds it from
 `loras/`, reading `adapter_config.json`, the `training.json` that
 `create_lora.py` now writes beside the weights, or, for an adapter trained
 before that existed, its newest checkpoint's `trainer_state.json`. The three
@@ -3012,10 +3012,10 @@ is queued, and one found by `scan` or trained by hand is nobody's -- and so
 nobody's to see -- until the server gives it to someone:
 
 ```bash
-python -m adapters.catalog own ze --unowned      # every row nobody owns
-python -m adapters.catalog own ze 3 4 5          # or by id / name; 'nobody' takes them back
-python -m adapters.catalog scan --owner ze       # new folders go straight to ze
-python -m adapters.catalog scan | list [--owner ze] | show <id or name> | forget <id> | models
+python -m gep_lora.core.adapters.catalog own ze --unowned      # every row nobody owns
+python -m gep_lora.core.adapters.catalog own ze 3 4 5          # or by id / name; 'nobody' takes them back
+python -m gep_lora.core.adapters.catalog scan --owner ze       # new folders go straight to ze
+python -m gep_lora.core.adapters.catalog scan | list [--owner ze] | show <id or name> | forget <id> | models
 ```
 
 `own` refuses a name the database's `users` table does not hold. Another user's
@@ -3027,7 +3027,7 @@ else's**. A submission must give `LORA_SLOTS` as L1..Ln (one to ten, no gap), ea
 the user's own *ready* catalogue rows -- named by id, by name or by folder, the
 same LoRA in as many slots as wanted -- and each trained on the job's
 `BASE_MODEL` (`submit.own_slots()`, `check_base_model()`). There is no
-default: `config/settings.py`'s `LORA_SLOTS` (the `loras/Lora00N` set) is the
+default: `gep_lora/core/config/settings.py`'s `LORA_SLOTS` (the `loras/Lora00N` set) is the
 command line's, and `GET /settings` offers `{}` for it. A folder the user was
 not given -- another user's, one nobody owns, the command line's own set -- is
 refused in the same words as one that does not exist, and before anything
@@ -3038,12 +3038,12 @@ then theirs like any other.
 **Training one is queued work, like a job.** `POST /loras` takes a name, a
 dataset (the same shapes a job's does, but every record must be a conversation
 with an assistant turn) and any of `create_lora.py`'s options; the worker runs
-`python -m adapters.create_lora loras/trained/user<N>/<name> ...` after any queued job and
+`python -m gep_lora.core.adapters.create_lora loras/trained/user<N>/<name> ...` after any queued job and
 before any verification, with its console in `api_jobs/user<N>/lora<id>/train.log`.
 The adapter lands in `TRAINED_LORAS_DIR` (`loras/trained/`) and in the
 catalogue, so a search's `LORA_SLOTS` can name it like any other. Defaults are
 `create_lora.defaults()` -- the command line's own -- except the base model and
-chat template, which are the search's. [`async_api/train.py`](async_api/train.py)
+chat template, which are the search's. [`gep_lora/service/train.py`](gep_lora/service/train.py)
 owns only the API's half (form, checks, command line), the way `verify.py` does.
 
 `create_lora.py` gained the knobs the form offers -- `--dropout`,
@@ -3110,7 +3110,7 @@ Every endpoint but `/health` and `/infer` takes `Authorization: Bearer <key>`,
 and another user's job is a 404. Only hashes of keys and tokens are stored.
 
 **A job whose search finished but whose testing pass did not is `done`**, with
-the reason in `error`: `main.py` returns the testing pass's exit code in that
+the reason in `error`: `gep_lora/core/pipeline/main.py` returns the testing pass's exit code in that
 case, but the search's results stand and can go live.
 
 **Going live stores a blend spec** with the deployment: base model, chat
@@ -3147,12 +3147,12 @@ guide carries out** (below). On the right, what is
 happening: where the process is, the dataset's numbers (answer lengths, topic
 words, samples), the plan, and during training each LoRA's progress and ETA,
 the loss curves, the worker's log and every API call the page makes -- redrawn
-every second and a half. It is `async_api/guide.html`, one file with no
+every second and a half. It is `gep_lora/apps/web/static/guide.html`, one file with no
 dependencies but the shared bar, and it uses the same key as the console (and remembers the
 conversation in the browser, so a reload mid-training carries on watching).
 
-The Python behind it is `async_api_agent/`, mounted into the server as the
-`/agent/*` endpoints:
+The Python behind it is `gep_lora/assistant/`, mounted into the web app as the
+`/agent/*` endpoints (`gep_lora/apps/web/agent_routes.py`):
 
 | Module | What it owns |
 |---|---|
@@ -3167,9 +3167,9 @@ The Python behind it is `async_api_agent/`, mounted into the server as the
 | `tools.py` | what the chat can *do*: each tool's parameters, the steps it may run in, and what it hands back to the page |
 | `commands.py` | the most common requests read without a model, as the same tool calls |
 | `agent.py` | each step: the facts, then the model's words for them, or the fallback's; the chat's tool loop |
-| `routes.py` | the `/agent/*` endpoints |
+| `facade.py` | one function per `/agent/*` feature, which `apps/web/agent_routes.py` puts at its address |
 
-**The agent proposes and the API does.** Nothing in `async_api_agent/`
+**The agent proposes and the API does.** Nothing in `gep_lora/assistant/`
 trains, queues or stores anything. `/agent/plan` hands the page one
 `POST /loras` body per rank in `LORA_RANKS` (8 and 16 by default -- more than
 one because a search blends adapters of different ranks), named for the
@@ -3414,9 +3414,9 @@ verification asked of a file. Each model box has a drop-down of what its
 endpoint lists beside it, and once a model is chosen, a **Thinking** checkbox:
 on, off, or (its third, indeterminate state) the model's own habit.
 
-**Thinking is a switch on both models.** `THINKING` (async_api_agent/settings.py,
+**Thinking is a switch on both models.** `THINKING` (gep_lora/assistant/settings.py,
 or the page's per-conversation `agent.thinking`) for the guide's chat model and
-`JUDGE_THINKING` (config/settings.py, frozen into a sweep like every JUDGE_*
+`JUDGE_THINKING` (gep_lora/core/config/settings.py, frozen into a sweep like every JUDGE_*
 knob) for the judge; `None` sends nothing. On an OpenAI-compatible endpoint it
 is `reasoning_effort` -- `"none"` off, `"medium"` on -- because that is the one
 control LM Studio was found to honour: on a loaded reasoning model it took a
@@ -3432,11 +3432,11 @@ what is on screen.
 
 They are saved per user in `api.sqlite` (`guide_defaults`, one JSON document
 each) through `GET`/`PUT`/`DELETE /agent/defaults`, and
-`async_api_agent/guide_defaults.py` owns the fields and checks them -- by
+`gep_lora/assistant/guide_defaults.py` owns the fields and checks them -- by
 train.py's rules for a training option, the chat's for ranks, settings.py's
 limits for a search. **Only what differs from the server is kept**, so a field
 left alone follows the server's value when it changes. Every `/agent/*`
-request then runs under the caller's saved values (`routes._theirs`): the
+request then runs under the caller's saved values (`facade.theirs`): the
 page's config, the session's ranks and blend sizes, the wait choices, the
 estimate, the POST /loras bodies (which carry the saved recipe, under the
 chat's own changes) and the POST /jobs body (`EVALUATOR`, `JUDGE_MODEL`), so
@@ -3498,11 +3498,11 @@ model chip and chat on the left -- and on the right:
 
 The chat can do all of it too ("stack poem-r8 and story-r16", "make the right one
 an SVD", "new weights", "test it on 30 questions"), through tools that edit the
-drawing the page sends and hand it back (`async_api_agent/visual.py`), exactly as
+drawing the page sends and hand it back (`gep_lora/assistant/visual.py`), exactly as
 the guide's tools edit its plan; starting a test is an action the page carries out
 with its own button's call.
 
-**Nothing about it is a second pipeline.** `async_api/drawn.py` turns the drawing
+**Nothing about it is a second pipeline.** `gep_lora/service/drawn.py` turns the drawing
 into the chromosome and `LORA_SLOTS` a search would have held it as (slots in
 reading order, one per LoRA however often it is used), and checks it with
 `generate_population.check()` and `generate_runs.plan()` -- the grammar and the
@@ -3519,7 +3519,7 @@ test (`POST /blends/test`) is:
    queued, and never resumed, evaluated or tested as a search would be (those
    endpoints refuse it with a 409);
 3. a **verification** of that individual on those questions, queued for the worker
-   -- `testing/evaluate_chromosome_against_loras.py`, the same comparison as
+   -- `gep_lora/core/testing/evaluate_chromosome_against_loras.py`, the same comparison as
    *Verification* above.
 
 So a drawn blend is one of your runs like any other: it is listed on the Runs page
@@ -3571,7 +3571,7 @@ one, a download otherwise). It is never a second generator: `POST /blends/code`
   (the mocked one for a practice run), its LoRAs as slots, and the questions the
   test writes to `training.jsonl` beside its sweep when it starts.
 
-The overlay is `async_api/code_view.js` (`gepCode.show()`), served beside `nav.js`.
+The overlay is `gep_lora/apps/web/static/code_view.js` (`gepCode.show()`), served beside `nav.js`.
 
 ### Compare blends — two blends side by side
 
@@ -3598,7 +3598,7 @@ every question with both answers. The address carries what is open
 (`?a=JOB.N&b=JOB.N`), so a link brings the same two blends back.
 
 The chat can do all of it ("open the best of job 3 in A", "copy A to B and make its
-top an SVD", "test both on 30 questions"), through `async_api_agent/compare.py`: a
+top an SVD", "test both on 30 questions"), through `gep_lora/assistant/compare.py`: a
 `visual.Toolbox` whose tools take `blend` ("A" or "B") and run the visual guide's
 own tool on that side. It adds no pipeline either:
 
@@ -3635,10 +3635,10 @@ hand.
 
 A script generated from `template_remote_code.py` needs a server to talk to, and
 finds it in `$GEP_LORA_SERVER` — falling back to `http://127.0.0.1:8770`, which
-is the default port `blends/lora_server.py` listens on:
+is the default port `gep_lora/core/blends/lora_server.py` listens on:
 
 ```bash
-D:\sage-is\loras\.venv\Scripts\python.exe -m blends.lora_server --base-model unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit
+D:\sage-is\loras\.venv\Scripts\python.exe -m gep_lora.core.blends.lora_server --base-model unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit
 D:\sage-is\loras\.venv\Scripts\python.exe run_db\run_004.py
 ```
 
@@ -3680,7 +3680,7 @@ the original window.
 A sweep records what it cost as carefully as it records what it found. Every step
 of every pass writes a `step_timings` row -- wall seconds, how many items it
 worked on, how many it skipped -- and the phases inside it write `phase_timings`
-rows with `calls` beside the seconds. `python -m metrics.report` reads them back:
+rows with `calls` beside the seconds. `python -m gep_lora.core.metrics.report` reads them back:
 
 ```
 where the time went -- 41.2m over 9 step(s)
@@ -3827,7 +3827,7 @@ repo folder unless it is already absolute) and written into every script as a
 literal. Repointing the eval set is therefore a settings change followed by
 `python start_run.py runs`, and the sweep records which prompts it was scored against,
 which matters because the prompts are half of what a fitness number means. A
-resumed sweep keeps reading its own stored value: `start_run.py` passes
+resumed sweep keeps reading its own stored value: `gep_lora/core/pipeline/start_run.py` passes
 `conf["TRAINING_SET"]`, so editing `settings.py` cannot silently move the eval
 set out from under a sweep already under way.
 
@@ -3847,7 +3847,7 @@ the dataset's own answer, a judge shown what the base model said and asked how
 much the blend improved on it, overlap with that answer, local checks, or a
 panel.
 The registry and every knob behind it are described under
-[`evaluators/`](#5-evaluators--exchangesquality) above; `python start_run.py
+[`gep_lora/core/evaluators/`](#5-evaluators--exchangesquality) above; `python start_run.py
 --evaluators` lists what is registered. It is the setting the search's direction
 hangs from, so it is worth choosing before a long run rather than after one.
 
@@ -3867,109 +3867,119 @@ warning — the effective cap is unchanged.
 
 ## Files
 
-Three drivers sit at the top level; everything else lives in a folder named for
-what it does, so the tree answers "where would that be?" before you open
-anything.
+One package, `gep_lora/`, in four layers that each import only the ones below
+them -- apps -> assistant -> service -> core -- so any number of user
+interfaces can sit on the same features (`unittests/test_layers.py` holds the
+rule). Three launchers stay at the top, so `python main.py` is still the
+command.
 
 ```
-main.py  start_run.py  continue_run.py     the three drivers
+main.py  start_run.py  continue_run.py     launchers for the three drivers
 
-config/       every knob the pipeline reads
-search/       the GEP search itself
-blends/       a chromosome, turned into a script and run
-templates/    what those scripts are made from
-storage/      the database, and the datasets it keeps
-metrics/      what each step cost, measured and read back
-evaluators/   how an answer is scored
-testing/      the held-out pass
-reporting/    a sweep, written out as something to look at
-adapters/     making and checking the five LoRAs a sweep blends
-tools/        dev aids that are not part of the pipeline
-async_api/    the search as a web service: jobs, a worker, live inference
-async_api_agent/  the guides behind /guide.html, /visual_guide.html and /blend_comparison.html: prompts, providers, tools, a dataset's facts
+gep_lora/
+  paths.py        where the repo is; every relative setting is against it
+  core/           the engine: a sweep, from population to fitness
+    pipeline/     the three drivers themselves
+    config/       every knob the pipeline reads
+    search/       the GEP search itself
+    blends/       a chromosome, turned into a script and run
+    templates/    what those scripts are made from
+    storage/      the database, and the datasets it keeps
+    metrics/      what each step cost, measured and read back
+    evaluators/   how an answer is scored
+    testing/      the held-out pass
+    reporting/    a sweep, written out as something to look at
+    adapters/     making and checking the LoRAs a sweep blends; the catalogue
+  service/        the search as a web service's features: jobs, a worker,
+                  trainings, verifications, drawn blends, live inference --
+                  facade.py is every one of them as a method, for any UI
+  assistant/      the guides behind /guide.html, /visual_guide.html and
+                  /blend_comparison.html: prompts, providers, tools, a dataset's facts
+  apps/web/       the HTTP API (server.py, agent_routes.py) and its pages (static/)
+  tools/          dev aids that are not part of the pipeline
 ```
 
 ### The drivers
 
 | Path | What it is |
 |---|---|
-| `main.py` | start_run.py, continue_run.py, then the testing pass — a whole search in one command |
-| `start_run.py` | the pipeline driver; add future steps to its `STEPS` list |
-| `continue_run.py` | runs the generation loop on over a sweep already in the database |
+| `gep_lora/core/pipeline/main.py` | gep_lora/core/pipeline/start_run.py, gep_lora/core/pipeline/continue_run.py, then the testing pass — a whole search in one command |
+| `gep_lora/core/pipeline/start_run.py` | the pipeline driver; add future steps to its `STEPS` list |
+| `gep_lora/core/pipeline/continue_run.py` | runs the generation loop on over a sweep already in the database |
 
 ### The search
 
 | Path | What it is |
 |---|---|
-| `config/settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
-| `search/generate_population.py` | the alphabet, `encode`/`decode`, and the random draw |
-| `search/draw_trees.py` | draws one chromosome as a tree → `individuals.tree` |
-| `search/calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
-| `search/elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
-| `search/selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent, culls the weakest, draws one newcomer |
-| `search/mutation.py` | point-mutates every chromosome but the elite's, within its grammar; clears the fitness it invalidates |
-| `search/weight_mutation.py` | swaps a fixed share of all the non-elite weight symbols; never the elite's, never clears `has_changed` |
+| `gep_lora/core/config/settings.py` | COUNT, SEED, TEMPLATE and the rest — every knob, in one place |
+| `gep_lora/core/search/generate_population.py` | the alphabet, `encode`/`decode`, and the random draw |
+| `gep_lora/core/search/draw_trees.py` | draws one chromosome as a tree → `individuals.tree` |
+| `gep_lora/core/search/calculate_fitness.py` | folds each transcript into one number → `individuals.fitness` |
+| `gep_lora/core/search/elitism.py` | marks the fittest individual as the one to keep → `individuals.is_best` |
+| `gep_lora/core/search/selection.py` | roulette wheel sampling; appends each pick as a full copy of its parent, culls the weakest, draws one newcomer |
+| `gep_lora/core/search/mutation.py` | point-mutates every chromosome but the elite's, within its grammar; clears the fitness it invalidates |
+| `gep_lora/core/search/weight_mutation.py` | swaps a fixed share of all the non-elite weight symbols; never the elite's, never clears `has_changed` |
 
 ### Building and running a blend
 
 | Path | What it is |
 |---|---|
-| `blends/generate_runs.py` | fills `template_code.py`, one runnable script per individual |
-| `blends/process_run.py` | launches a generated script and reads its transcript back |
-| `blends/baseline_run.py` | produces and caches what the base model itself answers, for `llm_judge_baseline` |
-| `blends/lora_server.py` | one base model held open, blending LoRAs on request — the load, paid once instead of per individual |
-| `blends/server_pool.py` | starts those servers, hands one to each script of a batch, recycles and stops them |
-| `templates/template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
-| `templates/template_code_mocked.py` | the same, mocked: no model load, random answers and scores |
-| `templates/template_remote_code.py` | the same, remote: the blend is built on a `lora_server.py` process that already holds the model |
-| `templates/template_baseline.py` | the base model alone on the eval prompts — the control a blend is measured against |
-| `templates/template_baseline_mocked.py` | the same, mocked: no model load, invented answers, cached under `mock:` |
+| `gep_lora/core/blends/generate_runs.py` | fills `template_code.py`, one runnable script per individual |
+| `gep_lora/core/blends/process_run.py` | launches a generated script and reads its transcript back |
+| `gep_lora/core/blends/baseline_run.py` | produces and caches what the base model itself answers, for `llm_judge_baseline` |
+| `gep_lora/core/blends/lora_server.py` | one base model held open, blending LoRAs on request — the load, paid once instead of per individual |
+| `gep_lora/core/blends/server_pool.py` | starts those servers, hands one to each script of a batch, recycles and stops them |
+| `gep_lora/core/templates/template_code.py` | the generated script with `@@MARKERS@@` for the varying parts |
+| `gep_lora/core/templates/template_code_mocked.py` | the same, mocked: no model load, random answers and scores |
+| `gep_lora/core/templates/template_remote_code.py` | the same, remote: the blend is built on a `lora_server.py` process that already holds the model |
+| `gep_lora/core/templates/template_baseline.py` | the base model alone on the eval prompts — the control a blend is measured against |
+| `gep_lora/core/templates/template_baseline_mocked.py` | the same, mocked: no model load, invented answers, cached under `mock:` |
 
 ### Scoring
 
 | Path | What it is |
 |---|---|
-| `evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_answers.py`, `llm_judge_baseline.py`, `jev_judge_reference.py`, `similarity.py`, `heuristic.py`, `panel.py` |
-| `evaluators/common.py` | what they share: the registry, the judge transport, the reference answers, the tokeniser |
-| `evaluators/local_model.py` | the other half of the judge transport: the judge loaded here with unsloth, for `JUDGE_BACKEND = "unsloth"` |
+| `gep_lora/core/evaluators/` | the evaluators, one module each: `llm_judge.py`, `llm_judge_reference.py`, `llm_judge_answers.py`, `llm_judge_baseline.py`, `jev_judge_reference.py`, `similarity.py`, `heuristic.py`, `panel.py` |
+| `gep_lora/core/evaluators/common.py` | what they share: the registry, the judge transport, the reference answers, the tokeniser |
+| `gep_lora/core/evaluators/local_model.py` | the other half of the judge transport: the judge loaded here with unsloth, for `JUDGE_BACKEND = "unsloth"` |
 
 ### The database, and reading it back
 
 | Path | What it is |
 |---|---|
-| `storage/store.py` | the database: schema, helpers, `--list/--show/--export` |
-| `storage/add_dataset.py` | the only way into the `datasets` table: every split as a sweep is created, or one afterwards from the command line |
-| `storage/db_datasets.py` | the way back out: a sweep's stored splits written beside its database, for `--from-db` |
-| `metrics/record.py` | the Meter a step is timed with, and the only writer of `step_timings` / `phase_timings` |
-| `metrics/report.py` | what a sweep spent its time on, ranked: `python -m metrics.report` |
-| `reporting/generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database -- including its cost section |
-| `testing/test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
-| `testing/evaluate_chromosome_against_loras.py` | runs a sweep's best individual beside each of its LoRAs applied alone, grades all of them with one judge, and says which the blend beats |
-| `async_api/verify.py` | the API's half of that comparison: what a verification may ask for, the command the worker runs, and the report it leaves behind |
-| `async_api/guide.html` | the LoRA guide page at `/guide.html`: a chat model walks a user from a dataset to trained LoRAs, with the progress drawn beside it |
-| `async_api/visual_guide.html` | the visual guide at `/visual_guide.html`: a blend of the user's LoRAs drawn as a tree and tested, with the guide's chat beside it |
-| `async_api/blend_comparison.html` | the comparison at `/blend_comparison.html`: two blends side by side, opened from any job or drawn, edited and tested on the same questions, with its own guide |
-| `async_api_agent/compare.py` | the comparison's guide: the visual guide's tools on either side, the two tests' plan, and blend A against blend B question by question |
-| `async_api/drawn.py` | a drawn blend in the pipeline's terms: the tree as a chromosome, its rank check and weights, and the sweep of one plus verification that tests it |
-| `async_api/nav.js` | the top bar every page shares: the pages in order, the page's own buttons, the server's health and the API key |
-| `async_api_agent/prompts.py` | every system prompt the guide sends, and the wording it falls back to without a model |
-| `async_api_agent/settings.py` | which provider and model the guide talks through, and what it plans |
-| `async_api_agent/tools.py` | what the guide's chat can do: choose part of the dataset, change ranks, epochs and options, switch dataset, start and stop |
-| `async_api_agent/ui_help.py` | "what is this?" for each block of the page: the blocks that can be explained, and one explained from what it shows |
-| `async_api_agent/visual.py` | the visual guide's chat: tools that edit the drawing, its intro, the test read back, and the debrief |
-| `async_api_agent/create_summary.py` | the journey so far: the user's own facts, the charts as data, the story in the model's words or built-in ones |
+| `gep_lora/core/storage/store.py` | the database: schema, helpers, `--list/--show/--export` |
+| `gep_lora/core/storage/add_dataset.py` | the only way into the `datasets` table: every split as a sweep is created, or one afterwards from the command line |
+| `gep_lora/core/storage/db_datasets.py` | the way back out: a sweep's stored splits written beside its database, for `--from-db` |
+| `gep_lora/core/metrics/record.py` | the Meter a step is timed with, and the only writer of `step_timings` / `phase_timings` |
+| `gep_lora/core/metrics/report.py` | what a sweep spent its time on, ranked: `python -m gep_lora.core.metrics.report` |
+| `gep_lora/core/reporting/generate_html_db_stats.py` | writes one stored sweep out as a self-contained HTML page, beside its database -- including its cost section |
+| `gep_lora/core/testing/test_run_with_dataset.py` | runs a sweep's best individuals against a dataset they were never scored on, and grades what they say |
+| `gep_lora/core/testing/evaluate_chromosome_against_loras.py` | runs a sweep's best individual beside each of its LoRAs applied alone, grades all of them with one judge, and says which the blend beats |
+| `gep_lora/service/verify.py` | the API's half of that comparison: what a verification may ask for, the command the worker runs, and the report it leaves behind |
+| `gep_lora/apps/web/static/guide.html` | the LoRA guide page at `/guide.html`: a chat model walks a user from a dataset to trained LoRAs, with the progress drawn beside it |
+| `gep_lora/apps/web/static/visual_guide.html` | the visual guide at `/visual_guide.html`: a blend of the user's LoRAs drawn as a tree and tested, with the guide's chat beside it |
+| `gep_lora/apps/web/static/blend_comparison.html` | the comparison at `/blend_comparison.html`: two blends side by side, opened from any job or drawn, edited and tested on the same questions, with its own guide |
+| `gep_lora/assistant/compare.py` | the comparison's guide: the visual guide's tools on either side, the two tests' plan, and blend A against blend B question by question |
+| `gep_lora/service/drawn.py` | a drawn blend in the pipeline's terms: the tree as a chromosome, its rank check and weights, and the sweep of one plus verification that tests it |
+| `gep_lora/apps/web/static/nav.js` | the top bar every page shares: the pages in order, the page's own buttons, the server's health and the API key |
+| `gep_lora/assistant/prompts.py` | every system prompt the guide sends, and the wording it falls back to without a model |
+| `gep_lora/assistant/settings.py` | which provider and model the guide talks through, and what it plans |
+| `gep_lora/assistant/tools.py` | what the guide's chat can do: choose part of the dataset, change ranks, epochs and options, switch dataset, start and stop |
+| `gep_lora/assistant/ui_help.py` | "what is this?" for each block of the page: the blocks that can be explained, and one explained from what it shows |
+| `gep_lora/assistant/visual.py` | the visual guide's chat: tools that edit the drawing, its intro, the test read back, and the debrief |
+| `gep_lora/assistant/create_summary.py` | the journey so far: the user's own facts, the charts as data, the story in the model's words or built-in ones |
 
 ### The adapters, and the dev aids
 
 | Path | What it is |
 |---|---|
-| `adapters/create_lora.py` | trains one adapter into a folder, with its recipe, data and loss history beside it, and catalogues it |
-| `adapters/catalog.py` | the LoRA catalogue, the `loras` table of `api_jobs/api.sqlite`: `scan`, `list`, `show`, `own`, `forget`, `models` |
-| `adapters/create_all_loras.py` | trains the whole set, varying rank or learning rate |
-| `adapters/test_lora.py` | asks one adapter a question, without a blend, and prints where the time went; `--no-unsloth` loads through plain transformers |
-| `adapters/base_models_and_loras_comparison.py` | times loading and inference for every base model under `loras/`, bare and with each of its adapters, into a markdown report in `loras/` -- run it on an idle GPU |
-| `tools/test.py` | try a single chromosome → `run/test_*` |
-| `tools/combination.py` | the original two-adapter script the generated code is modelled on |
+| `gep_lora/core/adapters/create_lora.py` | trains one adapter into a folder, with its recipe, data and loss history beside it, and catalogues it |
+| `gep_lora/core/adapters/catalog.py` | the LoRA catalogue, the `loras` table of `api_jobs/api.sqlite`: `scan`, `list`, `show`, `own`, `forget`, `models` |
+| `gep_lora/core/adapters/create_all_loras.py` | trains the whole set, varying rank or learning rate |
+| `gep_lora/core/adapters/test_lora.py` | asks one adapter a question, without a blend, and prints where the time went; `--no-unsloth` loads through plain transformers |
+| `gep_lora/core/adapters/base_models_and_loras_comparison.py` | times loading and inference for every base model under `loras/`, bare and with each of its adapters, into a markdown report in `loras/` -- run it on an idle GPU |
+| `gep_lora/tools/test.py` | try a single chromosome → `run/test_*` |
+| `gep_lora/tools/combination.py` | the original two-adapter script the generated code is modelled on |
 
 ### What is on disk
 
@@ -3978,13 +3988,13 @@ async_api_agent/  the guides behind /guide.html, /visual_guide.html and /blend_c
 | `plan.txt` | the original spec |
 | `run_db/gep.sqlite3` | every sweep ever run, with its settings, seeds, transcripts and scores |
 | `run_db/run_001.py` … | the generated combination scripts, until `process` has run them |
-| `datasets/training_set.txt` | the eval prompts, one per line, read by every generated script; the path is `TRAINING_SET` in `config/settings.py` |
-| `run_testing/` | where the testing pass's scripts run, and are deleted from; `TESTING_RUN_DIR` in `config/settings.py` |
-| `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `tools/test.py` |
+| `datasets/training_set.txt` | the eval prompts, one per line, read by every generated script; the path is `TRAINING_SET` in `gep_lora/core/config/settings.py` |
+| `run_testing/` | where the testing pass's scripts run, and are deleted from; `TESTING_RUN_DIR` in `gep_lora/core/config/settings.py` |
+| `run/test_tree.txt`, `run/test_run.py` | output for the chromosome currently set in `gep_lora/tools/test.py` |
 
 ### Pipeline
 
-`start_run.py` runs all of this in order. Every module below is a library it calls;
+`gep_lora/core/pipeline/start_run.py` runs all of this in order. Every module below is a library it calls;
 the arrows end in tables, not files.
 
 ```
@@ -3995,7 +4005,7 @@ generate_population.build_population  -->  individuals (chromosome)
 draw_trees.draw                       -->  individuals.tree
 generate_runs.plan/render             -->  individuals.script_source
    +                                       + run_db/run_NNN.py  (must be files)
-templates/template_code.py                 (the shape of those scripts)
+gep_lora/core/templates/template_code.py                 (the shape of those scripts)
 
 process_run.launch/exchanges          -->  executions, exchanges
 baseline_run.ensure                   -->  baselines (once per model+question,
@@ -4018,11 +4028,11 @@ test_run_with_dataset                 -->  test_results (the best individuals,
                                            re-pointed at unseen questions,
                                            then graded by the same evaluators)
 
-tools.test  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
+gep_lora.tools.test  -->  run/test_tree.txt + run/test_run.py  (one chromosome, same builders)
 
-continue_run.py  -->  that whole column again, once per generation
-main.py          -->  start_run.py, continue_run.py, then the testing pass
-main.py --db <a prepared database>
+gep_lora/core/pipeline/continue_run.py  -->  that whole column again, once per generation
+gep_lora/core/pipeline/main.py          -->  gep_lora/core/pipeline/start_run.py, gep_lora/core/pipeline/continue_run.py, then the testing pass
+gep_lora/core/pipeline/main.py --db <a prepared database>
                  -->  the same, into the sweep that database already holds:
                       its settings and its stored dataset, nothing local, and
                       everything on disk in one folder beside the database
