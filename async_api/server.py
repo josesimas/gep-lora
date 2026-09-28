@@ -128,6 +128,7 @@ same top bar from /nav.js. None needs a key to be served; what they show does.
                                            guide (reads and writes /agent/defaults)
     GET    /console.html[?job=N]           the console: every endpoint above, by hand
     GET    /nav.js                         the top bar every page shares
+    GET    /splitter.js                    the resizable left column, width kept per page
     /agent, /demo, /guide_defaults         the old addresses, redirected to the new
 
 The LoRA agent (async_api_agent/routes.py)
@@ -191,11 +192,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 #   console.html   a page that exercises every endpoint; ?job=N opens that job
 #   nav.js         the top bar every page draws
 #   code_view.js   the overlay the two drawing pages show a blend's script in
+#   splitter.js    the draggable left column of the guide, visual guide, compare and console
 PAGES = {name: (os.path.join(HERE, name), "text/html; charset=utf-8")
          for name in ("guide.html", "visual_guide.html", "blend_comparison.html",
                       "runs.html", "settings.html", "console.html")}
 PAGES["nav.js"] = (os.path.join(HERE, "nav.js"), "text/javascript; charset=utf-8")
 PAGES["code_view.js"] = (os.path.join(HERE, "code_view.js"), "text/javascript; charset=utf-8")
+PAGES["splitter.js"] = (os.path.join(HERE, "splitter.js"), "text/javascript; charset=utf-8")
 
 # Where a page used to be, so a bookmark or an old link still lands. The query
 # goes along, so /agent?job=3 is /guide.html?job=3.

@@ -89,7 +89,7 @@
   .tag.mock { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
 
   /* --- the two halves ----------------------------------------------------------------- */
-  .halves { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); height: calc(100vh - var(--top)); }
+  .halves { display: grid; grid-template-columns: var(--split, minmax(340px, 440px)) minmax(0, 1fr); height: calc(100vh - var(--top)); }
   .agent { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--line); }
   .board { overflow-y: auto; padding: 20px 22px 40px; min-width: 0; }
   @media (max-width: 960px) {
@@ -352,8 +352,9 @@
 <header class="topbar" id="nav" data-page="compare" data-about="two blends side by side: open, edit and test them"></header>
 <script src="/nav.js"></script>
 <script src="/code_view.js"></script>
+<script src="/splitter.js"></script>
 
-<div class="halves">
+<div class="halves" data-left-column="compare">
   <!-- left: the guide -->
   <section class="agent" aria-label="The guide">
     <div class="agent-head">

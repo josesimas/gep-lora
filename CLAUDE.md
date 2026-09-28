@@ -1075,7 +1075,11 @@ change to it. These rules hold it together:
   in `.html` because `/runs` and `/settings` are already JSON endpoints. The old
   addresses are `server.MOVED`, redirected with their query. Each page still shows
   its own key gate when `#changeKey` is clicked -- what a missing key blocks is the
-  page's business.
+  page's business. A page with a left column (guide, visual guide, compare, console) marks
+  its grid `data-left-column="<name>"`, writes the column as `var(--split, <default>)`
+  and loads `/splitter.js`, which adds the draggable edge and keeps the width in
+  `localStorage` as `gep-split-<name>` -- only a width the user dragged to, so the
+  default stays the page's CSS (double-click the edge to return to it).
 
 - **Every page is static and private by the key.** `/guide.html`, `/visual_guide.html`,
   `/runs.html`, `/settings.html` and `/console.html` are served to anyone; what they show comes from endpoints that read by

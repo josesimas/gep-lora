@@ -218,6 +218,15 @@ class RefusalTests(ServerTestCase):
         for page in ("/visual_guide.html", "/blend_comparison.html"):
             with urllib.request.urlopen(self.base + page, timeout=10) as reply:
                 self.assertIn('<script src="/code_view.js"></script>', reply.read().decode("utf-8"))
+        for name, page in (("guide", "/guide.html"), ("visual", "/visual_guide.html"),
+                           ("compare", "/blend_comparison.html"), ("console", "/console.html")):
+            with urllib.request.urlopen(self.base + page, timeout=10) as reply:
+                body = reply.read().decode("utf-8")
+            self.assertIn('data-left-column="%s"' % name, body, page)
+            self.assertIn('<script src="/splitter.js"></script>', body, page)
+            self.assertIn("var(--split,", body, page)
+        with urllib.request.urlopen(self.base + "/splitter.js", timeout=10) as reply:
+            self.assertIn("javascript", reply.headers["Content-Type"])
         with urllib.request.urlopen(self.base + "/code_view.js", timeout=10) as reply:
             self.assertIn("javascript", reply.headers["Content-Type"])
             self.assertIn("gepCode", reply.read().decode("utf-8"))
