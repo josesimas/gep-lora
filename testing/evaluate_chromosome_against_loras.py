@@ -183,6 +183,7 @@ def contestants(row, conf, slots, dataset, count, stored_script=False):
     all_slots = conf.get("LORA_SLOTS")
     ranks = generate_runs.slot_ranks(all_slots)
     shared = dict(template_lines=lines, weight_seed=row["weight_seed"],
+                  weight_values=store.weight_values(row),
                   training_set=dataset, slots=all_slots, count=count,
                   base_model=conf.get("BASE_MODEL"),
                   chat_template=generate_runs.chat_template_name(conf))

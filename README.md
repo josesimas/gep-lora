@@ -3542,6 +3542,18 @@ failed or cancelled). The page then holds that new blend -- its number, its pin 
 and opening it again (`GET /blends/{job}?individual=N` returns `pin`) draws the same
 weights. Older sweep databases gain the column when opened (`store._migrate()`).
 
+**Editing a weight's value.** The **Edit values** switch beside *Weights* (on both
+pages, per blend on the comparison) turns the ten tiles into boxes: type what a weight
+is worth, above 0 and at most 1 -- the draw's own range -- and the tree, the formula
+and everything after follow. A value set by hand is marked, with ↺ to put back what
+the seed drew; *New weights* draws afresh and clears them. The chat does it too
+("make w3 0.4"). Such values are **set over the seed's draw**, the rest of it
+unchanged, and they travel with the blend: each blend template carries a
+`WEIGHT_VALUES` block applied over its `WEIGHTS` (`{}` for any other blend), a drawn
+test's sweep and a blend saved into a run store them in `individuals.weight_values`,
+and the runs step, the verification's re-render and going live all honour them. A
+value that differs from where a job's blend came from marks it *edited*.
+
 **Show code.** Every tree has a **Show code** button (both pages). It opens an
 overlay with the Python the blend runs as when it is processed -- coloured, with
 line numbers, **Copy** and **Save as…** (the browser's own save dialog where it has

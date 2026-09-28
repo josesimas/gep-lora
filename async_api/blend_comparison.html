@@ -232,6 +232,15 @@
   .weight[draggable="true"]:active { cursor: grabbing; }
   .weight.dragging { opacity: .45; }
   .weight.current { outline: 2px solid var(--ink); outline-offset: 1px; }
+  /* A value set by hand, over the seed's draw. */
+  .weight.set { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, var(--panel)); }
+  .weight.set i { background: var(--warn); }
+  .weight .reset { float: right; border: 0; background: none; min-height: 0; height: 16px; padding: 0 2px; margin: -1px -3px 0 0;
+                   font-size: 12px; line-height: 1; color: var(--muted); cursor: pointer; }
+  .weight .reset:hover { color: var(--ink); }
+  .weight input.value { width: 100%; min-height: 24px; height: 24px; margin-top: 2px; padding: 1px 5px; font: 12px var(--mono); }
+  .weights-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .weights-head .grow { flex: 1; }
   svg.tree .leaf.over rect.body { stroke: var(--ink) !important; stroke-width: 3; stroke-dasharray: 4 3; }
   .seedrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .seedrow input { width: 150px; min-height: 30px; font-family: var(--mono); font-size: 12px; }
@@ -419,6 +428,7 @@ let checkTimers = {}, checkSeq = { A: 0, B: 0 }, pollTimer = null;
 let dragged = null;         // the piece being dragged
 let datasetMode = "demo";
 let picking = { A: null, B: null };   // the job chosen in each side's Open box
+let editingValues = { A: false, B: false };   // each side's weight tiles are boxes to type values into
 
 function conversationId() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -426,7 +436,7 @@ function conversationId() {
 }
 
 function emptyTree() { return { op: "CAT", children: [null, null] }; }
-function emptySide() { return { tree: emptyTree(), seed: null, number: 1, pin: null, from: null }; }
+function emptySide() { return { tree: emptyTree(), seed: null, number: 1, pin: null, values: {}, from: null }; }
 
 function fresh() {
   return { conversation: conversationId(), stage: "drawing", transcript: [],
@@ -819,7 +829,7 @@ function randomBlend(side) {
     const model = named(blendModels(treeOf(side))[0]) || named(blendModels(treeOf(other(side)))[0]) || named(shownModel());
     const found = await api("POST", "/blends/random", model ? { base_model: model } : {});
     pushUndo(side);
-    S.session.blends[side] = { tree: found.tree, seed: found.seed, number: 1, pin: null, from: null };
+    S.session.blends[side] = { tree: found.tree, seed: found.seed, number: 1, pin: null, values: {}, from: null };
     checkSeq[side] += 1;
     S.checks[side] = found.check;
     if (S.selected && S.selected.side === side) S.selected = null;
@@ -834,7 +844,7 @@ function showCode(side) {
   const blend = blendOf(side);
   step(async () => {
     const body = { tree: blend.tree, seed: blend.seed, number: blend.number || 1, pin: blend.pin ?? null,
-                   count: S.session.count, mock: $("mock").checked };
+                   values: blend.values || {}, count: S.session.count, mock: $("mock").checked };
     if (blend.from) body.job = blend.from.job;
     const found = await api("POST", "/blends/code", body);
     gepCode.show({ title: `The code blend ${side} runs`, name: found.name, source: found.source, note: found.note, exact: found.exact });
@@ -880,8 +890,8 @@ async function openBlend(side, jobId, number = null) {
   const query = number ? `?individual=${number}` : "";
   const found = await api("GET", `/blends/${jobId}${query}`);
   pushUndo(side);
-  S.session.blends[side] = { tree: found.tree, seed: found.seed, number: found.number || 1, pin: found.pin ?? null,
-                              from: { job: found.job, individual: found.number, label: found.label, chromosome: found.drawn, seed: found.seed, pin: found.pin ?? null } };
+  S.session.blends[side] = { tree: found.tree, seed: found.seed, number: found.number || 1, pin: found.pin ?? null, values: found.values || {},
+                              from: { job: found.job, individual: found.number, label: found.label, chromosome: found.drawn, seed: found.seed, pin: found.pin ?? null, values: found.values || {} } };
   picking[side] = found.job;
   checkSeq[side] += 1;                  // whatever check is in flight was about the drawing before
   S.checks[side] = null;
@@ -915,7 +925,7 @@ function fromLine(side) {
   if (!from) return el("p", { class: "from" }, "Drawn here.");
   // compare.edited(): another drawing, or other weights.
   const edited = (check && check.chromosome !== from.chromosome) || blend.seed !== from.seed
-    || (blend.pin ?? null) !== (from.pin ?? null);
+    || (blend.pin ?? null) !== (from.pin ?? null) || !sameValues(blend.values, from.values);
   const ready = check && check.state === "ok";
   return el("p", { class: "from", title: from.chromosome ? `As it was there: ${from.chromosome}` : null },
     `From job ${from.job}${from.label ? ` (${from.label})` : ""}, blend #${from.individual}`,
@@ -933,10 +943,10 @@ function saveBlend(side) {
   if (busy || !from) return;
   step(async () => {
     const saved = await api("POST", `/blends/${from.job}/save`,
-      { tree: blend.tree, seed: blend.seed, number: blend.number || 1, pin: blend.pin ?? null });
+      { tree: blend.tree, seed: blend.seed, number: blend.number || 1, pin: blend.pin ?? null, values: blend.values || {} });
     Object.assign(blend, { number: saved.number, pin: saved.check.weight_seed });
     blend.from = { job: saved.job, individual: saved.number, label: from.label, chromosome: saved.drawn,
-                   seed: blend.seed, pin: blend.pin };
+                   seed: blend.seed, pin: blend.pin, values: Object.assign({}, blend.values || {}) };
     S.checks[side] = saved.check;
     marker(`${side}: saved as blend #${saved.number} of job ${saved.job}`);
     agentSays(plain(`Blend ${side} is saved into job ${saved.job} as blend **#${saved.number}**, with the weights you see pinned. `
@@ -958,7 +968,7 @@ async function runCheck(side) {
   const blend = blendOf(side);
   const sentTree = JSON.stringify(blend.tree), sentSeed = blend.seed;
   try {
-    const found = await api("POST", "/blends/check", { tree: blend.tree, seed: blend.seed, number: blend.number || 1, pin: blend.pin ?? null });
+    const found = await api("POST", "/blends/check", { tree: blend.tree, seed: blend.seed, number: blend.number || 1, pin: blend.pin ?? null, values: blend.values || {} });
     const now = blendOf(side);
     if (seq !== checkSeq[side] || sentTree !== JSON.stringify(now.tree) || (sentSeed !== null && sentSeed !== now.seed)) return;
     S.checks[side] = found;
@@ -974,6 +984,7 @@ async function runCheck(side) {
 function newWeights(side, seed = null) {
   pushUndo(side);
   blendOf(side).seed = seed; blendOf(side).pin = null;      // a new draw is no saved blend's
+  blendOf(side).values = {};                                 // and has nothing set by hand
   save(); scheduleCheck(side, true);
 }
 
@@ -1263,16 +1274,69 @@ function weightsBlock(side) {
   const used = new Set(places(blend.tree).filter(([, n]) => n && n.lora !== undefined).map(([, n]) => n.weight));
   const weights = (check || {}).weights || {};
   return el("div", {},
-    el("h3", { class: "sub" }, "Weights", qm("compare_blends.weights", "Weights"),
-       blend.number > 1 ? el("span", { class: "muted small", style: "font-weight:400" }, `drawn for #${blend.number}, as in its search`) : null),
+    el("div", { class: "weights-head" },
+      el("h3", { class: "sub" }, "Weights", qm("compare_blends.weights", "Weights"),
+         blend.number > 1 ? el("span", { class: "muted small", style: "font-weight:400" }, `drawn for #${blend.number}, as in its search`) : null),
+      el("span", { class: "grow" }),
+      el("label", { class: "check small", title: `Type what blend ${side}'s weights are worth, instead of its seed's draw` },
+        el("input", { type: "checkbox", checked: editingValues[side], onchange: (e) => { editingValues[side] = e.target.checked; drawBoard(); } }), "Edit values")),
     el("div", { class: "seedrow" },
       el("span", { class: "muted small" }, "seed"),
       el("input", { type: "number", min: "0", value: blend.seed ?? "", title: `The seed blend ${side}'s w1..w10 are drawn from`,
                     onchange: (e) => { const v = Number(e.target.value); if (Number.isInteger(v) && v >= 0) newWeights(side, v); } }),
       el("button", { type: "button", class: "sm", onclick: () => newWeights(side, null), title: `Draw new values for blend ${side}'s w1..w10` }, "New weights")),
-    el("div", { class: "weights" }, ...WEIGHTS.map((w) => weightTile(w, weights[w] !== undefined ? fmt(weights[w], 3) : "…",
-      used.has(w), used.has(w) ? `${w} is used in blend ${side}` : `${w} is not used in blend ${side}`, side))));
+    el("div", { class: "weights" }, ...WEIGHTS.map((w) => valueTile(side, w,
+      used.has(w), used.has(w) ? `${w} is used in blend ${side}` : `${w} is not used in blend ${side}`))));
 }
+
+const sameValues = (a, b) => JSON.stringify(Object.entries(a || {}).sort()) === JSON.stringify(Object.entries(b || {}).sort());
+
+// A value set by hand: typed into a tile while "Edit values" is on. Kept to the
+// draw's own range, (0, 1]; set back to what the seed drew, it is no longer set.
+function setValue(side, w, raw) {
+  const blend = blendOf(side), check = S.checks[side];
+  const value = Math.round(Number(raw) * 10000) / 10000;
+  if (!(value > 0 && value <= 1)) { flash(`${w} must be above 0 and at most 1.`, side); drawBoard(); return; }
+  pushUndo(side);
+  const values = Object.assign({}, blend.values || {});
+  if (check && check.drawn && check.drawn[w] === value) delete values[w]; else values[w] = value;
+  blend.values = values;
+  afterChange(side);
+}
+function resetValue(side, w) {
+  const blend = blendOf(side);
+  if (!blend.values || blend.values[w] === undefined) return;
+  pushUndo(side);
+  const values = Object.assign({}, blend.values);
+  delete values[w];
+  blend.values = values;
+  afterChange(side);
+}
+
+// One weight's tile. Normally a piece to drag onto a LoRA; with "Edit values"
+// on, a box its value is typed into. Either way a value set by hand is marked,
+// with ↺ to put back what the seed drew.
+function valueTile(side, w, used, title) {
+  const blend = blendOf(side), check = S.checks[side];
+  const weights = (check || {}).weights || {}, drawn = (check || {}).drawn || {};
+  const set = blend.values && blend.values[w] !== undefined;
+  const shown = weights[w] !== undefined ? fmt(weights[w], 4) : "…";
+  const reset = set ? el("button", { type: "button", class: "reset", title: `Put back the drawn value${drawn[w] !== undefined ? " (" + fmt(drawn[w], 4) + ")" : ""}`,
+    onclick: (e) => { e.stopPropagation(); resetValue(side, w); } }, "↺") : null;
+  const note = set ? ` — set by hand${drawn[w] !== undefined ? ", drawn " + fmt(drawn[w], 4) : ""}` : "";
+  if (!editingValues[side]) {
+    const tile = weightTile(w, shown, used, title + note, side);
+    if (set) { tile.classList.add("set"); tile.prepend(reset); }
+    return tile;
+  }
+  return el("div", { class: "weight" + (used ? " used" : "") + (set ? " set" : ""), title: `What ${w} is worth${note}` },
+    reset, el("b", {}, w),
+    el("input", { class: "value", type: "number", min: "0.0001", max: "1", step: "0.01", value: weights[w] ?? "",
+                  "aria-label": `What ${w} is worth, above 0 and at most 1`,
+                  onchange: (e) => setValue(side, w, e.target.value),
+                  onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); } }));
+}
+
 
 // A weight tile: dragged onto a LoRA in the tree, or clicked while one is selected.
 function weightTile(w, value, used, title, side) {
@@ -1738,7 +1802,9 @@ async function useKey(value) {
   if (saved && saved.transcript && saved.transcript.length) {
     S = Object.assign(fresh(), saved);
     S.session = Object.assign(fresh().session, S.session || {});
-    S.session.blends = Object.assign({ A: emptySide(), B: emptySide() }, S.session.blends || {});
+    // Each side filled out too: a session saved before a field existed has none.
+    const sides = S.session.blends || {};
+    S.session.blends = { A: Object.assign(emptySide(), sides.A || {}), B: Object.assign(emptySide(), sides.B || {}) };
   } else {
     S = fresh();
   }

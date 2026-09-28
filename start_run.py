@@ -316,6 +316,7 @@ def step_runs(context, numbers=None):
             label="Individual %d" % row["number"],
             template_lines=template_lines,
             weight_seed=weight_seed,
+            weight_values=store.weight_values(row),
             training_set=training_set,
             slots=slots,
             count=count,

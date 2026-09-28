@@ -86,6 +86,10 @@ SPECS = {
     "swap_sides": ({"blend": _SIDE, "where": _PATH}, ["blend", "where"], True),
     "new_weights": ({"blend": _SIDE, "seed": dict(_INT, description="a seed of their choosing")},
                     ["blend"], True),
+    "set_weight_value": ({"blend": _SIDE, "weight": {"type": "string", "enum": list(VARIABLES)},
+                          "value": {"type": ["number", "null"],
+                                    "description": "above 0 and at most 1; null puts back the drawn value"}},
+                         ["blend", "weight", "value"], True),
     "start_over": ({"blend": _SIDE}, ["blend"], True),
     "random_blend": ({"blend": _SIDE}, ["blend"], True),
     "list_demo_datasets": ({}, [], False),
@@ -104,7 +108,7 @@ class CompareError(visual.VisualError):
 
 def empty_side():
     return {"tree": visual.empty_tree(), "seed": None, "number": drawn.NUMBER, "pin": None,
-            "from": None}
+            "values": {}, "from": None}
 
 
 def _from(value):
@@ -120,7 +124,8 @@ def _from(value):
     return {"job": job, "individual": individual,
             "label": label if isinstance(label, str) else None,
             "chromosome": chromosome if isinstance(chromosome, str) else None,
-            "seed": number(value.get("seed")), "pin": number(value.get("pin"))}
+            "seed": number(value.get("seed")), "pin": number(value.get("pin")),
+            "values": value.get("values") if isinstance(value.get("values"), dict) else {}}
 
 
 def session_of(raw):
@@ -138,10 +143,10 @@ def session_of(raw):
         one = blends.get(side) if isinstance(blends.get(side), dict) else {}
         try:
             drawing = visual.session_of({name: one[name] for name in ("tree", "seed", "number",
-                                                                      "pin") if name in one})
+                                                                      "pin", "values") if name in one})
             out["blends"][side] = {"tree": drawing["tree"], "seed": drawing["seed"],
                                    "number": drawing["number"], "pin": drawing["pin"],
-                                   "from": _from(one.get("from"))}
+                                   "values": drawing["values"], "from": _from(one.get("from"))}
         except visual.VisualError as error:
             raise CompareError("blend %s: %s" % (side, error))
     return out
@@ -151,7 +156,7 @@ def view(pair, side):
     """One side as visual.py's session: its drawing and the shared test."""
     one = pair["blends"][side]
     return {"tree": copy.deepcopy(one["tree"]), "seed": one["seed"], "number": one["number"],
-            "pin": one["pin"], "questions": pair["questions"], "count": pair["count"], "mock": pair["mock"]}
+            "pin": one["pin"], "values": dict(one["values"]), "questions": pair["questions"], "count": pair["count"], "mock": pair["mock"]}
 
 
 def side_of(blend):
@@ -167,7 +172,8 @@ def edited(one, found):
     """Has a side opened from a job changed since: another drawing, or other weights?"""
     was = one["from"]
     return bool(was and (found is None or found["chromosome"] != was["chromosome"]
-                         or one["seed"] != was["seed"] or one["pin"] != was["pin"]))
+                         or one["seed"] != was["seed"] or one["pin"] != was["pin"]
+                         or one["values"] != was["values"]))
 
 
 def _brief_side(catalog, user, pair, side, names):
@@ -214,7 +220,8 @@ class Toolbox(visual.Toolbox):
         result = getattr(visual.Toolbox, method)(self, **arguments)
         one = self.pair["blends"][side]
         one.update(tree=self.session["tree"], seed=self.session["seed"],
-                   number=self.session["number"], pin=self.session["pin"])
+                   number=self.session["number"], pin=self.session["pin"],
+                   values=self.session["values"])
         return dict(result, blend=side)
 
     def _shared(self, method, **arguments):
@@ -255,9 +262,9 @@ class Toolbox(visual.Toolbox):
         found = drawn.opened(self.registry, self.catalog, self.user, row, individual)
         self.pair["blends"][side] = {
             "tree": found["tree"], "seed": found["seed"], "number": found["number"],
-            "pin": found["pin"], "from": {"job": found["job"], "individual": found["number"],
+            "pin": found["pin"], "values": found["values"], "from": {"job": found["job"], "individual": found["number"],
                      "label": found["label"], "chromosome": found["drawn"],
-                     "seed": found["seed"], "pin": found["pin"]}}
+                     "seed": found["seed"], "pin": found["pin"], "values": found["values"]}}
         return {"blend": side, "job": found["job"], "individual": found["number"],
                 "label": found["label"]}
 
@@ -300,6 +307,9 @@ class Toolbox(visual.Toolbox):
         result = self._on(blend, "_random_blend")
         self.pair["blends"][result["blend"]]["from"] = None
         return result
+
+    def _set_weight_value(self, blend, weight, value=None):
+        return self._on(blend, "_set_weight_value", weight=weight, value=value)
 
     def _start_over(self, blend):
         result = self._on(blend, "_start_over")

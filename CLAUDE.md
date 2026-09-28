@@ -926,7 +926,8 @@ The elite's weights are not in the pool. A moved individual goes through
 as **valid Python** so editors, linters and `python -m compileall` still work on it. Markers:
 `@@NAME@@` inline; a line that is only `@@NAME@@` or `# @@NAME@@` becomes a block; a line
 starting with `#~` is a template-only note that never reaches the output. Blocks: `TREE`,
-`BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`, `WEIGHT_SEED`, `BASE_MODEL`,
+`BUILD_ORDER`, `NOTE`, `ATTACH_LEAVES`, `COMBINE_NODES`, `WEIGHT_SEED`, `WEIGHT_VALUES`
+(values edited by hand, set over the draw: `{}` for any searched blend), `BASE_MODEL`,
 `CHAT_TEMPLATE`, `TRAINING_SET`, `TRAINING_COUNT`, `LORA_SLOTS`. Inline: `SCRIPT_NAME`, `PROVENANCE`,
 `LABEL`, `EXPRESSION`, `LEAF_COUNT`, `FINAL_ADAPTER`, `FINAL_RANK`.
 
@@ -1384,9 +1385,14 @@ appeared to manage VRAM would be claiming to test something it cannot.
   (`drawn.save()`, `POST /blends/{job}/save`) stores the seed it was shown under, and
   `step_runs` keeps a pin instead of deriving one -- anything else that derives a
   weight seed from a number (`golive.blend_spec`, `drawn.draw()`) must honour it too.
-  Copies inherit it (`append_copies` copies every column). A column added to a sweep
-  table goes in `store._ADDED_COLUMNS` as well, since `CREATE TABLE IF NOT EXISTS`
-  leaves an old table alone.
+  Copies inherit it (`append_copies` copies every column). Beside it,
+  `individuals.weight_values` holds values edited by hand ({"w3": 0.42}), set over that
+  draw by every template's `WEIGHT_VALUES` block; everything that renders a script
+  (`step_runs`, `evaluate_chromosome_against_loras.contestants`, `drawn.code`) passes
+  `store.weight_values(row)` to `render()`, and `golive.blend_spec` sets them over
+  `draw_weights()` -- a new reader of an individual's weights must do the same. A
+  column added to a sweep table goes in `store._ADDED_COLUMNS` as well, since `CREATE
+  TABLE IF NOT EXISTS` leaves an old table alone.
 - **A step reads the settings its sweep was created with**, not `settings.py` as it stands
   now; that is what makes resuming a sweep still be the same sweep. A seed left `None` is
   drawn once at sweep creation and stored as the number drawn.

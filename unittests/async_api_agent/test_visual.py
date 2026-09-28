@@ -135,6 +135,18 @@ class ToolTests(Mixin, JobsTestCase):
                           self.box.session, choice=SCRIPTED)
         self.assertEqual([one["tool"] for one in out["steps"]], ["random_blend"])
 
+    def test_a_weight_value_set_by_hand(self):
+        self.run_ok("draw_blend", loras=["slot-L1", "slot-L2"])
+        done = self.run_ok("set_weight_value", weight="w2", value=0.3)
+        self.assertEqual((done["value"], done["how"]), ("0.3000", "set by hand"))
+        self.assertEqual(self.box.outcome()["check"]["weights"]["w2"], 0.3)
+        self.assertIn("error", self.box.run("set_weight_value", {"weight": "w2", "value": 2}))
+        self.run_ok("set_weight_value", weight="w2", value=None)
+        self.assertEqual(self.box.session["values"], {})
+        self.run_ok("set_weight_value", weight="w5", value=0.9)
+        self.run_ok("new_weights")                                  # a new draw clears them
+        self.assertEqual(self.box.session["values"], {})
+
     def test_a_test_is_an_action_once_it_can_run(self):
         self.run_ok("draw_blend", loras=["slot-L1", "slot-L2"])
         self.refused("start_test", "choose the questions")

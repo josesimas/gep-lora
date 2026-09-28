@@ -216,6 +216,31 @@ def pin_of(value):
     return value
 
 
+# What a weight may be set to by hand: the range the draw itself keeps to.
+MIN_VALUE, MAX_VALUE = 0.0, 1.0
+
+
+def values_of(value):
+    """Weight values edited by hand, checked. -> {w: float}, {} for none.
+
+    Each is a weight's name (w1..w10) and a number above MIN_VALUE and at most
+    MAX_VALUE -- the draw's own (0, 1] -- kept to 4 places as the page shows
+    them. They are set over the seed's draw, so the others stay as drawn."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise DrawnError('values are {"w3": 0.42, ...}')
+    out = {}
+    for name, one in value.items():
+        if name not in VARIABLES:
+            raise DrawnError("%r is not a weight; they are %s..%s" % (name, VARIABLES[0], VARIABLES[-1]))
+        if isinstance(one, bool) or not isinstance(one, (int, float)) \
+                or not MIN_VALUE < one <= MAX_VALUE:
+            raise DrawnError("%s must be a number above %g and at most %g" % (name, MIN_VALUE, MAX_VALUE))
+        out[name] = round(float(one), 4)
+    return out
+
+
 def number_of(value):
     """The individual a drawing's weights are drawn for: NUMBER when not said."""
     if value is None:
@@ -232,21 +257,24 @@ def weight_seed(master, number=NUMBER):
     return random.Random("%s:%d" % (master, number)).randrange(start_run._SEED_LIMIT)
 
 
-def draw(master=None, number=None, pin=None):
-    """-> {seed, number, pin, weight_seed, weights}: what w1..w10 are worth for
-    individual `number` under `master`, a new master seed when None -- drawn as
-    a sweep draws one it was not given. A `pin` is a weight seed kept instead
-    of that derivation (a blend saved by hand, as start_run.step_runs keeps it)."""
+def draw(master=None, number=None, pin=None, values=None):
+    """-> {seed, number, pin, values, weight_seed, drawn, weights}: what w1..w10
+    are worth for individual `number` under `master`, a new master seed when
+    None -- drawn as a sweep draws one it was not given. A `pin` is a weight
+    seed kept instead of that derivation (a blend saved by hand, as
+    start_run.step_runs keeps it), and `values` are weights edited by hand,
+    set over the draw as the script sets WEIGHT_VALUES over its own. `drawn`
+    is the draw before them, `weights` what the blend uses."""
     import start_run
-    number, pin = number_of(number), pin_of(pin)
+    number, pin, values = number_of(number), pin_of(pin), values_of(values)
     if master is None:
         master = random.randrange(start_run._SEED_LIMIT)
     if isinstance(master, bool) or not isinstance(master, int) or master < 0:
         raise DrawnError("the seed is a whole number, 0 or more")
     seed = pin if pin is not None else weight_seed(master, number)
-    return {"seed": master, "number": number, "pin": pin, "weight_seed": seed,
-            "weights": {name: round(value, 4)
-                        for name, value in golive.draw_weights(seed).items()}}
+    drawn_ = {name: round(value, 4) for name, value in golive.draw_weights(seed).items()}
+    return {"seed": master, "number": number, "pin": pin, "values": values,
+            "weight_seed": seed, "drawn": drawn_, "weights": dict(drawn_, **values)}
 
 
 # A random drawing is redrawn until it can be built, at most this many times.
@@ -297,7 +325,7 @@ def _post_order(tree):
     return out
 
 
-def check(catalog, user, tree, seed=None, number=None, pin=None):
+def check(catalog, user, tree, seed=None, number=None, pin=None, values=None):
     """Everything the page draws beside a drawing, and whether it can be built.
 
     -> {complete, empty, state, problems, chromosome, slots, nodes, rank,
@@ -310,7 +338,7 @@ def check(catalog, user, tree, seed=None, number=None, pin=None):
     a drawing that is not a drawing; anything else is a problem it reports.
     """
     places = walk(tree)
-    drawn = draw(seed, number, pin)
+    drawn = draw(seed, number, pin, values)
     ids = loras_in(tree)
     rows = _rows(catalog, user, ids)
     empty = [path for path, node in places if node is None]
@@ -478,13 +506,13 @@ def create(registry, catalog, user, payload, lora_path):
     """
     if not isinstance(payload, dict):
         raise DrawnError("the body is a JSON object")
-    unknown = sorted(set(payload) - {"tree", "seed", "number", "pin", "dataset", "count",
-                                     "label", "mock", "settings"})
+    unknown = sorted(set(payload) - {"tree", "seed", "number", "pin", "values", "dataset",
+                                     "count", "label", "mock", "settings"})
     if unknown:
         raise DrawnError("unknown field(s): %s" % ", ".join(unknown))
     seed = payload.get("seed")
     found = check(catalog, user, payload.get("tree"), seed, payload.get("number"),
-                  payload.get("pin"))
+                  payload.get("pin"), payload.get("values"))
     if found["state"] != "ok":
         raise DrawnError("; ".join(found["problems"]) or "the drawing is not finished yet")
     count = _count(payload.get("count"))
@@ -513,7 +541,7 @@ def create(registry, catalog, user, payload, lora_path):
 
     def settle(job, run_id, conf):
         _one_individual(registry.database(job), run_id, found["chromosome"],
-                        found["number"], found["pin"])
+                        found["number"], found["pin"], found["values"])
         return registry.settle_drawn(job["id"], run_id)
 
     try:
@@ -539,7 +567,7 @@ def create(registry, catalog, user, payload, lora_path):
     return job, verification, found
 
 
-def _one_individual(db_path, run_id, chromosome, number=NUMBER, pin=None):
+def _one_individual(db_path, run_id, chromosome, number=NUMBER, pin=None, values=None):
     """Put the drawing in as the sweep's only individual, numbered `number`, through start_run's
     own `trees` and `runs` steps -- its tree, state, rank, weight seed and
     script are the ones a searched individual gets -- and leave no script
@@ -547,7 +575,8 @@ def _one_individual(db_path, run_id, chromosome, number=NUMBER, pin=None):
     import start_run
     conn = store.connect(db_path)
     try:
-        store.add_individuals(conn, run_id, [chromosome], first=number, weight_pin=pin)
+        store.add_individuals(conn, run_id, [chromosome], first=number, weight_pin=pin,
+                              weight_values=values)
         conf = store.get_settings(conn, run_id)
         context = start_run.Context(conn, run_id, conf, db_datasets.run_folder(conn, run_id),
                                     generate_runs.template_path(conf.get("TEMPLATE")), None)
@@ -599,7 +628,7 @@ def opened(registry, catalog, user, job, number=None):
     try:
         conf = store.get_settings(conn, job["run_id"])
         population = results.population(conn, job["run_id"])
-        pins = {row["number"]: row["weight_pin"] for row in store.individuals(conn, job["run_id"])}
+        stored = {row["number"]: row for row in store.individuals(conn, job["run_id"])}
     finally:
         conn.close()
     if not population:
@@ -623,7 +652,8 @@ def opened(registry, catalog, user, job, number=None):
     latest = found[0] if found else None
     options = json.loads(latest["options"] or "{}") if latest else {}
     return {"job": job["id"], "label": job["label"], "task": job["task"],
-            "number": chosen["number"], "pin": pins.get(chosen["number"]),
+            "number": chosen["number"], "pin": stored[chosen["number"]]["weight_pin"],
+            "values": store.weight_values(stored[chosen["number"]]),
             "tree": tree,
             "seed": conf.get("WEIGHT_MASTER_SEED"), "count": conf.get("TRAINING_COUNT"),
             "chromosome": chosen["chromosome"], "drawn": encode(tree)[0],
@@ -654,7 +684,7 @@ def save(registry, catalog, user, job, payload):
     the drawing can be built and the job's run is at rest."""
     if not isinstance(payload, dict):
         raise DrawnError("the body is a JSON object")
-    unknown = sorted(set(payload) - {"tree", "seed", "number", "pin"})
+    unknown = sorted(set(payload) - {"tree", "seed", "number", "pin", "values"})
     if unknown:
         raise DrawnError("unknown field(s): %s" % ", ".join(unknown))
     if job["status"] not in SAVABLE:
@@ -662,7 +692,7 @@ def save(registry, catalog, user, job, payload):
                          % (job["id"], job["status"]))
     tree = payload.get("tree")
     found = check(catalog, user, tree, payload.get("seed"), payload.get("number"),
-                  payload.get("pin"))
+                  payload.get("pin"), payload.get("values"))
     if found["state"] != "ok":
         raise DrawnError("; ".join(found["problems"]) or "the drawing is not finished yet")
     try:
@@ -685,7 +715,8 @@ def save(registry, catalog, user, job, payload):
                                 job["id"]))
         chromosome, _ = encode(tree, slot_of)
         number = store.append_individual(conn, job["run_id"], chromosome,
-                                         weight_pin=found["weight_seed"])
+                                         weight_pin=found["weight_seed"],
+                                         weight_values=found["values"])
         context = start_run.Context(conn, job["run_id"], conf,
                                     db_datasets.run_folder(conn, job["run_id"]),
                                     generate_runs.template_path(conf.get("TEMPLATE")), None)
@@ -740,12 +771,13 @@ def code(registry, catalog, user, payload):
     the same, with the NOTE its script carries."""
     if not isinstance(payload, dict):
         raise DrawnError("the body is a JSON object")
-    unknown = sorted(set(payload) - {"tree", "seed", "number", "pin", "job", "count", "mock"})
+    unknown = sorted(set(payload) - {"tree", "seed", "number", "pin", "values", "job",
+                                     "count", "mock"})
     if unknown:
         raise DrawnError("unknown field(s): %s" % ", ".join(unknown))
     tree = payload.get("tree")
     found = check(catalog, user, tree, payload.get("seed"), payload.get("number"),
-                  payload.get("pin"))
+                  payload.get("pin"), payload.get("values"))
     if found["empty"]:
         raise DrawnError("the drawing has %d empty place(s): fill them to see its code"
                          % len(found["empty"]))
@@ -773,13 +805,14 @@ def code(registry, catalog, user, payload):
             chromosome, _ = encode(tree, slot_of)
             same = stored.get(found["number"])
             if same is not None and same["chromosome"] == chromosome \
-                    and same["weight_seed"] == seed and same["script_source"]:
+                    and same["weight_seed"] == seed and same["script_source"] \
+                    and store.weight_values(same) == found["values"]:
                 return {"name": same["script_name"], "source": same["script_source"],
                         "exact": True, "template": conf.get("TEMPLATE"),
                         "note": "The script job %d's run stored for blend #%d: exactly what "
                                 "it runs when it is processed." % (row["id"], found["number"])}
             number = max(stored or [0]) + 1
-            return _rendered(chromosome, conf, seed, "run_%03d.py" % number,
+            return _rendered(chromosome, conf, seed, found["values"], "run_%03d.py" % number,
                              "job %d's run, as blend #%d if it is saved there" % (row["id"], number),
                              "What this edited blend runs as once it is saved into job %d's run "
                              "(as blend #%d): that run's template and settings, and the weights "
@@ -794,7 +827,8 @@ def code(registry, catalog, user, payload):
             "LORA_SLOTS": {slot: rows[one["id"]]["folder"] for slot, one in found["slots"].items()},
             "BASE_MODEL": first["base_model"] or config.BASE_MODEL,
             "CHAT_TEMPLATE": first["chat_template"]}
-    out = _rendered(found["chromosome"], conf, seed, "run_%03d.py" % found["number"],
+    out = _rendered(found["chromosome"], conf, seed, found["values"],
+                    "run_%03d.py" % found["number"],
                     "a test of this drawn blend",
                     "What this blend runs as when it is tested here: %s, and the questions "
                     "you choose, which the test writes to %s beside its sweep when it starts."
@@ -808,7 +842,7 @@ def code(registry, catalog, user, payload):
     return out
 
 
-def _rendered(chromosome, conf, seed, name, where, note):
+def _rendered(chromosome, conf, seed, values, name, where, note):
     """generate_runs.render() for `chromosome` under a sweep's settings `conf`."""
     try:
         slots = generate_runs.lora_slots(conf.get("LORA_SLOTS"))
@@ -818,7 +852,8 @@ def _rendered(chromosome, conf, seed, name, where, note):
             provenance="Shown by the async API for %s." % where,
             label="Blend %s" % chromosome,
             template_path=generate_runs.template_path(conf.get("TEMPLATE")),
-            weight_seed=seed, training_set=conf.get("TRAINING_SET"), slots=slots,
+            weight_seed=seed, weight_values=values,
+            training_set=conf.get("TRAINING_SET"), slots=slots,
             count=conf.get("TRAINING_COUNT"),
             base_model=conf.get("BASE_MODEL"),
             chat_template=generate_runs.chat_template_name(conf))

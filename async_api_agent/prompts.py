@@ -1069,6 +1069,9 @@ VISUAL_TOOLS = {
     "swap_sides": "Swap the two sides of the fold at a place.",
     "new_weights": ("Draw new values for w1..w10: a new random seed, or the seed given. The "
                     "drawing keeps its weight names; their values change."),
+    "set_weight_value": ("Set what one weight (w1..w10) is worth by hand, above 0 and at most "
+                         "1, over the seed's draw; the rest stay as drawn. value null puts "
+                         "back the drawn value. New weights clears every value set by hand."),
     "start_over": "Clear the whole drawing, back to an empty CAT.",
     "random_blend": ("Replace the drawing with a random blend of their LoRAs, grown the way a "
                      "search grows one, that can be built, with new weights."),
@@ -1093,6 +1096,7 @@ VISUAL_TOOL_DONE = {
     "swap_sides": "swapped the sides at {where}",
     "new_weights": "new weights (seed {seed})",
     "start_over": "cleared the drawing",
+    "set_weight_value": "{weight} = {value} ({how})",
     "random_blend": "drew a random blend: {formula}",
     "list_demo_datasets": "listed {count} demo dataset(s)",
     "set_test_questions": "testing on {questions_text}",
@@ -1331,6 +1335,9 @@ COMPARE_TOOLS = {
     "new_weights": ("Draw new values for w1..w10 of `blend`: a new random seed, or the seed "
                     "given. Its weight names stay; their values change."),
     "start_over": "Clear `blend`, back to an empty CAT.",
+    "set_weight_value": ("In `blend`, set what one weight (w1..w10) is worth by hand, above 0 "
+                         "and at most 1, over that blend's draw; value null puts back the "
+                         "drawn value."),
     "random_blend": ("Replace `blend` with a random blend of their LoRAs, grown the way a "
                      "search grows one, that can be built, with new weights."),
     "list_demo_datasets": "The demo datasets on the server, with their sizes. Changes nothing.",
@@ -1358,6 +1365,7 @@ COMPARE_TOOL_DONE = {
     "swap_sides": "{blend}: swapped the sides at {where}",
     "new_weights": "{blend}: new weights (seed {seed})",
     "start_over": "{blend}: cleared",
+    "set_weight_value": "{blend}: {weight} = {value} ({how})",
     "random_blend": "{blend}: drew a random blend: {formula}",
     "list_demo_datasets": "listed {count} demo dataset(s)",
     "set_test_questions": "testing on {questions_text}",

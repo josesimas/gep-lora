@@ -619,7 +619,7 @@ def fill(template_lines, blocks, values):
 def render(expression, steps, final, script_name, provenance, label,
            template_lines=None, template_path=TEMPLATE, weight_seed=None,
            training_set=None, slots=None, count=FROM_SETTINGS, base_model=None,
-           chat_template=FROM_SETTINGS, root=None):
+           chat_template=FROM_SETTINGS, root=None, weight_values=None):
     """The complete text of one runnable script, built from the template.
 
     Callers pass the planning results from plan(); the template supplies
@@ -646,6 +646,10 @@ def render(expression, steps, final, script_name, provenance, label,
     and loading the model it was created with even if settings.py has since
     moved on.
 
+    `weight_values` ({"w3": 0.42, ...}) are values set over the draw for some
+    weights: a blend whose weights were edited by hand (async_api/drawn.py,
+    individuals.weight_values). None or {} leaves the draw as it is.
+
     `root` is the tree `steps` were planned from, for a caller that built it
     by hand rather than from `expression` -- a single adapter on its own, say,
     which plan() builds and every template runs with no combine() above it.
@@ -670,6 +674,10 @@ def render(expression, steps, final, script_name, provenance, label,
         # the assignment itself, so the generated file gets a plain literal.
         "WEIGHT_SEED": ["WEIGHT_SEED = %s"
                         % ("None" if weight_seed is None else int(weight_seed))],
+        # And the values set over that draw, as a literal in weight order.
+        "WEIGHT_VALUES": ["WEIGHT_VALUES = {%s}" % ", ".join(
+            "%r: %r" % (name, float(value)) for name, value in
+            sorted((weight_values or {}).items(), key=lambda pair: int(pair[0][1:])))],
         # Likewise a block: the generated script gets the resolved path as a
         # literal, rather than working it out from where it happens to sit.
         "TRAINING_SET": ["TRAINING_SET = %r" % training_set_path(training_set)],

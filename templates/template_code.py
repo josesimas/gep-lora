@@ -155,6 +155,12 @@ def _weight():
 # All ten of the grammar's weights, whichever a tree uses. The draw is
 # sequential, so w1..w5 are what they were when there were only five.
 WEIGHTS = {"w%d" % n: _weight() for n in range(1, 11)}
+#~ Whole-line marker, like WEIGHT_SEED: generate_runs.py replaces it with
+#~ WEIGHT_VALUES = {...}, the values a blend edited by hand fixes for some of its
+#~ weights ({} for any other), set over the draw above -- so the rest of the draw
+#~ is unchanged. Another name a linter calls undefined here.
+# @@WEIGHT_VALUES@@
+WEIGHTS.update(WEIGHT_VALUES)
 
 def _rank(adapter_dir):
     """The rank PEFT will allocate for this adapter, from its adapter_config.json.

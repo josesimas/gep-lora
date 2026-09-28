@@ -150,6 +150,21 @@ class DrawingTests(JobsTestCase):
         with self.assertRaises(drawn.DrawnError):
             drawn.random_drawing(self.registry.catalog, other)
 
+    def test_values_set_by_hand_over_the_draw(self):
+        plain = drawn.draw(77, 3)
+        edited = drawn.draw(77, 3, values={"w2": 0.5, "w9": 1})
+        self.assertEqual(edited["drawn"], plain["weights"])      # the draw is untouched
+        self.assertEqual((edited["weights"]["w2"], edited["weights"]["w9"]), (0.5, 1.0))
+        self.assertEqual(edited["weights"]["w1"], plain["weights"]["w1"])
+        self.assertEqual(edited["weight_seed"], plain["weight_seed"])
+        for wrong in ({"w11": 0.5}, {"w1": 0}, {"w1": 1.5}, {"w1": True}, {"w1": "0.5"}, [0.5]):
+            with self.assertRaises(drawn.DrawnError):
+                drawn.values_of(wrong)
+        found = drawn.check(self.registry.catalog, self.user,
+                            fold("SVD", leaf(self.ids["L1"], "w2"), leaf(self.ids["L2"], "w3")),
+                            77, values={"w2": 0.25})
+        self.assertIn("0.25", found["formula"])
+
     def test_only_their_own_ready_loras(self):
         other = self.registry.user_for_key(self.registry.add_user("bob"))
         with self.assertRaises(drawn.DrawnError):
@@ -414,6 +429,55 @@ class TestingTests(ServerTestCase):
         self.assertFalse(code["exact"])
         self.assertEqual(code["name"], "run_%03d.py" % (max(rows) + 1))
         self.assertIn("job %d" % search, code["note"])
+
+    def test_an_edited_value_reaches_the_script_saving_and_going_live(self):
+        import subprocess
+        import sys
+        from async_api import golive
+        values = {"w2": 0.5}
+        # The script a drawn blend runs sets the value over its draw, and prints it.
+        code = self.call("POST", "/blends/code", {"tree": self.tree, "seed": 9, "mock": True,
+                                                  "values": values, "count": 2})[1]
+        self.assertIn("WEIGHT_VALUES = {'w2': 0.5}", code["source"])
+        folder = os.path.join(self.folder, "script")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "training.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write("\n".join(json.dumps(one) for one in RECORDS))
+        with open(os.path.join(folder, code["name"]), "w", encoding="utf-8") as handle:
+            handle.write(code["source"])
+        done = subprocess.run([sys.executable, code["name"]], cwd=folder, capture_output=True,
+                              text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("w2=0.5000", done.stdout)
+        shown = self.call("POST", "/blends/check", {"tree": self.tree, "seed": 9,
+                                                    "values": values})[1]
+        self.assertIn("w1=%.4f" % shown["drawn"]["w1"], done.stdout)   # the rest as drawn
+
+        # Tested, the sweep of one keeps them.
+        status, reply = self.call("POST", "/blends/test", self.body(seed=9, values=values))
+        self.assertEqual(status, 201, reply)
+        conn = store.connect(self.registry.database(self.registry.job(reply["job"]["id"])))
+        try:
+            one, = store.individuals(conn, reply["job"]["run_id"])
+            self.assertEqual(store.weight_values(one), values)
+            self.assertIn("WEIGHT_VALUES = {'w2': 0.5}", one["script_source"])
+        finally:
+            conn.close()
+
+        # Saved into a search's run, it opens with them and goes live with them.
+        status, reply = self.call("POST", "/jobs", self.submission())
+        search = reply["job"]["id"]
+        worker.serve(self.registry, once=True)
+        tree = fold("CAT", leaf(self.ids["L2"], "w2"), leaf(self.ids["L4"], "w1"))
+        status, saved = self.call("POST", "/blends/%d/save" % search,
+                                  {"tree": tree, "seed": 9, "values": values})
+        self.assertEqual(status, 201, saved)
+        opened = self.call("GET", "/blends/%d?individual=%d" % (search, saved["number"]))[1]
+        self.assertEqual(opened["values"], values)
+        job = self.registry.job(search)
+        spec = golive.blend_spec(self.registry.database(job), job["run_id"], saved["number"])
+        self.assertEqual(spec["weights"]["w2"], 0.5)
+        self.assertEqual(spec["plan"][-1]["left"][1], 0.5)
 
     def test_an_old_database_gains_the_pin_column(self):
         import sqlite3

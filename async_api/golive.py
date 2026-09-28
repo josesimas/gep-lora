@@ -113,6 +113,7 @@ def blend_spec(db_path, run_id, number=None):
         seed = row["weight_seed"]
         if seed is None:
             seed = row["weight_pin"]            # a blend saved by hand keeps its own
+        edited = store.weight_values(row)       # and any values edited by hand
     finally:
         conn.close()
     if seed is None:
@@ -126,6 +127,7 @@ def blend_spec(db_path, run_id, number=None):
     except SystemExit as error:
         raise GoLiveError(str(error))
     weights = draw_weights(seed)
+    weights.update(edited)              # as the script sets them over its draw
     plan, final, rank = build_plan(chosen["chromosome"], ranks, weights)
     # What the search ran decides how it is served: a mocked sweep never loaded
     # a model, so its deployment does not either. A test on the script, as the

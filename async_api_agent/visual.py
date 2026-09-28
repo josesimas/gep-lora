@@ -26,6 +26,8 @@ The session:
                                    number a blend opened from a search had there
      "pin":       n | None         a weight seed kept instead: a blend saved by
                                    hand (drawn.save) opened again
+     "values":    {w: value}       weights whose values were edited by hand, set
+                                   over the draw; {} for none
      "questions": {"file": name} | {"lora": id} | {"given": name} | None
                                    what the test asks; "given" is a dataset the
                                    page holds (pasted or uploaded) and sends
@@ -79,6 +81,10 @@ SPECS = {
     "clear_place": ({"where": _PATH}, ["where"], True),
     "swap_sides": ({"where": _PATH}, ["where"], True),
     "new_weights": ({"seed": dict(_INT, description="a seed of their choosing")}, [], True),
+    "set_weight_value": ({"weight": {"type": "string", "enum": list(VARIABLES)},
+                          "value": {"type": ["number", "null"],
+                                    "description": "above 0 and at most 1; null puts back the drawn value"}},
+                         ["weight", "value"], True),
     "start_over": ({}, [], True),
     "random_blend": ({}, [], True),
     "list_demo_datasets": ({}, [], False),
@@ -114,6 +120,7 @@ def session_of(raw):
     try:
         number = drawn.number_of(raw.get("number"))
         pin = drawn.pin_of(raw.get("pin"))
+        values = drawn.values_of(raw.get("values"))
     except drawn.DrawnError as error:
         raise VisualError(str(error))
     questions = raw.get("questions")
@@ -129,6 +136,7 @@ def session_of(raw):
             or not 1 <= count <= drawn.MAX_QUESTIONS:
         raise VisualError("count is how many questions, from 1 to %d" % drawn.MAX_QUESTIONS)
     return {"tree": copy.deepcopy(tree), "seed": seed, "number": number, "pin": pin,
+            "values": values,
             "questions": questions,
             "count": count, "mock": bool(raw.get("mock"))}
 
@@ -197,7 +205,7 @@ def check_of(catalog, user, session):
     """drawn.check() for the session's drawing, or None when it cannot be read."""
     try:
         return drawn.check(catalog, user, session["tree"], session["seed"],
-                           session.get("number"), session.get("pin"))
+                           session.get("number"), session.get("pin"), session.get("values"))
     except drawn.DrawnError:
         return None
 
@@ -399,6 +407,7 @@ class Toolbox:
     def _new_weights(self, seed=None):
         found = drawn.draw(seed, self.session.get("number"))
         self.session["seed"], self.session["pin"] = found["seed"], None   # a new draw, unpinned
+        self.session["values"] = {}                                         # and nothing edited
         return found
 
     def _random_blend(self):
@@ -406,14 +415,31 @@ class Toolbox:
         drawn_one = drawn.random_drawing(self.catalog, self.user,
                                          (found or {}).get("base_model"))
         self.session.update(tree=drawn_one["tree"], seed=drawn_one["seed"],
-                            number=drawn.NUMBER, pin=None)
+                            number=drawn.NUMBER, pin=None, values={})
         return {"formula": drawn_one["check"]["formula"] or drawn_one["check"]["chromosome"]
                 or "an unfinished blend", "state": drawn_one["check"]["state"]}
+
+    def _set_weight_value(self, weight, value=None):
+        if weight not in VARIABLES:
+            raise VisualError("a weight is one of %s..%s" % (VARIABLES[0], VARIABLES[-1]))
+        values = dict(self.session.get("values") or {})
+        if value is None:
+            values.pop(weight, None)
+        else:
+            values[weight] = value
+        self.session["values"] = drawn.values_of(values)
+        worth = self.session["values"].get(weight)
+        if worth is None:
+            worth = ((check_of(self.catalog, self.user, self.session) or {}).get("weights")
+                     or {}).get(weight)
+        return {"weight": weight, "value": "?" if worth is None else "%.4f" % worth,
+                "how": "set by hand" if weight in self.session["values"] else "as drawn"}
 
     def _start_over(self):
         self.session["tree"] = empty_tree()
         self.session["number"] = drawn.NUMBER       # no longer a searched blend's
         self.session["pin"] = None
+        self.session["values"] = {}
         return {}
 
     # --- the test ---
@@ -600,6 +626,8 @@ def plan(catalog, user, session):
         body["number"] = found["number"]
     if found["pin"] is not None:
         body["pin"] = found["pin"]
+    if found["values"]:
+        body["values"] = found["values"]
     if wanted:
         body["settings"] = wanted
     against = sorted({one["name"] for one in found["slots"].values()})

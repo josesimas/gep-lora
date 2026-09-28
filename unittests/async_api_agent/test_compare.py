@@ -105,6 +105,15 @@ class ToolTests(Mixin, JobsTestCase):
         self.assertEqual(box.outcome()["checks"]["B"]["state"], "ok")
         self.assertIsNone(box.pair["blends"]["B"]["from"])
 
+    def test_a_weight_value_on_one_side(self):
+        box = self.box()
+        self.run_ok(box, "draw_blend", blend="A", loras=["slot-L1", "slot-L2"])
+        self.run_ok(box, "draw_blend", blend="B", loras=["slot-L1", "slot-L2"])
+        self.run_ok(box, "set_weight_value", blend="B", weight="w1", value=0.2)
+        self.assertEqual((box.pair["blends"]["A"]["values"], box.pair["blends"]["B"]["values"]),
+                         ({}, {"w1": 0.2}))
+        self.assertEqual(box.outcome()["checks"]["B"]["weights"]["w1"], 0.2)
+
     def test_copying_and_swapping(self):
         box = self.box()
         self.run_ok(box, "draw_blend", blend="A", loras=["slot-L1"])

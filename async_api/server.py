@@ -53,7 +53,7 @@ Blends drawn by hand (drawn.py; the pages are /visual_guide.html and
 /blend_comparison.html)
     GET    /blends                        every blend of the user's a page can open,
                                           job by job: searched and drawn alike
-    POST   /blends/check                  {tree, seed?, number?} -> the drawing as a
+    POST   /blends/check                  {tree, seed?, number?, pin?, values?} -> the drawing as a
                                           chromosome, its ranks, whether PEFT can build
                                           it, and what the weights are worth under the
                                           seed for individual `number` (1)
@@ -686,7 +686,7 @@ class App:
         body = body or {}
         try:
             return 200, drawn.check(self.catalog, user, body.get("tree"), body.get("seed"),
-                                    body.get("number"), body.get("pin"))
+                                    body.get("number"), body.get("pin"), body.get("values"))
         except drawn.DrawnError as error:
             raise ApiError(400, str(error))
 
